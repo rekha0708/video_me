@@ -1,0 +1,2 @@
+"""Fetch-media adapters."""
+

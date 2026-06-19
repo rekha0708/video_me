@@ -1,0 +1,2 @@
+"""Content-analysis adapters."""
+

@@ -1,0 +1,18 @@
+id: education_kids
+genre_content: educational_kids
+target_audience:
+  age_range: "3-6"
+  reading: pre_reader
+tone: warm, simple, playful, encouraging
+format: animated_character
+aspect_ratio: "9:16"
+target_length_sec: 45
+language: en
+made_for_kids: true
+disclosure_label_required: true
+pedagogy:
+  one_concept_per_video: true
+  vocabulary_level: simple
+  repetition: true
+  positive_framing: true
+

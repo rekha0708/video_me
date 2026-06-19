@@ -1,0 +1,2 @@
+"""Voice-synthesis adapters."""
+

@@ -1,0 +1,2 @@
+"""Critique adapters."""
+

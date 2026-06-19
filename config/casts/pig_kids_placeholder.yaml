@@ -1,0 +1,49 @@
+id: pig_kids_placeholder
+species: pig
+is_original_synthetic: true
+members:
+  - id: c1
+    name: Pippa
+    gender: boy
+    visual_descriptor: original round pig kid with teal overalls and star patch
+    lora_ref: loras/pig_kids_placeholder/c1
+    voice_profile_ref: voices/pig_kids_placeholder/c1
+    personality: curious, asks the questions
+    signature_expressions:
+      - wide-eyed wonder
+      - big grin
+  - id: c2
+    name: Milo
+    gender: boy
+    visual_descriptor: original small pig kid with green hoodie and square glasses
+    lora_ref: loras/pig_kids_placeholder/c2
+    voice_profile_ref: voices/pig_kids_placeholder/c2
+    personality: playful and silly
+    signature_expressions:
+      - giggly smile
+      - surprised blink
+  - id: c3
+    name: Nia
+    gender: girl
+    visual_descriptor: original pig kid with purple jumper and sunflower hair clip
+    lora_ref: loras/pig_kids_placeholder/c3
+    voice_profile_ref: voices/pig_kids_placeholder/c3
+    personality: knows the answer and explains gently
+    signature_expressions:
+      - confident smile
+      - thinking face
+  - id: c4
+    name: Luma
+    gender: girl
+    visual_descriptor: original pig kid with yellow rain boots and blue scarf
+    lora_ref: loras/pig_kids_placeholder/c4
+    voice_profile_ref: voices/pig_kids_placeholder/c4
+    personality: shy and kind
+    signature_expressions:
+      - soft smile
+      - happy clap
+design_constraints:
+  - Original silhouette and color palette; do not mimic any existing kids show character.
+  - Distinct shape and color per member so young viewers can tell them apart instantly.
+  - Placeholder designs must be replaced or explicitly approved before the test-the-waters milestone.
+
