@@ -6,9 +6,8 @@ It is the implementation journal for `Agent.md`, `project-flow-and-execution-pla
 
 ## Current Defaults In Use
 
-- Workflow engine: Prefect-shaped MVP default. Rationale: documented safe default when the operator
-  has not chosen Temporal/Dagster/custom yet; Phase 0 keeps the workflow isolated so the engine can
-  be swapped before deeper integration.
+- Workflow engine: `asyncio` (custom stage runner in `core/executor.py`). Rationale: Prefect/Temporal
+  require operator approval; asyncio is the working default for Phase 1.
 - Target platform: generic manual-review publish adapter shape. Rationale: platform choice is still
   an operator gate; Phase 0 should not assume live publishing behavior.
 - Source policy: own/licensed/public-domain/transformed only. Rationale: conservative default from
@@ -51,16 +50,186 @@ It is the implementation journal for `Agent.md`, `project-flow-and-execution-pla
   - Wrote per-stage JSON artifacts under `.local/artifacts/`.
   - Emitted structured JSON logs for job and stage lifecycle events.
 
+### 2026-06-19
+
+- Verified Docker and Colima outside the sandbox:
+  - Colima is running with the Docker runtime.
+  - Docker Compose can parse the project Compose file.
+- Started local PostgreSQL and MinIO with Docker Compose:
+  - PostgreSQL is healthy on `localhost:5432`.
+  - MinIO is healthy on `localhost:9000` with console on `localhost:9001`.
+- Worked around a local Docker credential-helper mismatch:
+  - The global Docker config references `docker-credential-desktop`, which is not installed in the
+    Colima setup.
+  - A local ignored `.docker-config/` was used for Compose commands in this workspace.
+- Added service-backed storage wiring:
+  - `VIDEO_ME_JOB_STORE=postgres` stores jobs/stage results in PostgreSQL.
+  - `VIDEO_ME_ARTIFACT_STORE=s3` stores JSON artifacts in MinIO/S3.
+  - SQLite and local filesystem remain the defaults.
+- Added optional service dependencies:
+  - `psycopg[binary]` for PostgreSQL.
+  - `boto3` for S3/MinIO.
+- Verified local and service-backed workflows:
+  - Local test suite: `5 passed`.
+  - Service smoke run completed job `b042086f-59b0-4b8e-a491-a77d95e182ad`.
+  - Postgres recorded the job as `completed`.
+  - MinIO stored `create_job.json`, `noop_dag.json`, and `record_result.json`.
+
 ## Verification Notes
 
-- `docker compose config` could not be run because Docker is not installed or not available in this
-  shell (`docker: command not found`).
+- Docker/Colima and the local PostgreSQL/MinIO services are verified and healthy.
 - Full cloud/GPU provisioning remains intentionally unstarted because paid resources require
   operator approval.
 
 ## Open Gates
 
-- Operator decision #1: confirm workflow engine. Current default is Prefect for MVP.
+- Operator decision #1: confirm workflow engine. Default changed to `asyncio` (matches reality).
 - Operator decision #2: confirm target platform. Current code keeps publish behavior generic/manual.
 - Operator decision #10: budget ceiling before any paid GPU/cloud provisioning.
 - Track E: compliance posture needs operator sign-off.
+
+## Gotchas (found in Phase 0 audit)
+
+- ~~**Capability generics are type-erased.**~~ **FIXED 2026-06-19.** Created
+  `core/models/capabilities.py` with typed request/result models for all 14 capabilities.
+  Updated `core/capabilities/base.py` to use them; each ABC now declares its exact
+  `RequestT`/`ResultT` pair.
+
+- ~~**`core/executor.py` is missing.**~~ **FIXED 2026-06-19.** Created `core/executor.py`
+  with `run_stage()` (health-check → invoke → persist artifact → update job) and `check_rights()`
+  pipeline gate. 4 new tests added and passing.
+
+- ~~**Guardrails are Pydantic validators only — not pipeline gates.**~~ **FIXED 2026-06-19.**
+  `check_rights()` in `core/executor.py` sets `job.status = BLOCKED` and raises `StageError`
+  when `rights_cleared` is False. Must be called from the workflow before the adapt_script stage.
+
+- **Registry is in-memory only.** `core/registry.py` uses a plain dict. Deferred to Phase 3
+  (DB-backing is part of the Phase 3 registry/router refactor). Not urgent for Phase 1 since
+  routing is hardcoded.
+
+- ~~**Cast member Pippa (c1) has `gender: boy`.**~~ **FIXED 2026-06-19.** Changed to
+  `gender: girl` in `config/casts/pig_kids_placeholder.yaml`. Name and gender now consistent.
+
+- ~~**Workflow engine default mismatch.**~~ **FIXED 2026-06-19.** `Settings.workflow_engine`
+  default changed from `"prefect"` to `"asyncio"` to match the actual implementation.
+  Operator can confirm or override once the engine decision is made (Open Gate #1).
+
+- ~~**All 12 adapter directories are empty.**~~ **PARTIALLY RESOLVED 2026-06-19.** 11 of 12
+  adapters implemented and tested (A1.0–A1.11). A1.12 (workflow DAG wire-up) remains.
+
+## Phase 1 — Next Steps (sequenced; top items unblock the rest)
+
+### Operator decisions needed first (unblocks everything below)
+
+- [ ] Confirm workflow engine (#1) — custom asyncio is acceptable for the MVP; just make it
+      explicit so adapters are built against the right runner.
+- [ ] Confirm target platform (#2) — determines the shape of the `publish` adapter and the
+      made-for-kids / disclosure label mechanism.
+- [ ] Set build budget ceiling (#10) — required before provisioning any rented GPU.
+
+### Track D — rented compute
+
+- [ ] D1 Provision rented GPU account (needs budget ceiling decision above).
+
+### Track B — cast sign-off (needed before render_character / synthesize_voice adapters)
+
+- [x] ~~Resolve Pippa (c1) gender vs. name inconsistency in `pig_kids_placeholder.yaml`.~~ **FIXED 2026-06-19.**
+- [ ] Finalize original character art and visual designs for all 4 members.
+- [ ] Train per-member character LoRAs once designs are approved.
+- [ ] Design per-member synthetic child voices.
+
+### Track A — framework (critical path; build in this order)
+
+- [x] A1.0 Build `core/executor.py` — stage runner: select adapter → run → catch errors →
+      persist artifact → update job. All Phase 1 adapters plug into this.
+- [x] A1.0b Fix capability ABCs — replaced `Capability[BaseModel, BaseModel]` with typed
+      request/result models; created `core/models/capabilities.py`.
+- [x] A1.0c Add pipeline-level rights gate — `check_rights()` in `core/executor.py` blocks
+      with `JobStatus.BLOCKED` when `rights_cleared` is False.
+- [x] A1.1 `adapters/fetch_media/ytdlp_adapter.py` — yt-dlp + ffmpeg stream split; record
+      source URL and rights decision on the Job.
+- [x] A1.2 `adapters/transcribe/whisper_adapter.py` — faster-whisper; sentence segments with
+      per-segment word timestamps (start/end per word for lip-sync and captions).
+- [x] A1.3 `adapters/analyze_content/llm_adapter.py` — OpenAI-compatible LLM (Ollama/vLLM)
+      produces ContentMetadata + LearningObjective from transcript; language and length_sec
+      derived directly from transcript for reliability.
+- [x] A1.4 `adapters/adapt_script/llm_adapter.py` — LLM writes scenes only; adapter
+      injects mode=transformed, source_rights (always cleared), learning_objective
+      from metadata, and computed caption_text. Guards on missing learning_objective.
+- [x] A1.5 `adapters/plan_shots/llm_adapter.py` — LLM contributes camera/action/characters;
+      adapter derives shot_id, scene_ref, setting, dialogue_line_refs, duration (word-count).
+      Speaker always first; trims to ≤2 chars; fills defaults when LLM returns fewer shots.
+- [x] A1.6 `adapters/render_character/diffusion_adapter.py` — AUTOMATIC1111-compatible SD API;
+      lora_name derived from member.lora_ref; _check_lora raises clear Track B error when file
+      missing; prompt injects <lora:name:weight> tag + visual_descriptor + setting + expression;
+      base64 PNG responses decoded and saved to work_dir/member_id/; httpx AsyncClient.
+- [x] A1.7 `adapters/synthesize_voice/tts_adapter.py` — Chatterbox-compatible HTTP API;
+      voice_profile_ref resolved to local reference WAV (Track B gate); expression keyword
+      maps to exaggeration override; SHA-1 stem for deterministic output filenames;
+      duration from WAV header with word-count fallback.
+- [x] A1.8 `adapters/generate_video/wan_adapter.py` — Wan 2.7-compatible HTTP API; multipart
+      PNG + action prompt; style prefix/suffix wrap LLM action; trusts req.duration_sec
+      (computed by plan_shots word-count); raises clear error when image missing.
+- [x] A1.9 `adapters/lip_sync/lip_sync_adapter.py` — Wav2Lip-compatible HTTP API; multipart
+      MP4 + WAV; _check_inputs raises clear stage-ordering errors (generate_video /
+      synthesize_voice); duration from WAV header (authoritative); output: synced.mp4.
+- [x] A1.10 `adapters/assemble_video/ffmpeg_adapter.py` — ffmpeg concat demuxer; scale+pad
+       to 1080×1920; drawtext caption (textfile= avoids shell-quoting); AI disclosure label
+       burned at top when required; audio replaced from AudioTrack; -shortest; CRF 23.
+- [x] A1.11 `adapters/publish/manual_adapter.py` — copies final MP4 to timestamped review
+       subdir; writes metadata.json sidecar (8 required fields); refuses to run when
+       rights_cleared=False (defense-in-depth after executor gate); raises clear error when
+       video file missing (assemble_video must run first).
+- [ ] A1.12 Wire real workflow DAG — replace `run_noop_job` with full stage sequence using
+       executor; enforce guardrail gates; log structured events per stage.
+
+### Phase 1 work log — 2026-06-19
+
+Built and tested all Track A adapters A1.0–A1.11. **242 tests passing** across 11 test files.
+
+**Core framework added:**
+
+| File | What it does |
+| --- | --- |
+| `core/executor.py` | Stage runner: health-check → invoke → persist artifact → update job; `check_rights()` pipeline gate |
+| `core/models/capabilities.py` | Typed request/result Pydantic models for all 14 capabilities |
+
+**Adapters implemented:**
+
+| Step | Adapter | Mechanism | External service / tool |
+| --- | --- | --- | --- |
+| A1.1 | `fetch_media` | yt-dlp + ffmpeg subprocess | yt-dlp, ffmpeg (system) |
+| A1.2 | `transcribe` | faster-whisper (CTranslate2) in executor | CPU/GPU local |
+| A1.3 | `analyze_content` | OpenAI-compatible LLM | Ollama `http://localhost:11434` |
+| A1.4 | `adapt_script` | OpenAI-compatible LLM | Ollama `http://localhost:11434` |
+| A1.5 | `plan_shots` | OpenAI-compatible LLM | Ollama `http://localhost:11434` |
+| A1.6 | `render_character` | AUTOMATIC1111-compatible SD API | `http://localhost:7860` |
+| A1.7 | `synthesize_voice` | Chatterbox-compatible TTS API | `http://localhost:8020` |
+| A1.8 | `generate_video` | Wan 2.7-compatible API | `http://localhost:8030` |
+| A1.9 | `lip_sync` | Wav2Lip-compatible API | `http://localhost:8040` |
+| A1.10 | `assemble_video` | ffmpeg subprocess | ffmpeg (system) |
+| A1.11 | `publish` | Local file copy | None (review folder) |
+
+**GPU services needed to run end-to-end (Track D):**
+
+| Service | Default port | What to run |
+| --- | --- | --- |
+| LLM (Ollama) | 11434 | `ollama serve` + `ollama pull qwen2.5:7b` |
+| Stable Diffusion | 7860 | AUTOMATIC1111 webui |
+| TTS | 8020 | FastAPI wrapper around Chatterbox |
+| Wan 2.7 | 8030 | FastAPI wrapper around Wan image-to-video |
+| Wav2Lip | 8040 | FastAPI wrapper around Wav2Lip/MuseTalk |
+
+**Guardrail enforcements built in:**
+
+- `check_rights()` in `core/executor.py` — blocks at adapt_script if `rights_cleared=False`
+- `LlmAdaptScriptAdapter.run()` — guard on missing `learning_objective`
+- `DiffusionRenderAdapter._check_lora()` — Track B gate; refuses with clear message if LoRA missing
+- `TtsAdapter._check_voice()` — Track B gate; refuses with clear message if voice file missing
+- `ManualPublishAdapter.run()` — second-line rights check; refuses if `rights_cleared=False`
+- Stage-ordering errors with named upstream stage in `generate_video`, `lip_sync`, `assemble_video`, `publish`
+
+> Acceptance criteria (Phase 1): a real educational-kids reference link produces a watchable
+> ~30–60s 9:16 short starring the 4-member original cast, with correct captions, distinct voices,
+> per-shot lip sync, and a metadata sidecar containing all required flags. A job with a non-original
+> cast, missing rights, or a failed age-appropriateness check is blocked — never written as output.

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 import yaml
 from pydantic import BaseModel, Field
@@ -18,10 +18,15 @@ class Settings(BaseSettings):
     data_dir: Path = Path(".local")
     artifact_dir: Path = Path(".local/artifacts")
     sqlite_path: Path = Path(".local/video_me.db")
+    job_store: Literal["sqlite", "postgres"] = "sqlite"
+    artifact_store: Literal["local", "s3"] = "local"
     postgres_dsn: str = "postgresql://video_me:video_me_dev@localhost:5432/video_me"
     s3_endpoint_url: str = "http://localhost:9000"
     s3_bucket: str = "video-me-artifacts"
-    workflow_engine: str = "prefect"
+    s3_access_key_id: str = "video_me"
+    s3_secret_access_key: str = "video_me_dev_password"
+    s3_region: str = "us-east-1"
+    workflow_engine: str = "asyncio"
     max_regenerations: int = 3
 
 
@@ -45,4 +50,3 @@ def load_app_config(
         channel_profile=load_yaml_model(channel_path, ChannelProfile),
         cast=load_yaml_model(cast_path, Cast),
     )
-

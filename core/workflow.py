@@ -3,7 +3,7 @@ import logging
 from core.config import AppConfig, load_app_config
 from core.models.job import Job, JobStatus
 from core.observability import log_event
-from core.storage import JobStore, LocalArtifactStore, completed_stage
+from core.storage import completed_stage, create_artifact_store, create_job_store
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +17,8 @@ async def run_noop_job(
 ) -> Job:
     config = app_config or load_app_config()
     settings = config.settings
-    artifacts = LocalArtifactStore(settings.artifact_dir)
-    jobs = JobStore(settings.sqlite_path)
+    artifacts = create_artifact_store(settings)
+    jobs = create_job_store(settings)
 
     job = Job(
         source_url=source_url,
@@ -52,4 +52,3 @@ async def run_noop_job(
     jobs.save_job(job)
     log_event(logger, "job_completed", job_id=job.job_id)
     return job
-

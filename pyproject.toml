@@ -14,8 +14,28 @@ dev = [
   "pytest>=8.0",
   "pytest-asyncio>=0.23",
 ]
+services = [
+  "boto3>=1.34",
+  "psycopg[binary]>=3.2",
+]
 workflow = [
   "prefect>=3.0",
+]
+ingest = [
+  "yt-dlp>=2024.1",
+  # ffmpeg and ffprobe must be installed as system packages (not via pip)
+]
+transcribe = [
+  "faster-whisper>=1.0",
+  # ctranslate2 is pulled in by faster-whisper; CUDA toolkit required for device="cuda"
+]
+llm = [
+  "openai>=1.0",
+  # works with Ollama, vLLM, or any OpenAI-compatible endpoint
+]
+render = [
+  "httpx>=0.27",
+  # Stable Diffusion backend (e.g. AUTOMATIC1111) is a separate service; httpx is the HTTP client.
 ]
 
 [build-system]
@@ -29,4 +49,3 @@ include = ["core*", "adapters*", "guardrails*", "subsystems*"]
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
-

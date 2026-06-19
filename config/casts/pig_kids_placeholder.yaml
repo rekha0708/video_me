@@ -4,7 +4,7 @@ is_original_synthetic: true
 members:
   - id: c1
     name: Pippa
-    gender: boy
+    gender: girl
     visual_descriptor: original round pig kid with teal overalls and star patch
     lora_ref: loras/pig_kids_placeholder/c1
     voice_profile_ref: voices/pig_kids_placeholder/c1
