@@ -236,3 +236,90 @@ Built and tested all Track A adapters A1.0–A1.12. **264 tests passing** across
 > ~30–60s 9:16 short starring the 4-member original cast, with correct captions, distinct voices,
 > per-shot lip sync, and a metadata sidecar containing all required flags. A job with a non-original
 > cast, missing rights, or a failed age-appropriateness check is blocked — never written as output.
+
+## Phase 1 Complete — 2026-06-19
+
+**All 12 Track A items built and tested. 264 tests passing. Committed as `e84c146`.**
+
+### What was built in Phase 1
+
+| Item | Deliverable |
+| --- | --- |
+| A1.0 | `core/executor.py` — `run_stage()` + `check_rights()` pipeline gate |
+| A1.0b | `core/models/capabilities.py` — typed request/result models for all 14 capabilities |
+| A1.1 | `adapters/fetch_media/ytdlp_adapter.py` — yt-dlp + ffmpeg subprocess |
+| A1.2 | `adapters/transcribe/whisper_adapter.py` — faster-whisper local inference |
+| A1.3 | `adapters/analyze_content/llm_adapter.py` — LLM → ContentMetadata + LearningObjective |
+| A1.4 | `adapters/adapt_script/llm_adapter.py` — LLM → Script; guardrail injection |
+| A1.5 | `adapters/plan_shots/llm_adapter.py` — LLM → Storyboard; shot structure + timing |
+| A1.6 | `adapters/render_character/diffusion_adapter.py` — AUTOMATIC1111 SD API; LoRA gate |
+| A1.7 | `adapters/synthesize_voice/tts_adapter.py` — Chatterbox TTS HTTP API; voice gate |
+| A1.8 | `adapters/generate_video/wan_adapter.py` — Wan 2.7 HTTP API; image-to-video |
+| A1.9 | `adapters/lip_sync/lip_sync_adapter.py` — Wav2Lip HTTP API; dialogue sync |
+| A1.10 | `adapters/assemble_video/ffmpeg_adapter.py` — ffmpeg concat + captions + disclosure |
+| A1.11 | `adapters/publish/manual_adapter.py` — review folder + metadata.json sidecar |
+| A1.12 | `core/workflow.py:run_pipeline_job()` — full 9-stage DAG with `_run_shot()` loop |
+| Agents | `CLAUDE.md` + `.claude/agents/` (project-status, test-runner, track-b-setup, pipeline-runner) |
+
+### What's blocking end-to-end execution
+
+The code is complete. Two things must happen before the pipeline can run on real content:
+
+**Track B (file blockers)**
+- `loras/pig_kids_placeholder_c{1-4}.safetensors` — must be trained from approved character art
+- `voices/pig_kids_placeholder/c{1-4}.wav` — must be recorded, matching each character's personality
+- See `.claude/agents/track-b-setup.md` for exact setup steps
+
+**Track D (service blockers)**
+- Ollama + `qwen2.5:7b` must be running on port 11434
+- AUTOMATIC1111 must be running on port 7860 (with LoRA weights loaded)
+- Chatterbox TTS service on port 8020
+- Wan 2.7 service on port 8030
+- Wav2Lip service on port 8040
+- Budget decision #10 needed before provisioning rented GPU
+- See `.claude/agents/pipeline-runner.md` for pre-flight and startup guide
+
+**Track E**
+- Operator compliance sign-off (sourcing policy, COPPA, disclosure, age-appropriateness rubric)
+
+## Phase 2 Plan — Critic Loop
+
+Phase 2 adds an automated quality gate: generate → evaluate → regenerate if failing.
+
+### What Phase 2 builds
+
+| Item | Deliverable |
+| --- | --- |
+| A2.1 | `adapters/critique/vlm_adapter.py` — VLM rates the assembled video on age-appropriateness, clarity, engagement |
+| A2.1b | `core/models/capabilities.py` additions — `CritiqueRequest`, `CritiqueResult` (already modeled) |
+| A2.2 | Regeneration loop in `core/workflow.py` — `run_with_critique()` wraps `run_pipeline_job()` with up to `Settings.max_regenerations` retries |
+| A2.3 | Critique storage — save all CritiqueResults as artifacts; log verdict + reasons per job |
+| A2.4 | Candidate selection — if multiple candidates generated, choose highest-scoring |
+
+### Phase 2 acceptance criteria
+
+- A video that fails the VLM age-appropriateness check is auto-regenerated (up to `max_regenerations=3`)
+- Only passing candidates proceed to publish
+- All critique results are persisted and queryable
+- **Milestone: with the real cast in place, first-pass output is good enough to judge quality**
+  This is the "test the waters" gate — pause here and have the operator evaluate before any hardware purchase
+
+### Phase 2 pre-requisites
+
+- Phase 1 must be running end-to-end on real content (Track B + D complete)
+- A VLM (e.g. LLaVA, Qwen-VL) must be available on Ollama or as a separate service
+- The age-appropriateness rubric must be defined and operator-signed-off (Track E)
+
+### Phase 2 key decisions
+
+- Which VLM for critique? (LLaVA-1.5 via Ollama is the cheapest starting point)
+- What's the age-appropriateness rubric? (operator defines pass/fail criteria)
+- What's the max cost ceiling for regenerations? (each retry = full GPU cost)
+
+## Open Gates (updated 2026-06-19)
+
+- **#1** Workflow engine — asyncio is the working default; Prefect/Temporal can replace if needed in Phase 3
+- **#2** Target platform — review folder is the default; real platform TBD by operator
+- **#3** Cast visual designs — placeholder designs; must be replaced before the "test the waters" milestone
+- **#10** Build budget ceiling — required before any paid GPU provisioning (Track D)
+- **#E** Compliance posture — Track E sign-off required before first real video publish
