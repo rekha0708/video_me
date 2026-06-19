@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     s3_region: str = "us-east-1"
     workflow_engine: str = "asyncio"
     max_regenerations: int = 3
+    lora_dir: Path = Path("loras")
+    voice_dir: Path = Path("voices")
+    review_dir: Path = Path("review")
 
 
 class AppConfig(BaseModel):

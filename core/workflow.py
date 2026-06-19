@@ -1,12 +1,34 @@
+import asyncio
 import logging
+from dataclasses import dataclass, field
+from pathlib import Path
 
 from core.config import AppConfig, load_app_config
+from core.executor import StageError, check_rights, run_stage
+from core.models.capabilities import (
+    AnalyzeRequest,
+    AssembleRequest,
+    AudioTrack,
+    FetchMediaRequest,
+    LipSyncRequest,
+    PlanShotsRequest,
+    PublishRequest,
+    RenderCharacterRequest,
+    TranscribeRequest,
+    VideoClip,
+    VideoRequest,
+    VoiceRequest,
+)
+from core.models.capabilities import AdaptScriptRequest
+from core.models.content import Script, Shot, Storyboard
 from core.models.job import Job, JobStatus
+from core.models.profile import Cast
 from core.observability import log_event
 from core.storage import completed_stage, create_artifact_store, create_job_store
 
 logger = logging.getLogger(__name__)
 
+# ------------------------------------------------------------------ Phase 0 compat
 
 NOOP_STAGES = ("create_job", "noop_dag", "record_result")
 
@@ -52,3 +74,327 @@ async def run_noop_job(
     jobs.save_job(job)
     log_event(logger, "job_completed", job_id=job.job_id)
     return job
+
+
+# ------------------------------------------------------------------ Phase 1 pipeline
+
+@dataclass
+class _Adapters:
+    """Holds one concrete adapter instance per capability for a single job run."""
+    fetch_media: object
+    transcribe: object
+    analyze: object
+    adapt: object
+    plan: object
+    render: object
+    voice: object
+    video: object
+    lipsync: object
+    assemble: object
+    publish: object
+    ffmpeg_bin: str = field(default="ffmpeg")
+
+
+def _make_adapters(config: AppConfig, work_dir: Path) -> _Adapters:
+    """Instantiate all Phase 1 adapters with job-scoped work directories."""
+    from adapters.adapt_script.llm_adapter import LlmAdaptScriptAdapter
+    from adapters.analyze_content.llm_adapter import LlmAnalyzeAdapter
+    from adapters.assemble_video.ffmpeg_adapter import FfmpegAssembleAdapter
+    from adapters.fetch_media.ytdlp_adapter import YtDlpAdapter
+    from adapters.generate_video.wan_adapter import WanAdapter
+    from adapters.lip_sync.lip_sync_adapter import LipSyncAdapter
+    from adapters.plan_shots.llm_adapter import LlmPlanShotsAdapter
+    from adapters.publish.manual_adapter import ManualPublishAdapter
+    from adapters.render_character.diffusion_adapter import DiffusionRenderAdapter
+    from adapters.synthesize_voice.tts_adapter import TtsAdapter
+    from adapters.transcribe.whisper_adapter import WhisperAdapter
+
+    s = config.settings
+    return _Adapters(
+        fetch_media=YtDlpAdapter(work_dir=work_dir / "fetch_media"),
+        transcribe=WhisperAdapter(),
+        analyze=LlmAnalyzeAdapter(),
+        adapt=LlmAdaptScriptAdapter(),
+        plan=LlmPlanShotsAdapter(),
+        render=DiffusionRenderAdapter(
+            work_dir=work_dir / "renders",
+            lora_dir=s.lora_dir,
+        ),
+        voice=TtsAdapter(
+            work_dir=work_dir / "audio",
+            voice_dir=s.voice_dir,
+        ),
+        video=WanAdapter(work_dir=work_dir / "video"),
+        lipsync=LipSyncAdapter(work_dir=work_dir / "synced"),
+        assemble=FfmpegAssembleAdapter(work_dir=work_dir / "assembled"),
+        publish=ManualPublishAdapter(review_dir=s.review_dir),
+    )
+
+
+def _resolve_line(ref: str, script: Script):
+    """Parse a dialogue_line_ref and return the Line it points to.
+
+    Format: "scene-{N}-line-{M}"  (N is 1-indexed, M is 0-indexed).
+    """
+    parts = ref.split("-")          # ["scene", "1", "line", "0"]
+    scene_idx = int(parts[1]) - 1
+    line_idx = int(parts[3])
+    return script.scenes[scene_idx].lines[line_idx]
+
+
+async def _run_shot(
+    shot: Shot,
+    script: Script,
+    cast: Cast,
+    adapters: _Adapters,
+) -> tuple[VideoClip, AudioTrack]:
+    """Run all four per-shot stages for one shot.
+
+    Sequence: render_character → synthesize_voice → generate_video → lip_sync.
+    Returns (synced VideoClip, AudioTrack) so the caller can collect both.
+    """
+    member_map = {m.id: m for m in cast.members}
+
+    # Speaker is always characters_on_screen[0] (enforced by plan_shots trim_characters).
+    speaker_id = shot.characters_on_screen[0]
+    speaker = member_map[speaker_id]
+
+    # Resolve first dialogue line (plan_shots produces one line per shot).
+    first_line = (
+        _resolve_line(shot.dialogue_line_refs[0], script)
+        if shot.dialogue_line_refs
+        else None
+    )
+    expression = first_line.expression if first_line else None
+    line_text = first_line.text if first_line else ""
+
+    log_event(
+        logger, "shot_started",
+        shot_id=shot.shot_id, speaker=speaker_id, text_chars=len(line_text),
+    )
+
+    # 1. render_character — still frame of the speaker in this setting
+    render_result = await adapters.render.run(
+        RenderCharacterRequest(
+            member=speaker,
+            setting=shot.setting,
+            expression=expression,
+        )
+    )
+
+    # 2. synthesize_voice — TTS for the dialogue line
+    audio_track = await adapters.voice.run(
+        VoiceRequest(
+            text=line_text,
+            voice_profile_ref=speaker.voice_profile_ref,
+            speaker_id=speaker_id,
+            expression=expression,
+        )
+    )
+
+    # 3. generate_video — animate the still frame
+    clip = await adapters.video.run(
+        VideoRequest(
+            image_uri=render_result.images[0],
+            action=shot.action,
+            duration_sec=shot.duration_sec,
+            shot_id=shot.shot_id,
+        )
+    )
+
+    # 4. lip_sync — align mouth to dialogue audio
+    synced = await adapters.lipsync.run(
+        LipSyncRequest(
+            video_uri=clip.uri,
+            audio_uri=audio_track.uri,
+            shot_id=shot.shot_id,
+        )
+    )
+
+    log_event(logger, "shot_completed", shot_id=shot.shot_id)
+    return synced, audio_track
+
+
+async def _concat_audio(
+    tracks: list[AudioTrack],
+    work_dir: Path,
+    ffmpeg_bin: str = "ffmpeg",
+) -> AudioTrack:
+    """Concatenate per-shot WAV files into one combined dialogue track."""
+    if len(tracks) == 1:
+        return tracks[0]
+
+    concat_file = work_dir / "audio_concat.txt"
+    lines = [f"file '{Path(t.uri).resolve()}'" for t in tracks]
+    concat_file.write_text("\n".join(lines), encoding="utf-8")
+
+    output = work_dir / "combined_audio.wav"
+    proc = await asyncio.create_subprocess_exec(
+        ffmpeg_bin, "-y",
+        "-f", "concat", "-safe", "0", "-i", str(concat_file),
+        "-c:a", "copy",
+        str(output),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        tail = stderr.decode(errors="replace")[-1000:]
+        raise RuntimeError(f"Audio concat failed (exit {proc.returncode}):\n{tail}")
+
+    return AudioTrack(
+        uri=str(output),
+        duration_sec=sum(t.duration_sec for t in tracks),
+    )
+
+
+async def run_pipeline_job(
+    source_url: str,
+    rights_cleared: bool = False,
+    app_config: AppConfig | None = None,
+) -> Job:
+    """
+    Full Phase 1 pipeline: URL → review-folder MP4 + metadata sidecar.
+
+    Stage sequence
+    ~~~~~~~~~~~~~~
+    1. fetch_media      — yt-dlp download + ffmpeg audio extraction
+    2. transcribe       — faster-whisper speech-to-text
+    3. analyze_content  — LLM extracts ContentMetadata + LearningObjective
+    4. check_rights     — pipeline gate; blocks if rights_cleared=False
+    5. adapt_script     — LLM writes original Script; adapter injects guardrails
+    6. plan_shots       — LLM plans camera/action; adapter derives shot structure
+    7. [per shot]       — render_character → synthesize_voice → generate_video → lip_sync
+    8. assemble_video   — ffmpeg concat + scale + caption + disclosure label
+    9. publish          — copy to review folder + metadata.json sidecar
+
+    Args:
+        source_url:     URL of the reference video to ingest.
+        rights_cleared: Caller asserts the source is cleared for transformation.
+                        If False, the job is blocked at stage 4.
+        app_config:     Override the default YAML-loaded config (useful in tests).
+    """
+    config = app_config or load_app_config()
+    settings = config.settings
+    artifact_store = create_artifact_store(settings)
+    job_store = create_job_store(settings)
+
+    job = Job(
+        source_url=source_url,
+        channel_profile_ref=config.channel_profile.id,
+        cast_ref=config.cast.id,
+        rights_cleared=rights_cleared,
+    )
+    job.status = JobStatus.RUNNING
+    job_store.save_job(job)
+    log_event(logger, "job_started", job_id=job.job_id, source_url=source_url)
+
+    work_dir = settings.data_dir / "jobs" / job.job_id
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    adapters = _make_adapters(config, work_dir)
+
+    try:
+        # 1. fetch_media
+        fetch_result = await run_stage(
+            "fetch_media", adapters.fetch_media,
+            FetchMediaRequest(source_url=source_url),
+            job, artifact_store, job_store,
+        )
+
+        # 2. transcribe
+        transcribe_result = await run_stage(
+            "transcribe", adapters.transcribe,
+            TranscribeRequest(audio_uri=fetch_result.audio_uri),
+            job, artifact_store, job_store,
+        )
+
+        # 3. analyze_content
+        metadata = await run_stage(
+            "analyze_content", adapters.analyze,
+            AnalyzeRequest(
+                transcript=transcribe_result,
+                channel_profile=config.channel_profile,
+            ),
+            job, artifact_store, job_store,
+        )
+
+        # 4. rights gate (not a capability — runs synchronously)
+        check_rights(job)
+
+        # 5. adapt_script
+        script: Script = await run_stage(
+            "adapt_script", adapters.adapt,
+            AdaptScriptRequest(
+                metadata=metadata,
+                cast=config.cast,
+                channel_profile=config.channel_profile,
+            ),
+            job, artifact_store, job_store,
+        )
+
+        # 6. plan_shots
+        storyboard: Storyboard = await run_stage(
+            "plan_shots", adapters.plan,
+            PlanShotsRequest(script=script, cast=config.cast),
+            job, artifact_store, job_store,
+        )
+
+        # 7. per-shot loop
+        synced_clips: list[VideoClip] = []
+        audio_tracks: list[AudioTrack] = []
+        for shot in storyboard.shots:
+            synced, audio = await _run_shot(shot, script, config.cast, adapters)
+            synced_clips.append(synced)
+            audio_tracks.append(audio)
+
+        combined_audio = await _concat_audio(audio_tracks, work_dir, adapters.ffmpeg_bin)
+
+        # 8. assemble_video
+        final_video = await run_stage(
+            "assemble_video", adapters.assemble,
+            AssembleRequest(
+                clips=synced_clips,
+                audio=combined_audio,
+                caption_text=script.caption_text,
+                aspect_ratio=config.channel_profile.aspect_ratio,
+                made_for_kids=config.channel_profile.made_for_kids,
+                disclosure_label_required=config.channel_profile.disclosure_label_required,
+            ),
+            job, artifact_store, job_store,
+        )
+
+        # 9. publish
+        await run_stage(
+            "publish", adapters.publish,
+            PublishRequest(
+                video=final_video,
+                rights_cleared=job.rights_cleared,
+                made_for_kids=config.channel_profile.made_for_kids,
+                disclosure_label_required=config.channel_profile.disclosure_label_required,
+                learning_objective_summary=script.learning_objective.success_phrase,
+            ),
+            job, artifact_store, job_store,
+        )
+
+        job.status = JobStatus.COMPLETED
+        job_store.save_job(job)
+        log_event(logger, "job_completed", job_id=job.job_id)
+        return job
+
+    except StageError as exc:
+        # check_rights sets BLOCKED itself; all other StageErrors → FAILED
+        if job.status not in (JobStatus.BLOCKED,):
+            job.status = JobStatus.FAILED
+        log_event(
+            logger, "job_failed",
+            job_id=job.job_id, stage=exc.stage_name, reason=exc.reason,
+        )
+        job_store.save_job(job)
+        raise
+
+    except Exception as exc:
+        job.status = JobStatus.FAILED
+        log_event(logger, "job_failed", job_id=job.job_id, reason=str(exc))
+        job_store.save_job(job)
+        raise

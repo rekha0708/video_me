@@ -115,7 +115,7 @@ It is the implementation journal for `Agent.md`, `project-flow-and-execution-pla
   Operator can confirm or override once the engine decision is made (Open Gate #1).
 
 - ~~**All 12 adapter directories are empty.**~~ **PARTIALLY RESOLVED 2026-06-19.** 11 of 12
-  adapters implemented and tested (A1.0–A1.11). A1.12 (workflow DAG wire-up) remains.
+  adapters implemented and tested (A1.0–A1.11). A1.12 (workflow DAG wire-up) complete.
 
 ## Phase 1 — Next Steps (sequenced; top items unblock the rest)
 
@@ -180,12 +180,15 @@ It is the implementation journal for `Agent.md`, `project-flow-and-execution-pla
        subdir; writes metadata.json sidecar (8 required fields); refuses to run when
        rights_cleared=False (defense-in-depth after executor gate); raises clear error when
        video file missing (assemble_video must run first).
-- [ ] A1.12 Wire real workflow DAG — replace `run_noop_job` with full stage sequence using
-       executor; enforce guardrail gates; log structured events per stage.
+- [x] A1.12 Wire real workflow DAG — `run_pipeline_job()` in `core/workflow.py`; full 9-stage
+       sequence (fetch→transcribe→analyze→rights-gate→adapt→plan→per-shot-loop→assemble→publish);
+       `_run_shot()` helper (render→voice→video→lipsync per shot); `_concat_audio()` concatenates
+       per-shot WAVs with ffmpeg; `_make_adapters()` instantiates all adapters from config; error
+       handling sets BLOCKED (rights) or FAILED (all others); 22 new tests (264 total).
 
 ### Phase 1 work log — 2026-06-19
 
-Built and tested all Track A adapters A1.0–A1.11. **242 tests passing** across 11 test files.
+Built and tested all Track A adapters A1.0–A1.12. **264 tests passing** across 12 test files.
 
 **Core framework added:**
 
