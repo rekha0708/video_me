@@ -9,6 +9,7 @@ needed before the pipeline can render and speak with the final cast.
 - LoRA drop location: `loras/`
 - Voice drop location: `voices/kids_duo/`
 - Verification: `python -m scripts.check_track_b`
+- Runtime/GPU readiness: `bash scripts/setup_gpu.sh` then `python -m scripts.check_runtime_readiness`
 
 ## Character Reference Sheets
 
@@ -58,6 +59,10 @@ loras/kids_duo_zoe.safetensors
 ```
 
 The render adapter injects tags like `<lora:kids_duo_max:0.9>` automatically.
+During temporary code-test smoke runs only, explicit `TEST-ONLY placeholder`
+LoRAs can be accepted with `VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA=true`; the
+adapter then omits fake LoRA tags from prompts. Strict real-run readiness still
+requires trained weights.
 
 ## Voice References
 

@@ -133,6 +133,20 @@ Current code-test output may show `OK TEST` for LoRAs and
 `Track B: READY_FOR_CODE_TESTS`. That is enough for local file-gate and mocked
 pipeline work, but real rendering still requires trained LoRA weights.
 
+For temporary render smoke tests only, the render adapter can skip placeholder
+LoRA tags instead of sending fake weights to Stable Diffusion:
+
+```bash
+export VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA=true
+bash scripts/setup_gpu.sh --code-test --skip-services
+```
+
+Strict real-run readiness intentionally fails while placeholder LoRAs are present:
+
+```bash
+python -m scripts.check_runtime_readiness
+```
+
 ---
 
 ## Common errors and fixes
@@ -153,3 +167,5 @@ for the end-to-end run guide.
 
 If it prints `Track B: READY_FOR_CODE_TESTS`, Phase 2-4 code work can proceed
 with mocks, but do not expect AUTOMATIC1111 to load the placeholder LoRA files.
+Use `VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA=true` only for temporary smoke tests;
+replace placeholders with trained weights before a real GPU render.

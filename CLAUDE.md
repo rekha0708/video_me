@@ -11,7 +11,7 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 
 ## Current state (as of 2026-06-20)
 
-**Phase 2 code is complete. 295 tests pass. Real end-to-end output is blocked on real Track B LoRAs + Track D services.**
+**Phase 2 code is complete. 313 tests pass. Real end-to-end output is blocked on real Track B LoRAs + Track D services.**
 
 | Track / Phase | Status | Blocker |
 |---|---|---|

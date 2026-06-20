@@ -318,7 +318,7 @@ Phase 2 adds an automated quality gate: generate → evaluate → regenerate if 
 
 ## Phase 2 Complete — 2026-06-20
 
-**Critic-loop code is built and tested. 295 tests passing.**
+**Critic-loop code is built and tested. Current suite is 313 tests passing after GPU readiness prep.**
 
 What was added:
 

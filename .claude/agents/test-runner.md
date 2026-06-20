@@ -17,22 +17,27 @@ pattern, and every fixture. Always run tests before reporting results.
 
 ```
 tests/
-  test_phase0_models.py      — Pydantic model validation (5 tests)
+  test_phase0_models.py      — Pydantic model validation (4 tests)
   test_phase0_workflow.py    — run_noop_job integration (1 test)
   test_executor.py           — run_stage + check_rights (4 tests)
-  test_fetch_media.py        — YtDlpAdapter (ytdlp/ffmpeg mocked)
-  test_transcribe.py         — WhisperAdapter (whisper mocked)
-  test_analyze_content.py    — LlmAnalyzeAdapter (httpx mocked)
-  test_adapt_script.py       — LlmAdaptScriptAdapter (httpx mocked)
-  test_plan_shots.py         — LlmPlanShotsAdapter (29 tests, httpx mocked)
-  test_render_character.py   — DiffusionRenderAdapter (23 tests, httpx mocked)
+  test_fetch_media.py        — YtDlpAdapter (8 tests, yt-dlp/ffmpeg mocked)
+  test_transcribe.py         — WhisperAdapter (11 tests, whisper mocked)
+  test_analyze_content.py    — LlmAnalyzeAdapter (18 tests, OpenAI mocked)
+  test_adapt_script.py       — LlmAdaptScriptAdapter (21 tests, OpenAI mocked)
+  test_plan_shots.py         — LlmPlanShotsAdapter (29 tests, OpenAI mocked)
+  test_render_character.py   — DiffusionRenderAdapter (29 tests, httpx mocked)
   test_synthesize_voice.py   — TtsAdapter (27 tests, httpx mocked)
   test_generate_video.py     — WanAdapter (18 tests, httpx mocked)
   test_lip_sync.py           — LipSyncAdapter (20 tests, httpx mocked)
   test_assemble_video.py     — FfmpegAssembleAdapter (32 tests, ffmpeg mocked)
+  test_critique.py           — VlmCritiqueAdapter (26 tests, OpenAI + ffmpeg mocked)
   test_publish.py            — ManualPublishAdapter (26 tests, no deps)
-  test_workflow.py           — run_pipeline_job (22 tests, all stages mocked)
+  test_runtime_readiness.py  — GPU readiness checks (7 tests, filesystem/network mocked)
+  test_setup_gpu.py          — GPU setup command helpers (4 tests)
+  test_workflow.py           — run_pipeline_job/run_with_critique (28 tests, all stages mocked)
 ```
+
+Current full suite: 313 tests.
 
 ## Quick commands
 
@@ -59,7 +64,7 @@ python -m pytest --cov=core --cov=adapters --cov-report=term-missing -q
 ## Key mocking patterns
 
 ### HTTP adapters (httpx)
-All adapters that call external HTTP services use lazy `import httpx` inside methods.
+Render/TTS/video/lip-sync adapters use lazy `import httpx` inside methods.
 Mock at the module level with `patch.dict(sys.modules, {"httpx": fake_httpx})`:
 
 ```python
@@ -79,6 +84,11 @@ fake_httpx.AsyncClient.return_value = mock_client
 with patch.dict(sys.modules, {"httpx": fake_httpx}):
     result = await adapter.run(request)
 ```
+
+### OpenAI-compatible adapters
+Analyze/adapt/plan/critique use lazy `from openai import AsyncOpenAI`. Mock with
+`patch.dict(sys.modules, {"openai": fake_openai})` and provide `AsyncOpenAI.return_value`
+with `models.list` and/or `chat.completions.create` as needed.
 
 ### Subprocess adapters (ffmpeg / yt-dlp)
 Use `patch("asyncio.create_subprocess_exec", new=AsyncMock(...))` or
@@ -107,6 +117,16 @@ with pytest.raises(RuntimeError, match="Track B"):
 # httpx should never have been imported
 assert "httpx" not in sys.modules
 ```
+
+Placeholder LoRA behavior is intentionally split:
+- strict/default mode raises on `TEST-ONLY placeholder` files before any SD HTTP call.
+- smoke-test mode (`allow_placeholder_lora=True` or
+  `VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA=true`) omits the fake LoRA tag from the prompt.
+
+### Readiness/setup tests
+`tests/test_runtime_readiness.py` must not contact real services. Mock `find_spec`, `shutil.which`,
+and `urlopen`. `tests/test_setup_gpu.py` checks command construction only; do not run package
+installation from tests.
 
 ## Fixtures
 
