@@ -59,7 +59,7 @@ PHASE SUMMARY
    A1.10 assemble_video (ffmpeg)
    A1.11 publish (review folder + metadata sidecar)
    A1.12 workflow DAG (run_pipeline_job)
-✅ Phase 2 — Critic loop      COMPLETE (code) — run_with_critique + VLM adapter
+✅ Phase 2 — Critic loop      COMPLETE (code) — run_with_critique + frame-sampling VLM adapter
 ⏳ Phase 3 — Framework        NOT STARTED
 ⏳ Phase 4 — Learning loop    NOT STARTED
 

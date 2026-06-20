@@ -166,6 +166,12 @@ print(f"Status: {job.status}")
 print(f"Stages: {list(job.stage_results.keys())}")
 ```
 
+The critique adapter samples local frames from the assembled MP4 with ffprobe/ffmpeg and sends
+those images to the VLM as OpenAI-compatible multimodal `image_url` data URLs. The sampled frame
+paths are stored in each critique result for debugging. Move this into a separate VLM wrapper
+service later if critique preprocessing needs batching, caching, scene-aware sampling, or a clearer
+service boundary for Phase 3 self-healing.
+
 ### With custom settings
 
 ```python

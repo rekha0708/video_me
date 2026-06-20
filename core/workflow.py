@@ -138,7 +138,7 @@ def _make_adapters(config: AppConfig, work_dir: Path) -> _Adapters:
         video=WanAdapter(work_dir=work_dir / "video"),
         lipsync=LipSyncAdapter(work_dir=work_dir / "synced"),
         assemble=FfmpegAssembleAdapter(work_dir=work_dir / "assembled"),
-        critique=VlmCritiqueAdapter(),
+        critique=VlmCritiqueAdapter(work_dir=work_dir / "critique"),
         publish=ManualPublishAdapter(review_dir=s.review_dir),
     )
 

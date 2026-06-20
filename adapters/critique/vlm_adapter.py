@@ -1,3 +1,5 @@
+import asyncio
+import base64
 import json
 import logging
 import re
@@ -88,10 +90,9 @@ class VlmCritiqueAdapter(Critique):
     """
     critique adapter: automated preflight + OpenAI-compatible VLM/LLM judgment.
 
-    The adapter currently sends the candidate video URI and script to an
-    OpenAI-compatible endpoint. Some local VLM services may need a wrapper that
-    extracts frames or accepts video input; that wrapper can sit behind this same
-    JSON contract without changing the workflow.
+    The adapter samples frames locally with ffprobe/ffmpeg, embeds those frames
+    as data URLs in an OpenAI-compatible multimodal chat request, and persists
+    the sampled frame paths on CritiqueResult for audit/debug.
     """
 
     version = "1.0.0"
@@ -103,12 +104,24 @@ class VlmCritiqueAdapter(Critique):
         api_key: str = "ollama",
         temperature: float = 0.1,
         max_tokens: int = 1024,
+        work_dir: Path = Path(".local/critique"),
+        ffmpeg_bin: str = "ffmpeg",
+        ffprobe_bin: str = "ffprobe",
+        sample_frames: bool = True,
+        frame_count: int = 6,
+        frame_width: int = 512,
     ) -> None:
         self._model = model
         self._base_url = base_url
         self._api_key = api_key
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._work_dir = work_dir
+        self._ffmpeg_bin = ffmpeg_bin
+        self._ffprobe_bin = ffprobe_bin
+        self._sample_frames = sample_frames
+        self._frame_count = frame_count
+        self._frame_width = frame_width
 
     async def health(self) -> HealthStatus:
         try:
@@ -142,18 +155,21 @@ class VlmCritiqueAdapter(Critique):
 
         from openai import AsyncOpenAI
 
+        sampled_frames = await self._sample_video_frames(req.video_uri)
+
         log_event(
             logger,
             "critique_started",
             model=self._model,
             video_uri=req.video_uri,
             channel_profile_id=req.channel_profile_id,
+            sampled_frames=len(sampled_frames),
         )
 
         client = AsyncOpenAI(base_url=self._base_url, api_key=self._api_key)
         response = await client.chat.completions.create(
             model=self._model,
-            messages=self._build_messages(req),
+            messages=self._build_messages(req, sampled_frames),
             temperature=self._temperature,
             max_tokens=self._max_tokens,
             response_format={"type": "json_object"},
@@ -161,6 +177,7 @@ class VlmCritiqueAdapter(Critique):
 
         raw = response.choices[0].message.content or ""
         result = self._parse_response(raw)
+        result.sampled_frame_uris = [str(path) for path in sampled_frames]
 
         log_event(
             logger,
@@ -168,6 +185,7 @@ class VlmCritiqueAdapter(Critique):
             verdict=result.verdict,
             scores=result.scores,
             reasons=result.reasons,
+            sampled_frames=result.sampled_frame_uris,
         )
 
         return result
@@ -193,15 +211,32 @@ class VlmCritiqueAdapter(Critique):
 
         return None
 
-    def _build_messages(self, req: CritiqueRequest) -> list[dict]:
+    def _build_messages(
+        self,
+        req: CritiqueRequest,
+        sampled_frames: list[Path] | None = None,
+    ) -> list[dict]:
         user_content = _USER_TEMPLATE.format(
             video_uri=req.video_uri,
             channel_profile_id=req.channel_profile_id,
             script_summary=_script_summary(req.script),
         )
+        content: str | list[dict] = user_content
+        if sampled_frames:
+            content = [{"type": "text", "text": user_content}]
+            for frame in sampled_frames:
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": _image_data_url(frame),
+                            "detail": "low",
+                        },
+                    }
+                )
         return [
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
+            {"role": "user", "content": content},
         ]
 
     def _parse_response(self, raw: str) -> CritiqueResult:
@@ -218,3 +253,89 @@ class VlmCritiqueAdapter(Critique):
             return CritiqueResult.model_validate(data)
         except ValidationError as exc:
             raise RuntimeError(f"Critique model returned invalid result shape: {exc}") from exc
+
+    async def _sample_video_frames(self, video_uri: str) -> list[Path]:
+        if (
+            not self._sample_frames
+            or self._frame_count <= 0
+            or _is_remote_uri(video_uri)
+        ):
+            return []
+
+        video_path = Path(video_uri)
+        duration = await self._probe_duration(video_path)
+        timestamps = self._frame_timestamps(duration)
+        out_dir = self._work_dir / "sampled_frames" / video_path.stem
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        frames: list[Path] = []
+        for index, timestamp in enumerate(timestamps, start=1):
+            frame_path = out_dir / f"frame_{index:02d}.jpg"
+            await self._extract_frame(video_path, frame_path, timestamp)
+            if frame_path.exists():
+                frames.append(frame_path)
+
+        if not frames:
+            raise RuntimeError(
+                f"Critique frame sampling produced no frames for {video_path}."
+            )
+        return frames
+
+    def _frame_timestamps(self, duration_sec: float | None) -> list[float]:
+        if duration_sec is None or duration_sec <= 0:
+            return [float(i) for i in range(self._frame_count)]
+        step = duration_sec / (self._frame_count + 1)
+        return [round(step * i, 3) for i in range(1, self._frame_count + 1)]
+
+    async def _probe_duration(self, video_path: Path) -> float | None:
+        returncode, stdout, _ = await self._run_process(
+            self._ffprobe_bin,
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(video_path),
+        )
+        if returncode != 0:
+            return None
+        try:
+            return float(stdout.decode().strip())
+        except ValueError:
+            return None
+
+    async def _extract_frame(
+        self,
+        video_path: Path,
+        frame_path: Path,
+        timestamp_sec: float,
+    ) -> None:
+        returncode, _, stderr = await self._run_process(
+            self._ffmpeg_bin,
+            "-y",
+            "-ss", f"{timestamp_sec:.3f}",
+            "-i", str(video_path),
+            "-frames:v", "1",
+            "-vf", f"scale={self._frame_width}:-2",
+            "-q:v", "3",
+            str(frame_path),
+        )
+        if returncode != 0:
+            tail = stderr.decode(errors="replace")[-1000:]
+            raise RuntimeError(
+                f"Frame extraction failed for {video_path} at {timestamp_sec:.3f}s "
+                f"(exit {returncode}):\n{tail}"
+            )
+
+    async def _run_process(self, *args: str) -> tuple[int, bytes, bytes]:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        return proc.returncode, stdout, stderr
+
+
+def _image_data_url(path: Path) -> str:
+    media_type = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+    payload = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{media_type};base64,{payload}"

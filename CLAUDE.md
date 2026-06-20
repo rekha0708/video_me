@@ -11,7 +11,7 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 
 ## Current state (as of 2026-06-20)
 
-**Phase 2 code is complete. 286 tests pass. Real end-to-end output is blocked on real Track B LoRAs + Track D services.**
+**Phase 2 code is complete. 295 tests pass. Real end-to-end output is blocked on real Track B LoRAs + Track D services.**
 
 | Track / Phase | Status | Blocker |
 |---|---|---|
@@ -61,6 +61,7 @@ check_rights()  ◄─── BLOCKS job (status=BLOCKED) if rights_cleared=False
     │
     ▼
 [critique]           VLM/LLM rubric → pass | regenerate | reject (Phase 2 path)
+                     samples frames locally with ffprobe/ffmpeg for visual input
     │
     ▼
 [publish]            copy to review/ folder + metadata.json sidecar
@@ -103,7 +104,7 @@ The stage runner is `core/executor.py:run_stage()`. The Phase 1 DAG is
 | `loras/` | LoRA weight files — **MUST EXIST** for render_character (Track B) |
 | `voices/` | Reference WAV files — **MUST EXIST** for synthesize_voice (Track B) |
 | `review/` | Output: `<timestamp>_<stem>/video.mp4` + `metadata.json` sidecar |
-| `tests/` | 286 tests across 15 test files; no external services needed |
+| `tests/` | 295 tests across 15 test files; no external services needed |
 | `BUILD_PROGRESS.md` | Full implementation journal + decision log |
 | `Agent.md` | Lead Designer agent charter |
 
@@ -165,7 +166,14 @@ curl -s http://localhost:8030/health
 curl -s http://localhost:8040/health
 ```
 
-LLM model needed: `qwen2.5:7b`; critique defaults to `llava:7b`.
+LLM model needed: `qwen2.5:7b`; critique defaults to `llava:7b`. Phase 2 samples local video
+frames in the adapter and sends them as multimodal `image_url` data URLs. This keeps the MVP
+inspectable because sampled frames are saved under the job work directory and persisted on
+`CritiqueResult.sampled_frame_uris`.
+
+Future migration trigger: move frame extraction into a dedicated VLM wrapper service when critique
+needs GPU-side batching/caching, scene-aware sampling, multiple VLM backends sharing preprocessing,
+or cleaner separation for Phase 3 router/self-healing.
 
 ---
 
@@ -190,7 +198,7 @@ python -m pytest --cov=core --cov=adapters --cov-report=term-missing -q
 
 Test count by file:
 - `test_workflow.py` — 27 (DAG orchestration, rights blocking, per-shot loop, critique loop)
-- `test_critique.py` — 22 (VLM critique adapter, preflight, parsing)
+- `test_critique.py` — 26 (VLM critique adapter, frame sampling, preflight, parsing)
 - `test_plan_shots.py` — 29
 - `test_assemble_video.py` — 32
 - `test_publish.py` — 26

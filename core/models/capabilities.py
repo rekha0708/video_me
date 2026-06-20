@@ -166,6 +166,7 @@ class CritiqueResult(BaseModel):
     verdict: Literal["pass", "regenerate", "reject"]
     reasons: list[str]
     suggested_param_overrides: dict[str, Any] = Field(default_factory=dict)
+    sampled_frame_uris: list[str] = Field(default_factory=list)
 
 
 # ---------- publish ----------

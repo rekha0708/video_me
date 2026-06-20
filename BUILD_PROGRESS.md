@@ -318,7 +318,7 @@ Phase 2 adds an automated quality gate: generate → evaluate → regenerate if 
 
 ## Phase 2 Complete — 2026-06-20
 
-**Critic-loop code is built and tested. 286 tests passing.**
+**Critic-loop code is built and tested. 295 tests passing.**
 
 What was added:
 
@@ -328,6 +328,7 @@ What was added:
 | A2.2 | `core/workflow.py:run_with_critique()` — candidate generation, critique, regenerate/reject/pass handling |
 | A2.3 | Critique persistence via `run_stage()` using `critique_attempt_1`, `critique_attempt_2`, ... |
 | A2.4 | Tests for pass, regenerate, reject, max-regeneration exhaustion, and rights blocking |
+| A2.5 | Frame sampling inside the critique adapter; sampled frames are attached as multimodal image inputs and recorded in `CritiqueResult.sampled_frame_uris` |
 
 Behavior:
 
@@ -342,6 +343,27 @@ Real-world caveat:
   `http://localhost:11434/v1`.
 - Unit tests mock the VLM. Actual quality judgment still needs Track D service setup and an
   operator-approved age-appropriateness rubric.
+
+### Phase 2 visual-input decision: helper step now, wrapper later
+
+Decision: implement Option 2 first — sample frames inside the critique adapter before calling the
+multimodal model.
+
+Why this choice now:
+
+- Fastest path to a real Phase 2 MVP without adding another service boundary.
+- Sampled frames live in the job work directory and are recorded on the critique result, making
+  verdicts easier to debug.
+- The orchestration tests can mock ffprobe/ffmpeg and the VLM independently.
+- The current system already depends on ffmpeg, so this adds little local operational complexity.
+
+When to move to Option 1, a dedicated VLM wrapper service:
+
+- Frame extraction or visual preprocessing becomes expensive enough to colocate with GPU inference.
+- We need batching, caching, scene-aware sampling, or more advanced video understanding.
+- Multiple critique adapters/backends need the same preprocessing.
+- Phase 3 router/self-healing needs a cleaner service health boundary for critique.
+- Remote object storage becomes the normal media path and local sampling becomes awkward.
 
 ## Open Gates (updated 2026-06-20)
 

@@ -6,7 +6,7 @@ interchangeable adapter behind a typed capability ABC.
 
 ## Status
 
-**Phase 2 code-complete — 286 tests passing.**
+**Phase 2 code-complete — 295 tests passing.**
 Pipeline is ready for code tests with Track B placeholders, and real end-to-end output is blocked
 on real LoRA weights plus Track D GPU/model services.
 See `BUILD_PROGRESS.md` for the full implementation journal and next steps.
@@ -26,7 +26,7 @@ git clone https://github.com/rekha0708/video_me
 cd video_me
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-python -m pytest -q      # 286 tests, all passing
+python -m pytest -q      # 295 tests, all passing
 ```
 
 ## Running the Phase 0 no-op workflow
@@ -74,7 +74,14 @@ job = asyncio.run(run_with_critique(
 ))
 print(job.status)
 # Critiques are persisted as critique_attempt_1, critique_attempt_2, ...
+# Sampled critique frames are recorded on CritiqueResult.sampled_frame_uris
 ```
+
+Phase 2 uses an MVP-friendly visual critique strategy: sample frames from the assembled local
+video with ffprobe/ffmpeg, embed those images in the OpenAI-compatible multimodal request, and
+persist the sampled frame paths for audit/debug. Move this to a separate VLM wrapper service later
+if frame extraction/model serving becomes GPU-bound, needs batching/caching, or multiple critique
+backends need the same preprocessing.
 
 ## Track B — Files required before pipeline runs
 
