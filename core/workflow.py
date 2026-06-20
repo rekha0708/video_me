@@ -123,23 +123,53 @@ def _make_adapters(config: AppConfig, work_dir: Path) -> _Adapters:
     s = config.settings
     return _Adapters(
         fetch_media=YtDlpAdapter(work_dir=work_dir / "fetch_media"),
-        transcribe=WhisperAdapter(),
-        analyze=LlmAnalyzeAdapter(),
-        adapt=LlmAdaptScriptAdapter(),
-        plan=LlmPlanShotsAdapter(),
+        transcribe=WhisperAdapter(
+            model_size=s.whisper_model_size,
+            device=s.whisper_device,
+            compute_type=s.whisper_compute_type,
+        ),
+        analyze=LlmAnalyzeAdapter(
+            model=s.llm_model,
+            base_url=s.llm_base_url,
+            api_key=s.llm_api_key,
+        ),
+        adapt=LlmAdaptScriptAdapter(
+            model=s.llm_model,
+            base_url=s.llm_base_url,
+            api_key=s.llm_api_key,
+        ),
+        plan=LlmPlanShotsAdapter(
+            model=s.llm_model,
+            base_url=s.llm_base_url,
+            api_key=s.llm_api_key,
+        ),
         render=DiffusionRenderAdapter(
             work_dir=work_dir / "renders",
+            base_url=s.sd_base_url,
             lora_dir=s.lora_dir,
+            allow_placeholder_lora=s.render_allow_placeholder_lora,
         ),
         voice=TtsAdapter(
             work_dir=work_dir / "audio",
+            base_url=s.tts_base_url,
             voice_dir=s.voice_dir,
         ),
-        video=WanAdapter(work_dir=work_dir / "video"),
-        lipsync=LipSyncAdapter(work_dir=work_dir / "synced"),
-        assemble=FfmpegAssembleAdapter(work_dir=work_dir / "assembled"),
-        critique=VlmCritiqueAdapter(work_dir=work_dir / "critique"),
+        video=WanAdapter(work_dir=work_dir / "video", base_url=s.wan_base_url),
+        lipsync=LipSyncAdapter(work_dir=work_dir / "synced", base_url=s.lipsync_base_url),
+        assemble=FfmpegAssembleAdapter(
+            work_dir=work_dir / "assembled",
+            ffmpeg_bin=s.ffmpeg_bin,
+        ),
+        critique=VlmCritiqueAdapter(
+            work_dir=work_dir / "critique",
+            model=s.critique_model,
+            base_url=s.critique_base_url,
+            api_key=s.critique_api_key,
+            ffmpeg_bin=s.ffmpeg_bin,
+            ffprobe_bin=s.ffprobe_bin,
+        ),
         publish=ManualPublishAdapter(review_dir=s.review_dir),
+        ffmpeg_bin=s.ffmpeg_bin,
     )
 
 

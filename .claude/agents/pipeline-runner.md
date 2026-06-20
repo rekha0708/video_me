@@ -19,65 +19,35 @@ verify output. Never skip the pre-flight check.
 
 ## Pre-flight checklist (run before anything else)
 
-### 1. Track B files
+### 1. Install/validate runtime dependencies
 
 ```bash
-python -c "
-from pathlib import Path
-from adapters.render_character.diffusion_adapter import DiffusionRenderAdapter
-from adapters.synthesize_voice.tts_adapter import TtsAdapter
-from core.config import load_app_config
-
-config = load_app_config()
-render = DiffusionRenderAdapter(work_dir=Path('/tmp'), lora_dir=Path('loras'))
-voice  = TtsAdapter(work_dir=Path('/tmp'), voice_dir=Path('voices'))
-
-ok = True
-for m in config.cast.members:
-    try: render._check_lora(m); print(f'✅ LoRA  {m.name}')
-    except RuntimeError as e: print(f'❌ LoRA  {m.name}: {e}'); ok = False
-
-for m in config.cast.members:
-    try: voice._check_voice(m.voice_profile_ref); print(f'✅ Voice {m.name}')
-    except RuntimeError as e: print(f'❌ Voice {m.name}: {e}'); ok = False
-
-print()
-print('Track B: READY' if ok else 'Track B: INCOMPLETE — fix before proceeding')
-"
+bash scripts/setup_gpu.sh
 ```
 
-If this prints `Track B: READY_FOR_CODE_TESTS`, local/mock code work can proceed,
-but real AUTOMATIC1111 rendering still needs trained LoRAs.
-If any ❌ appear → stop and follow `.claude/agents/track-b-setup.md`.
+This creates/uses `.venv`, installs Python runtime extras (`services`, `ingest`, `transcribe`,
+`llm`, `render`), installs/checks `ffmpeg`/`ffprobe`, keeps `yt-dlp` on PATH through the venv,
+and then runs the readiness check.
 
-### 2. Service health
+### 2. Strict readiness check
 
 ```bash
-python -c "
-import httpx, asyncio
-
-async def check():
-    services = {
-        'Ollama (LLM)      :11434': 'http://localhost:11434/api/tags',
-        'AUTOMATIC1111 (SD):7860 ': 'http://localhost:7860/sdapi/v1/sd-models',
-        'Chatterbox TTS    :8020 ': 'http://localhost:8020/health',
-        'Wan 2.7           :8030 ': 'http://localhost:8030/health',
-        'Wav2Lip           :8040 ': 'http://localhost:8040/health',
-    }
-    async with httpx.AsyncClient(timeout=3.0) as client:
-        for name, url in services.items():
-            try:
-                r = await client.get(url)
-                r.raise_for_status()
-                print(f'✅ {name}')
-            except Exception as e:
-                print(f'❌ {name}  — {e}')
-
-asyncio.run(check())
-"
+python -m scripts.check_runtime_readiness
 ```
 
-All 5 must show ✅. See startup commands below if any are down.
+This must pass before a real GPU run. It fails placeholder LoRAs, missing packages/tools, and
+unhealthy model services.
+
+### 3. Local/mock code-test check
+
+```bash
+export VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA=true
+bash scripts/setup_gpu.sh --code-test --skip-services
+```
+
+This mode accepts explicit `TEST-ONLY placeholder` LoRAs as warnings and skips HTTP service
+health. Use it only for mock/local integration work; real AUTOMATIC1111 rendering still needs
+trained LoRAs.
 
 ---
 
@@ -185,6 +155,16 @@ config.settings = Settings(
     review_dir="/data/review",        # where output MP4s go
     lora_dir="/models/loras",
     voice_dir="/data/voices",
+    llm_model="qwen2.5:7b",
+    llm_base_url="http://localhost:11434/v1",
+    critique_model="llava:7b",
+    critique_base_url="http://localhost:11434/v1",
+    sd_base_url="http://localhost:7860",
+    tts_base_url="http://localhost:8020",
+    wan_base_url="http://localhost:8030",
+    lipsync_base_url="http://localhost:8040",
+    whisper_device="cuda",
+    whisper_compute_type="float16",
 )
 ```
 

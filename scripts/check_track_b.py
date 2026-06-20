@@ -1,16 +1,11 @@
 from pathlib import Path
 
-from adapters.render_character.diffusion_adapter import DiffusionRenderAdapter
+from adapters.render_character.diffusion_adapter import (
+    DiffusionRenderAdapter,
+    is_placeholder_lora,
+)
 from adapters.synthesize_voice.tts_adapter import TtsAdapter
 from core.config import load_app_config
-
-
-def _is_test_placeholder(path: Path) -> bool:
-    try:
-        return path.read_bytes()[:64].startswith(b"TEST-ONLY placeholder")
-    except OSError:
-        return False
-
 
 def main() -> int:
     config = load_app_config()
@@ -29,7 +24,7 @@ def main() -> int:
     for member in config.cast.members:
         try:
             path = render._check_lora(member)
-            if _is_test_placeholder(path):
+            if is_placeholder_lora(path):
                 has_test_placeholders = True
                 print(f"  OK TEST {member.name}: {path} (placeholder, not a real LoRA)")
             else:

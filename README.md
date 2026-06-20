@@ -6,7 +6,7 @@ interchangeable adapter behind a typed capability ABC.
 
 ## Status
 
-**Phase 2 code-complete — 295 tests passing.**
+**Phase 2 code-complete — 313 tests passing.**
 Pipeline is ready for code tests with Track B placeholders, and real end-to-end output is blocked
 on real LoRA weights plus Track D GPU/model services.
 See `BUILD_PROGRESS.md` for the full implementation journal and next steps.
@@ -26,7 +26,7 @@ git clone https://github.com/rekha0708/video_me
 cd video_me
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-python -m pytest -q      # 295 tests, all passing
+python -m pytest -q      # 313 tests, all passing
 ```
 
 ## Running the Phase 0 no-op workflow
@@ -101,6 +101,41 @@ voices/
 Run `python -m scripts.check_track_b` to verify placement. See
 `.claude/agents/track-b-setup.md` and `assets/kids_duo/` for the full setup guide.
 
+Temporary smoke testing can proceed with explicit test-only LoRA placeholders by setting:
+
+```bash
+export VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA=true
+```
+
+In that mode, `render_character` omits the fake LoRA tag from the Stable Diffusion prompt.
+Keep this unset/false for real runs; strict readiness fails if placeholder LoRAs are present.
+
+## GPU setup and readiness
+
+Install runtime dependencies on a GPU machine:
+
+```bash
+bash scripts/setup_gpu.sh
+```
+
+Run strict readiness before renting or launching a real run:
+
+```bash
+python -m scripts.check_runtime_readiness
+```
+
+For local/mock code testing with placeholder LoRAs and no services:
+
+```bash
+bash scripts/setup_gpu.sh --dry-run
+bash scripts/setup_gpu.sh --code-test --skip-services
+```
+
+The shell script creates/uses `.venv`, installs Python runtime extras, installs/checks
+`ffmpeg`/`ffprobe`, keeps `yt-dlp` on PATH through the venv, and runs the readiness checker.
+Lower-level helpers remain available as `python -m scripts.setup_gpu ...` and
+`python -m scripts.check_runtime_readiness ...`.
+
 ## Track D — Services required before pipeline runs
 
 | Service | Port | Purpose |
@@ -139,6 +174,16 @@ VIDEO_ME_DATA_DIR=/data/video_me
 VIDEO_ME_REVIEW_DIR=/data/review
 VIDEO_ME_LORA_DIR=/models/loras
 VIDEO_ME_VOICE_DIR=/data/voices
+VIDEO_ME_LLM_MODEL=qwen2.5:7b
+VIDEO_ME_LLM_BASE_URL=http://localhost:11434/v1
+VIDEO_ME_CRITIQUE_MODEL=llava:7b
+VIDEO_ME_CRITIQUE_BASE_URL=http://localhost:11434/v1
+VIDEO_ME_SD_BASE_URL=http://localhost:7860
+VIDEO_ME_TTS_BASE_URL=http://localhost:8020
+VIDEO_ME_WAN_BASE_URL=http://localhost:8030
+VIDEO_ME_LIPSYNC_BASE_URL=http://localhost:8040
+VIDEO_ME_WHISPER_DEVICE=cpu              # use cuda on a GPU box
+VIDEO_ME_WHISPER_COMPUTE_TYPE=int8       # use float16 on CUDA
 VIDEO_ME_JOB_STORE=postgres           # default: sqlite
 VIDEO_ME_ARTIFACT_STORE=s3            # default: local
 ```

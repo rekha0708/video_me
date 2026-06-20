@@ -104,7 +104,11 @@ The stage runner is `core/executor.py:run_stage()`. The Phase 1 DAG is
 | `loras/` | LoRA weight files — **MUST EXIST** for render_character (Track B) |
 | `voices/` | Reference WAV files — **MUST EXIST** for synthesize_voice (Track B) |
 | `review/` | Output: `<timestamp>_<stem>/video.mp4` + `metadata.json` sidecar |
-| `tests/` | 295 tests across 15 test files; no external services needed |
+| `scripts/check_track_b.py` | Track B asset placement check |
+| `scripts/check_runtime_readiness.py` | runtime dependency/service/asset readiness check |
+| `scripts/setup_gpu.sh` | one-command GPU-machine setup + validation |
+| `scripts/setup_gpu.py` / `setup.py gpu` | lower-level GPU-machine setup helper |
+| `tests/` | 313 tests across 17 test files; no external services needed |
 | `BUILD_PROGRESS.md` | Full implementation journal + decision log |
 | `Agent.md` | Lead Designer agent charter |
 
@@ -141,6 +145,13 @@ python -m scripts.check_track_b
 Expected local code-test status: `Track B: READY_FOR_CODE_TESTS`. Real rendering still requires
 trained LoRAs replacing the placeholder files.
 
+Temporary placeholder-LoRA render smoke tests are opt-in:
+```bash
+export VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA=true
+```
+When this is true, explicit `TEST-ONLY placeholder` LoRA files are accepted and omitted from
+the SD prompt. Keep it false for real runs; strict readiness fails placeholder LoRAs.
+
 ---
 
 ## Track D — Services required before pipeline runs
@@ -159,11 +170,17 @@ All five services must be healthy before `run_pipeline_job()` is called. The exe
 
 Quick health check:
 ```bash
-curl -s http://localhost:11434/api/tags | jq .
-curl -s http://localhost:7860/sdapi/v1/sd-models | jq length
-curl -s http://localhost:8020/health
-curl -s http://localhost:8030/health
-curl -s http://localhost:8040/health
+python -m scripts.check_runtime_readiness
+```
+
+GPU-machine setup helper:
+```bash
+bash scripts/setup_gpu.sh
+```
+
+Local/mock placeholder check without services:
+```bash
+bash scripts/setup_gpu.sh --code-test --skip-services
 ```
 
 LLM model needed: `qwen2.5:7b`; critique defaults to `llava:7b`. Phase 2 samples local video
@@ -197,17 +214,19 @@ python -m pytest --cov=core --cov=adapters --cov-report=term-missing -q
 ```
 
 Test count by file:
-- `test_workflow.py` — 27 (DAG orchestration, rights blocking, per-shot loop, critique loop)
+- `test_workflow.py` — 28 (DAG orchestration, settings wiring, rights blocking, critique loop)
 - `test_critique.py` — 26 (VLM critique adapter, frame sampling, preflight, parsing)
 - `test_plan_shots.py` — 29
 - `test_assemble_video.py` — 32
 - `test_publish.py` — 26
 - `test_adapt_script.py` — ~25
 - `test_synthesize_voice.py` — 27
-- `test_render_character.py` — 23
+- `test_render_character.py` — 29
 - `test_lip_sync.py` — 20
 - `test_generate_video.py` — 18
 - `test_transcribe.py`, `test_analyze_content.py`, `test_fetch_media.py` — ~10–15 each
+- `test_runtime_readiness.py` — 7
+- `test_setup_gpu.py` — 4
 - `test_executor.py`, `test_phase0_models.py`, `test_phase0_workflow.py` — Phase 0 tests
 
 ---
@@ -250,6 +269,16 @@ VIDEO_ME_DATA_DIR=/data/video_me       # where job work dirs are created
 VIDEO_ME_REVIEW_DIR=/data/review       # where publish output goes
 VIDEO_ME_LORA_DIR=/models/loras        # where LoRA files are
 VIDEO_ME_VOICE_DIR=/data/voices        # where reference WAV files are
+VIDEO_ME_LLM_MODEL=qwen2.5:7b
+VIDEO_ME_LLM_BASE_URL=http://localhost:11434/v1
+VIDEO_ME_CRITIQUE_MODEL=llava:7b
+VIDEO_ME_CRITIQUE_BASE_URL=http://localhost:11434/v1
+VIDEO_ME_SD_BASE_URL=http://localhost:7860
+VIDEO_ME_TTS_BASE_URL=http://localhost:8020
+VIDEO_ME_WAN_BASE_URL=http://localhost:8030
+VIDEO_ME_LIPSYNC_BASE_URL=http://localhost:8040
+VIDEO_ME_WHISPER_DEVICE=cpu            # use cuda on GPU
+VIDEO_ME_WHISPER_COMPUTE_TYPE=int8     # use float16 on CUDA
 VIDEO_ME_JOB_STORE=postgres            # use PostgreSQL instead of SQLite
 VIDEO_ME_ARTIFACT_STORE=s3             # use MinIO/S3 instead of local filesystem
 ```

@@ -31,6 +31,22 @@ class Settings(BaseSettings):
     lora_dir: Path = Path("loras")
     voice_dir: Path = Path("voices")
     review_dir: Path = Path("review")
+    llm_model: str = "qwen2.5:7b"
+    llm_base_url: str = "http://localhost:11434/v1"
+    llm_api_key: str = "ollama"
+    critique_model: str = "llava:7b"
+    critique_base_url: str = "http://localhost:11434/v1"
+    critique_api_key: str = "ollama"
+    sd_base_url: str = "http://localhost:7860"
+    tts_base_url: str = "http://localhost:8020"
+    wan_base_url: str = "http://localhost:8030"
+    lipsync_base_url: str = "http://localhost:8040"
+    whisper_model_size: str = "medium"
+    whisper_device: str = "cpu"
+    whisper_compute_type: str = "int8"
+    ffmpeg_bin: str = "ffmpeg"
+    ffprobe_bin: str = "ffprobe"
+    render_allow_placeholder_lora: bool = False
 
 
 class AppConfig(BaseModel):

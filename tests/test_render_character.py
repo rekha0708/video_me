@@ -8,6 +8,7 @@ import pytest
 from adapters.render_character.diffusion_adapter import (
     DiffusionRenderAdapter,
     _LORA_EXTENSIONS,
+    is_placeholder_lora,
 )
 from core.models.capabilities import RenderCharacterRequest
 from core.models.profile import CastMember
@@ -53,6 +54,14 @@ def _fake_b64_png() -> str:
         b"\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
     )
     return base64.b64encode(tiny_png).decode()
+
+
+def _write_placeholder_lora(path: Path) -> None:
+    path.write_text(
+        "TEST-ONLY placeholder for local Track B file-gate checks.\n"
+        "This is not a trained LoRA and will not work in AUTOMATIC1111.\n",
+        encoding="utf-8",
+    )
 
 
 def _mock_httpx(b64_image: str | None = None, *, get_error: Exception | None = None,
@@ -135,6 +144,18 @@ def test_check_lora_raises_with_track_b_message_when_missing(tmp_path: Path) -> 
     assert "kids_duo_max.safetensors" in msg
 
 
+def test_is_placeholder_lora_detects_test_marker(tmp_path: Path) -> None:
+    path = tmp_path / "kids_duo_max.safetensors"
+    _write_placeholder_lora(path)
+    assert is_placeholder_lora(path) is True
+
+
+def test_is_placeholder_lora_ignores_real_weight_file(tmp_path: Path) -> None:
+    path = tmp_path / "kids_duo_max.safetensors"
+    path.write_bytes(b"real-ish weights")
+    assert is_placeholder_lora(path) is False
+
+
 # ------------------------------------------------------------------ _build_prompt
 
 def test_build_prompt_contains_lora_tag(tmp_path: Path) -> None:
@@ -176,6 +197,27 @@ def test_build_prompt_uses_configured_lora_weight(tmp_path: Path) -> None:
     )
     prompt = adapter._build_prompt(_request())
     assert "0.75" in prompt
+
+
+def test_build_prompt_omits_placeholder_lora_when_allowed(tmp_path: Path) -> None:
+    lora_path = tmp_path / "kids_duo_max.safetensors"
+    _write_placeholder_lora(lora_path)
+    adapter = _adapter(tmp_path, allow_placeholder_lora=True)
+
+    prompt = adapter._build_prompt(_request(), lora_path=lora_path)
+
+    assert "<lora:" not in prompt
+    assert "striped t-shirt" in prompt
+
+
+def test_build_prompt_keeps_real_lora_when_placeholder_mode_allowed(tmp_path: Path) -> None:
+    lora_path = tmp_path / "kids_duo_max.safetensors"
+    lora_path.write_bytes(b"real-ish weights")
+    adapter = _adapter(tmp_path, allow_placeholder_lora=True)
+
+    prompt = adapter._build_prompt(_request(), lora_path=lora_path)
+
+    assert "<lora:kids_duo_max:" in prompt
 
 
 # ------------------------------------------------------------------ _save_images
@@ -266,6 +308,33 @@ async def test_run_raises_when_lora_missing(tmp_path: Path) -> None:
     adapter = _adapter(tmp_path)  # empty lora_dir
     with pytest.raises(RuntimeError, match="Track B"):
         await adapter.run(_request())
+
+
+async def test_run_raises_when_lora_is_placeholder_and_not_allowed(tmp_path: Path) -> None:
+    lora_dir = tmp_path / "loras"
+    lora_dir.mkdir()
+    _write_placeholder_lora(lora_dir / "kids_duo_max.safetensors")
+
+    adapter = _adapter(tmp_path, lora_dir=lora_dir, allow_placeholder_lora=False)
+
+    with pytest.raises(RuntimeError, match="TEST-ONLY placeholder"):
+        await adapter.run(_request())
+
+
+async def test_run_omits_lora_prompt_when_placeholder_allowed(tmp_path: Path) -> None:
+    lora_dir = tmp_path / "loras"
+    lora_dir.mkdir()
+    _write_placeholder_lora(lora_dir / "kids_duo_max.safetensors")
+
+    adapter = _adapter(tmp_path, lora_dir=lora_dir, allow_placeholder_lora=True)
+    fake_httpx, mock_client = _mock_httpx()
+
+    with patch.dict(sys.modules, {"httpx": fake_httpx}):
+        await adapter.run(_request())
+
+    payload = mock_client.post.call_args.kwargs["json"]
+    assert "<lora:" not in payload["prompt"]
+    assert "striped t-shirt" in payload["prompt"]
 
 
 async def test_run_posts_to_correct_endpoint(tmp_path: Path) -> None:

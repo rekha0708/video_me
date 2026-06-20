@@ -16,6 +16,15 @@ _NEGATIVE_PROMPT = (
 )
 
 _LORA_EXTENSIONS = (".safetensors", ".pt", ".ckpt")
+_PLACEHOLDER_LORA_PREFIX = b"TEST-ONLY placeholder"
+
+
+def is_placeholder_lora(path: Path) -> bool:
+    """Return True for explicit test-only LoRA placeholder files."""
+    try:
+        return path.read_bytes()[:64].startswith(_PLACEHOLDER_LORA_PREFIX)
+    except OSError:
+        return False
 
 
 class DiffusionRenderAdapter(RenderCharacter):
@@ -40,6 +49,10 @@ class DiffusionRenderAdapter(RenderCharacter):
         width:      Output image width in pixels.
         height:     Output image height in pixels.
         num_images: Number of candidate renders to produce per call.
+        allow_placeholder_lora:
+            If True, explicit TEST-ONLY placeholder LoRA files are accepted
+            for smoke tests and omitted from the prompt. Real runs should keep
+            this False so fake weights fail before the SD API call.
     """
 
     version = "1.0.0"
@@ -56,6 +69,7 @@ class DiffusionRenderAdapter(RenderCharacter):
         height: int = 768,
         num_images: int = 1,
         negative_prompt: str = _NEGATIVE_PROMPT,
+        allow_placeholder_lora: bool = False,
     ) -> None:
         self.work_dir = work_dir
         self._base_url = base_url.rstrip("/")
@@ -67,6 +81,7 @@ class DiffusionRenderAdapter(RenderCharacter):
         self._height = height
         self._num_images = num_images
         self._negative_prompt = negative_prompt
+        self._allow_placeholder_lora = allow_placeholder_lora
 
     async def health(self) -> HealthStatus:
         try:
@@ -95,12 +110,19 @@ class DiffusionRenderAdapter(RenderCharacter):
 
     async def run(self, req: RenderCharacterRequest) -> ImageSet:
         lora_path = self._check_lora(req.member)
+        placeholder_lora = is_placeholder_lora(lora_path)
+        if placeholder_lora and not self._allow_placeholder_lora:
+            raise RuntimeError(
+                f"LoRA for '{req.member.name}' is a TEST-ONLY placeholder: {lora_path}. "
+                "Replace it with trained weights for a real render, or set "
+                "VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA=true for temporary smoke tests."
+            )
 
         import httpx
         out_dir = self.work_dir / req.member.id
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        prompt = self._build_prompt(req)
+        prompt = self._build_prompt(req, lora_path=lora_path)
 
         log_event(
             logger,
@@ -108,6 +130,7 @@ class DiffusionRenderAdapter(RenderCharacter):
             member_id=req.member.id,
             member_name=req.member.name,
             lora=str(lora_path),
+            placeholder_lora=placeholder_lora,
             setting=req.setting,
         )
 
@@ -172,13 +195,20 @@ class DiffusionRenderAdapter(RenderCharacter):
             "Complete Track B (character design + LoRA training) before running render_character."
         )
 
-    def _build_prompt(self, req: RenderCharacterRequest) -> str:
+    def _build_prompt(
+        self,
+        req: RenderCharacterRequest,
+        lora_path: Path | None = None,
+    ) -> str:
         name = self.lora_name(req.member.lora_ref)
-        parts: list[str] = [
-            f"<lora:{name}:{self._lora_weight}>",
-            req.member.visual_descriptor,
-            f"in {req.setting}",
-        ]
+        parts: list[str] = []
+        if not (
+            lora_path is not None
+            and self._allow_placeholder_lora
+            and is_placeholder_lora(lora_path)
+        ):
+            parts.append(f"<lora:{name}:{self._lora_weight}>")
+        parts += [req.member.visual_descriptor, f"in {req.setting}"]
         if req.expression:
             parts.append(req.expression)
         parts += [

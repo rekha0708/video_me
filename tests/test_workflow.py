@@ -27,6 +27,7 @@ from core.models.guardrails import SourceRights
 from core.models.job import JobStatus
 from core.workflow import (
     _concat_audio,
+    _make_adapters,
     _resolve_line,
     _run_shot,
     run_pipeline_job,
@@ -45,6 +46,55 @@ def _make_config(tmp_path):
         sqlite_path=tmp_path / "video_me.db",
     )
     return config
+
+
+def test_make_adapters_uses_runtime_settings(tmp_path) -> None:
+    config = load_app_config()
+    config.settings = Settings(
+        data_dir=tmp_path,
+        artifact_dir=tmp_path / "artifacts",
+        sqlite_path=tmp_path / "video_me.db",
+        lora_dir=tmp_path / "loras",
+        voice_dir=tmp_path / "voices",
+        review_dir=tmp_path / "review",
+        llm_model="llm-model",
+        llm_base_url="http://llm.test/v1",
+        llm_api_key="llm-key",
+        critique_model="vlm-model",
+        critique_base_url="http://vlm.test/v1",
+        critique_api_key="vlm-key",
+        sd_base_url="http://sd.test",
+        tts_base_url="http://tts.test",
+        wan_base_url="http://wan.test",
+        lipsync_base_url="http://lipsync.test",
+        whisper_model_size="small",
+        whisper_device="cuda",
+        whisper_compute_type="float16",
+        ffmpeg_bin="/opt/bin/ffmpeg",
+        ffprobe_bin="/opt/bin/ffprobe",
+        render_allow_placeholder_lora=True,
+    )
+
+    adapters = _make_adapters(config, tmp_path / "job")
+
+    assert adapters.transcribe._model_size == "small"
+    assert adapters.transcribe._device == "cuda"
+    assert adapters.transcribe._compute_type == "float16"
+    assert adapters.analyze._model == "llm-model"
+    assert adapters.analyze._base_url == "http://llm.test/v1"
+    assert adapters.adapt._api_key == "llm-key"
+    assert adapters.plan._base_url == "http://llm.test/v1"
+    assert adapters.render._base_url == "http://sd.test"
+    assert adapters.render._allow_placeholder_lora is True
+    assert adapters.voice._base_url == "http://tts.test"
+    assert adapters.video._base_url == "http://wan.test"
+    assert adapters.lipsync._base_url == "http://lipsync.test"
+    assert adapters.critique._model == "vlm-model"
+    assert adapters.critique._base_url == "http://vlm.test/v1"
+    assert adapters.critique._ffmpeg_bin == "/opt/bin/ffmpeg"
+    assert adapters.critique._ffprobe_bin == "/opt/bin/ffprobe"
+    assert adapters.assemble._ffmpeg_bin == "/opt/bin/ffmpeg"
+    assert adapters.ffmpeg_bin == "/opt/bin/ffmpeg"
 
 
 def _fetch_result() -> FetchMediaResult:

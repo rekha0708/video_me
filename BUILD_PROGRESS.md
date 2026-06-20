@@ -405,3 +405,42 @@ Still pending before real end-to-end rendering:
 - Final designed voices to replace provisional macOS `say` references:
   `voices/kids_duo/max.wav` (`Junior`) and `voices/kids_duo/zoe.wav`
   (`Sandy (English (US))`).
+
+## GPU Readiness Prep — 2026-06-20
+
+Goal: reduce paid GPU experimentation time by making local mock checks and GPU-machine setup
+repeatable before launch.
+
+Added:
+
+- `Settings` now carries runtime URLs/models/tool paths:
+  `VIDEO_ME_LLM_*`, `VIDEO_ME_CRITIQUE_*`, `VIDEO_ME_SD_BASE_URL`,
+  `VIDEO_ME_TTS_BASE_URL`, `VIDEO_ME_WAN_BASE_URL`, `VIDEO_ME_LIPSYNC_BASE_URL`,
+  `VIDEO_ME_WHISPER_*`, `VIDEO_ME_FFMPEG_BIN`, and `VIDEO_ME_FFPROBE_BIN`.
+- `_make_adapters()` passes those settings into every concrete adapter.
+- Temporary placeholder-LoRA smoke mode:
+  `VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA=true` accepts explicit `TEST-ONLY placeholder`
+  files and omits their LoRA tags from SD prompts. Strict/default mode still fails them.
+- `scripts/check_runtime_readiness.py` checks Python packages, system tools, Track B assets,
+  and service health. Default mode is strict; `--code-test --skip-services` is for local/mock
+  placeholder checks.
+- `scripts/setup_gpu.sh` is the primary GPU setup entrypoint: it creates/uses `.venv`, installs
+  runtime Python extras, installs/checks `ffmpeg`/`ffprobe`, keeps `yt-dlp` on PATH, and runs
+  readiness.
+- `scripts/setup_gpu.py` and `python setup.py gpu ...` remain reusable lower-level setup commands
+  without embedding install side effects in package metadata.
+- Tests added for placeholder render behavior, settings-to-adapter wiring, readiness checks,
+  and setup command generation.
+
+Current validation:
+
+- `python -m pytest -q` returns `313 passed`.
+- Local `python -m scripts.check_runtime_readiness --code-test --skip-services` correctly warns
+  on placeholder LoRAs and fails missing local runtime dependencies/tools (`openai`, `httpx`,
+  `faster-whisper`, `yt-dlp`, `ffmpeg`, `ffprobe`).
+
+Still pending before a real GPU launch:
+
+- Run `bash scripts/setup_gpu.sh` on the GPU box.
+- Start and validate Ollama/VLM, AUTOMATIC1111, Chatterbox, Wan, and Wav2Lip services.
+- Replace placeholder LoRAs with trained weights for strict real-run readiness.

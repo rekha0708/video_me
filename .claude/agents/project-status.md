@@ -20,17 +20,14 @@ Run these in parallel:
 - `git log --oneline -5` — last 5 commits
 - `python -m pytest -q --tb=no 2>&1 | tail -3` — current test count and pass/fail
 - `python -m scripts.check_track_b || true` — Track B LoRA and voice file preflight
+- `python -m scripts.check_runtime_readiness --code-test --skip-services || true` — local/mock readiness
 
 Also read `BUILD_PROGRESS.md` for the implementation journal.
 
 ## Step 2 — Check Track D services (optional, if user asks)
 
 ```bash
-curl -s --max-time 2 http://localhost:11434/api/tags > /dev/null && echo "Ollama: UP" || echo "Ollama: DOWN"
-curl -s --max-time 2 http://localhost:7860/sdapi/v1/sd-models > /dev/null && echo "SD: UP" || echo "SD: DOWN"
-curl -s --max-time 2 http://localhost:8020/health > /dev/null && echo "TTS: UP" || echo "TTS: DOWN"
-curl -s --max-time 2 http://localhost:8030/health > /dev/null && echo "Wan: UP" || echo "Wan: DOWN"
-curl -s --max-time 2 http://localhost:8040/health > /dev/null && echo "Wav2Lip: UP" || echo "Wav2Lip: DOWN"
+python -m scripts.check_runtime_readiness --allow-missing-services || true
 ```
 
 ## Step 3 — Produce the status report
@@ -70,7 +67,7 @@ TESTS
 TRACK B — LoRAs + voices (MUST exist before pipeline runs)
 ──────────────────────────────────────────────────────────
 Expected:  loras/kids_duo_{max,zoe}.safetensors
-Found:     <list files or "NONE — Track B not complete"; note if placeholders>
+Found:     <list files or "NONE — Track B not complete"; note if placeholders and whether strict readiness fails>
 
 Expected:  voices/kids_duo/{max,zoe}.wav
 Found:     <list files or "NONE — Track B not complete">
@@ -100,8 +97,9 @@ NEXT ACTIONS (in priority order)
    → Record reference voices → drop in voices/kids_duo/*.wav
 
 2. [Track D] Set budget ceiling (decision #10) → provision GPU
+   → Run bash scripts/setup_gpu.sh
    → Stand up AUTOMATIC1111, Chatterbox, Wan 2.7, Wav2Lip
-   → Verify all health endpoints
+   → Run python -m scripts.check_runtime_readiness
 
 3. [Track E] Operator compliance sign-off
 
