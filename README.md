@@ -6,16 +6,17 @@ interchangeable adapter behind a typed capability ABC.
 
 ## Status
 
-**Phase 1 code-complete — 264 tests passing.**
-Pipeline is blocked on Track B (LoRA + voice files) and Track D (GPU services).
+**Phase 2 code-complete — 286 tests passing.**
+Pipeline is ready for code tests with Track B placeholders, and real end-to-end output is blocked
+on real LoRA weights plus Track D GPU/model services.
 See `BUILD_PROGRESS.md` for the full implementation journal and next steps.
 
 ```
 Phase 0  Skeleton + storage          ✅ COMPLETE
 Phase 1  Full pipeline A1.0–A1.12   ✅ COMPLETE (code) — blocked on Track B + D
-Track B  LoRAs + voice files         ❌ Files missing — see setup guide below
+Phase 2  Critic loop A2.x            ✅ COMPLETE (code) — VLM service needed for real judgment
+Track B  LoRAs + voice files         ⚠️ READY_FOR_CODE_TESTS — real LoRAs still pending
 Track D  GPU services                ❌ Not provisioned — budget decision pending
-Phase 2  Critic loop                 ⏳ NOT STARTED
 ```
 
 ## Quick start (tests only — no services needed)
@@ -25,7 +26,7 @@ git clone https://github.com/rekha0708/video_me
 cd video_me
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-python -m pytest -q      # 264 tests, all passing
+python -m pytest -q      # 286 tests, all passing
 ```
 
 ## Running the Phase 0 no-op workflow
@@ -58,6 +59,23 @@ print(job.status)   # "completed"
 # Output: review/<timestamp>_<stem>/video.mp4 + metadata.json
 ```
 
+## Running the Phase 2 pipeline (requires Track B + D + VLM)
+
+```python
+import asyncio
+from core.config import load_app_config
+from core.workflow import run_with_critique
+
+config = load_app_config()
+job = asyncio.run(run_with_critique(
+    source_url="https://www.youtube.com/watch?v=EXAMPLE",
+    rights_cleared=True,
+    app_config=config,
+))
+print(job.status)
+# Critiques are persisted as critique_attempt_1, critique_attempt_2, ...
+```
+
 ## Track B — Files required before pipeline runs
 
 Place LoRA weights and reference voice WAVs at these exact paths:
@@ -81,6 +99,7 @@ Run `python -m scripts.check_track_b` to verify placement. See
 | Service | Port | Purpose |
 |---|---|---|
 | Ollama | 11434 | LLM (analyze, adapt, plan stages) |
+| Ollama / VLM | 11434 | Critique stage (e.g. LLaVA/Qwen-VL via OpenAI-compatible API) |
 | AUTOMATIC1111 | 7860 | Stable Diffusion (render_character) |
 | Chatterbox TTS | 8020 | TTS (synthesize_voice) |
 | Wan 2.7 | 8030 | Image-to-video (generate_video) |
@@ -94,7 +113,7 @@ See `.claude/agents/pipeline-runner.md` for startup commands and pre-flight chec
 URL → fetch_media → transcribe → analyze_content → [check_rights gate]
     → adapt_script → plan_shots
     → per shot: render_character + synthesize_voice + generate_video + lip_sync
-    → assemble_video → publish → review/
+    → assemble_video → [optional critique loop] → publish → review/
 ```
 
 Every stage is a `Capability[Request, Result]` ABC in `core/capabilities/`.

@@ -46,6 +46,8 @@ print('Track B: READY' if ok else 'Track B: INCOMPLETE — fix before proceeding
 "
 ```
 
+If this prints `Track B: READY_FOR_CODE_TESTS`, local/mock code work can proceed,
+but real AUTOMATIC1111 rendering still needs trained LoRAs.
 If any ❌ appear → stop and follow `.claude/agents/track-b-setup.md`.
 
 ### 2. Service health
@@ -85,6 +87,7 @@ All 5 must show ✅. See startup commands below if any are down.
 ```bash
 ollama serve &
 ollama pull qwen2.5:7b   # first time only; ~4GB download
+ollama pull llava:7b      # first time only; used by Phase 2 critique
 # Verify: curl http://localhost:11434/api/tags | jq '.models[].name'
 ```
 
@@ -135,6 +138,26 @@ config = load_app_config()
 job = asyncio.run(run_pipeline_job(
     source_url="https://www.youtube.com/watch?v=YOUR_VIDEO_ID",
     rights_cleared=True,   # operator must confirm this is a cleared source
+    app_config=config,
+))
+
+print(f"Job: {job.job_id}")
+print(f"Status: {job.status}")
+print(f"Stages: {list(job.stage_results.keys())}")
+```
+
+### Phase 2 run with critique
+
+```python
+import asyncio
+from core.config import load_app_config
+from core.workflow import run_with_critique
+
+config = load_app_config()
+
+job = asyncio.run(run_with_critique(
+    source_url="https://www.youtube.com/watch?v=YOUR_VIDEO_ID",
+    rights_cleared=True,
     app_config=config,
 ))
 

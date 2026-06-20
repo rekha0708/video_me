@@ -184,7 +184,7 @@ It is the implementation journal for `Agent.md`, `project-flow-and-execution-pla
        sequence (fetch→transcribe→analyze→rights-gate→adapt→plan→per-shot-loop→assemble→publish);
        `_run_shot()` helper (render→voice→video→lipsync per shot); `_concat_audio()` concatenates
        per-shot WAVs with ffmpeg; `_make_adapters()` instantiates all adapters from config; error
-       handling sets BLOCKED (rights) or FAILED (all others); 22 new tests (264 total).
+      handling sets BLOCKED (rights) or FAILED (all others); 22 new tests (264 total).
 
 ### Phase 1 work log — 2026-06-19
 
@@ -315,6 +315,33 @@ Phase 2 adds an automated quality gate: generate → evaluate → regenerate if 
 - Which VLM for critique? (LLaVA-1.5 via Ollama is the cheapest starting point)
 - What's the age-appropriateness rubric? (operator defines pass/fail criteria)
 - What's the max cost ceiling for regenerations? (each retry = full GPU cost)
+
+## Phase 2 Complete — 2026-06-20
+
+**Critic-loop code is built and tested. 286 tests passing.**
+
+What was added:
+
+| Item | Deliverable |
+| --- | --- |
+| A2.1 | `adapters/critique/vlm_adapter.py` — automated preflight + OpenAI-compatible VLM/LLM critique |
+| A2.2 | `core/workflow.py:run_with_critique()` — candidate generation, critique, regenerate/reject/pass handling |
+| A2.3 | Critique persistence via `run_stage()` using `critique_attempt_1`, `critique_attempt_2`, ... |
+| A2.4 | Tests for pass, regenerate, reject, max-regeneration exhaustion, and rights blocking |
+
+Behavior:
+
+- `pass` → publish to manual review folder and mark job `COMPLETED`.
+- `regenerate` → rerun candidate generation up to `Settings.max_regenerations` retries.
+- `reject` → mark job `BLOCKED` and do not publish.
+- exhausted regeneration budget → mark job `FAILED` and do not publish.
+
+Real-world caveat:
+
+- The adapter defaults to `llava:7b` behind an OpenAI-compatible endpoint at
+  `http://localhost:11434/v1`.
+- Unit tests mock the VLM. Actual quality judgment still needs Track D service setup and an
+  operator-approved age-appropriateness rubric.
 
 ## Open Gates (updated 2026-06-20)
 

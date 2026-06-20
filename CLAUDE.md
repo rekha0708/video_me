@@ -9,21 +9,21 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 
 ---
 
-## Current state (as of 2026-06-19)
+## Current state (as of 2026-06-20)
 
-**Phase 1 code is 100% complete. 264 tests pass. Blocked on Track B (files) + Track D (services).**
+**Phase 2 code is complete. 286 tests pass. Real end-to-end output is blocked on real Track B LoRAs + Track D services.**
 
 | Track / Phase | Status | Blocker |
 |---|---|---|
 | Phase 0 — Skeleton | ✅ COMPLETE | — |
 | Phase 1 — Full pipeline A1.0–A1.12 | ✅ COMPLETE (code) | Track B + Track D files/services needed to run |
-| Track B — LoRAs + voice files | ❌ MISSING | `kids_duo` selected; LoRAs and voice refs not placed |
+| Phase 2 — Critic loop A2.x | ✅ COMPLETE (code) | Real VLM service needed for real judgment |
+| Track B — LoRAs + voice files | ⚠️ READY_FOR_CODE_TESTS | placeholder LoRAs; provisional voices |
 | Track D — GPU services | ❌ NOT RUNNING | Budget decision #10 pending; no GPU provisioned |
 | Track E — Compliance sign-off | ❌ PENDING | Operator hasn't signed off |
-| Phase 2 — Critic loop (A2.x) | ⏳ NOT STARTED | Depends on Phase 1 running end-to-end |
 
-The pipeline will raise `RuntimeError("Complete Track B…")` before any HTTP call if `loras/` or
-`voices/` files are absent. All other code paths are tested and working.
+Track B file-gate checks pass locally for code tests, but the LoRA files are tiny placeholders and
+will not load in AUTOMATIC1111. All model/service code paths are tested with mocks.
 
 ---
 
@@ -60,11 +60,16 @@ check_rights()  ◄─── BLOCKS job (status=BLOCKED) if rights_cleared=False
 [assemble_video]     ffmpeg concat + scale 1080×1920 + captions + disclosure
     │
     ▼
+[critique]           VLM/LLM rubric → pass | regenerate | reject (Phase 2 path)
+    │
+    ▼
 [publish]            copy to review/ folder + metadata.json sidecar
 ```
 
 Every `[stage]` is a `Capability[Request, Result]` ABC. Concrete adapters live in `adapters/<stage>/`.
-The stage runner is `core/executor.py:run_stage()`. The full DAG is `core/workflow.py:run_pipeline_job()`.
+The stage runner is `core/executor.py:run_stage()`. The Phase 1 DAG is
+`core/workflow.py:run_pipeline_job()`; the Phase 2 critic loop is
+`core/workflow.py:run_with_critique()`.
 
 ---
 
@@ -72,7 +77,7 @@ The stage runner is `core/executor.py:run_stage()`. The full DAG is `core/workfl
 
 | Path | Purpose |
 |---|---|
-| `core/workflow.py` | `run_pipeline_job()` — full 9-stage DAG; `run_noop_job()` — Phase 0 compat |
+| `core/workflow.py` | `run_pipeline_job()` — Phase 1 DAG; `run_with_critique()` — Phase 2 loop; `run_noop_job()` — Phase 0 compat |
 | `core/executor.py` | `run_stage()` health-check→invoke→persist; `check_rights()` gate |
 | `core/models/capabilities.py` | All typed request/result Pydantic models |
 | `core/models/content.py` | Script, Scene, Line, Shot, Storyboard, LearningObjective |
@@ -90,6 +95,7 @@ The stage runner is `core/executor.py:run_stage()`. The full DAG is `core/workfl
 | `adapters/generate_video/wan_adapter.py` | Wan 2.7 HTTP API |
 | `adapters/lip_sync/lip_sync_adapter.py` | Wav2Lip HTTP API |
 | `adapters/assemble_video/ffmpeg_adapter.py` | ffmpeg subprocess |
+| `adapters/critique/vlm_adapter.py` | OpenAI-compatible VLM/LLM critique adapter |
 | `adapters/publish/manual_adapter.py` | local file copy + metadata.json |
 | `config/channels/education_kids.yaml` | Channel: 9:16, age 3-6, made_for_kids=true |
 | `config/casts/kids_duo.yaml` | final Max/Zoe cast with lora_ref + voice_profile_ref |
@@ -97,7 +103,7 @@ The stage runner is `core/executor.py:run_stage()`. The full DAG is `core/workfl
 | `loras/` | LoRA weight files — **MUST EXIST** for render_character (Track B) |
 | `voices/` | Reference WAV files — **MUST EXIST** for synthesize_voice (Track B) |
 | `review/` | Output: `<timestamp>_<stem>/video.mp4` + `metadata.json` sidecar |
-| `tests/` | 264 tests across 14 test files; no external services needed |
+| `tests/` | 286 tests across 15 test files; no external services needed |
 | `BUILD_PROGRESS.md` | Full implementation journal + decision log |
 | `Agent.md` | Lead Designer agent charter |
 
@@ -131,6 +137,8 @@ Quick check:
 ```bash
 python -m scripts.check_track_b
 ```
+Expected local code-test status: `Track B: READY_FOR_CODE_TESTS`. Real rendering still requires
+trained LoRAs replacing the placeholder files.
 
 ---
 
@@ -142,6 +150,7 @@ All five services must be healthy before `run_pipeline_job()` is called. The exe
 | Service | Default URL | Purpose |
 |---|---|---|
 | Ollama | `http://localhost:11434` | LLM for analyze, adapt, plan stages |
+| Ollama / VLM | `http://localhost:11434` | Critique stage, e.g. LLaVA/Qwen-VL |
 | AUTOMATIC1111 | `http://localhost:7860` | Stable Diffusion for render_character |
 | Chatterbox TTS | `http://localhost:8020` | TTS for synthesize_voice |
 | Wan 2.7 | `http://localhost:8030` | Image-to-video for generate_video |
@@ -156,7 +165,7 @@ curl -s http://localhost:8030/health
 curl -s http://localhost:8040/health
 ```
 
-LLM model needed: `qwen2.5:7b` (or override `VIDEO_ME_LLM_MODEL` env var — not yet in Settings).
+LLM model needed: `qwen2.5:7b`; critique defaults to `llava:7b`.
 
 ---
 
@@ -180,7 +189,8 @@ python -m pytest --cov=core --cov=adapters --cov-report=term-missing -q
 ```
 
 Test count by file:
-- `test_workflow.py` — 22 (DAG orchestration, rights blocking, per-shot loop)
+- `test_workflow.py` — 27 (DAG orchestration, rights blocking, per-shot loop, critique loop)
+- `test_critique.py` — 22 (VLM critique adapter, preflight, parsing)
 - `test_plan_shots.py` — 29
 - `test_assemble_video.py` — 32
 - `test_publish.py` — 26
@@ -209,6 +219,21 @@ job = asyncio.run(run_pipeline_job(
 ))
 print(job.status)          # "completed"
 # Output: review/<timestamp>_<stem>/video.mp4 + metadata.json
+```
+
+Phase 2 critic path:
+```python
+import asyncio
+from core.config import load_app_config
+from core.workflow import run_with_critique
+
+config = load_app_config()
+job = asyncio.run(run_with_critique(
+    source_url="https://www.youtube.com/watch?v=EXAMPLE",
+    rights_cleared=True,
+    app_config=config,
+))
+print(job.status)
 ```
 
 Environment overrides (via `.env` or shell):

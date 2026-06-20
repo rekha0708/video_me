@@ -9,7 +9,10 @@ from core.models.capabilities import (
     AnalyzeRequest,
     AssembleRequest,
     AudioTrack,
+    CritiqueRequest,
+    CritiqueResult,
     FetchMediaRequest,
+    FinalVideo,
     LipSyncRequest,
     PlanShotsRequest,
     PublishRequest,
@@ -24,7 +27,13 @@ from core.models.content import Script, Shot, Storyboard
 from core.models.job import Job, JobStatus
 from core.models.profile import Cast
 from core.observability import log_event
-from core.storage import completed_stage, create_artifact_store, create_job_store
+from core.storage import (
+    ArtifactStore,
+    JobRepository,
+    completed_stage,
+    create_artifact_store,
+    create_job_store,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +100,7 @@ class _Adapters:
     video: object
     lipsync: object
     assemble: object
+    critique: object
     publish: object
     ffmpeg_bin: str = field(default="ffmpeg")
 
@@ -100,6 +110,7 @@ def _make_adapters(config: AppConfig, work_dir: Path) -> _Adapters:
     from adapters.adapt_script.llm_adapter import LlmAdaptScriptAdapter
     from adapters.analyze_content.llm_adapter import LlmAnalyzeAdapter
     from adapters.assemble_video.ffmpeg_adapter import FfmpegAssembleAdapter
+    from adapters.critique.vlm_adapter import VlmCritiqueAdapter
     from adapters.fetch_media.ytdlp_adapter import YtDlpAdapter
     from adapters.generate_video.wan_adapter import WanAdapter
     from adapters.lip_sync.lip_sync_adapter import LipSyncAdapter
@@ -127,7 +138,51 @@ def _make_adapters(config: AppConfig, work_dir: Path) -> _Adapters:
         video=WanAdapter(work_dir=work_dir / "video"),
         lipsync=LipSyncAdapter(work_dir=work_dir / "synced"),
         assemble=FfmpegAssembleAdapter(work_dir=work_dir / "assembled"),
+        critique=VlmCritiqueAdapter(),
         publish=ManualPublishAdapter(review_dir=s.review_dir),
+    )
+
+
+@dataclass
+class _JobContext:
+    config: AppConfig
+    artifact_store: ArtifactStore
+    job_store: JobRepository
+    job: Job
+    work_dir: Path
+    adapters: _Adapters
+
+
+def _make_job_context(
+    source_url: str,
+    rights_cleared: bool,
+    config: AppConfig,
+) -> _JobContext:
+    """Create stores, job record, work directory, and adapters for one run."""
+    settings = config.settings
+    artifact_store = create_artifact_store(settings)
+    job_store = create_job_store(settings)
+
+    job = Job(
+        source_url=source_url,
+        channel_profile_ref=config.channel_profile.id,
+        cast_ref=config.cast.id,
+        rights_cleared=rights_cleared,
+    )
+    job.status = JobStatus.RUNNING
+    job_store.save_job(job)
+    log_event(logger, "job_started", job_id=job.job_id, source_url=source_url)
+
+    work_dir = settings.data_dir / "jobs" / job.job_id
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    return _JobContext(
+        config=config,
+        artifact_store=artifact_store,
+        job_store=job_store,
+        job=job,
+        work_dir=work_dir,
+        adapters=_make_adapters(config, work_dir),
     )
 
 
@@ -248,6 +303,137 @@ async def _concat_audio(
     )
 
 
+async def _run_to_assembled_video(ctx: _JobContext) -> tuple[Script, FinalVideo]:
+    """Run Phase 1 stages through assembled candidate video, but do not publish."""
+    config = ctx.config
+    job = ctx.job
+    adapters = ctx.adapters
+    artifact_store = ctx.artifact_store
+    job_store = ctx.job_store
+
+    # 1. fetch_media
+    fetch_result = await run_stage(
+        "fetch_media", adapters.fetch_media,
+        FetchMediaRequest(source_url=job.source_url),
+        job, artifact_store, job_store,
+    )
+
+    # 2. transcribe
+    transcribe_result = await run_stage(
+        "transcribe", adapters.transcribe,
+        TranscribeRequest(audio_uri=fetch_result.audio_uri),
+        job, artifact_store, job_store,
+    )
+
+    # 3. analyze_content
+    metadata = await run_stage(
+        "analyze_content", adapters.analyze,
+        AnalyzeRequest(
+            transcript=transcribe_result,
+            channel_profile=config.channel_profile,
+        ),
+        job, artifact_store, job_store,
+    )
+
+    # 4. rights gate (not a capability — runs synchronously)
+    check_rights(job)
+
+    # 5. adapt_script
+    script: Script = await run_stage(
+        "adapt_script", adapters.adapt,
+        AdaptScriptRequest(
+            metadata=metadata,
+            cast=config.cast,
+            channel_profile=config.channel_profile,
+        ),
+        job, artifact_store, job_store,
+    )
+
+    # 6. plan_shots
+    storyboard: Storyboard = await run_stage(
+        "plan_shots", adapters.plan,
+        PlanShotsRequest(script=script, cast=config.cast),
+        job, artifact_store, job_store,
+    )
+
+    # 7. per-shot loop
+    synced_clips: list[VideoClip] = []
+    audio_tracks: list[AudioTrack] = []
+    for shot in storyboard.shots:
+        synced, audio = await _run_shot(shot, script, config.cast, adapters)
+        synced_clips.append(synced)
+        audio_tracks.append(audio)
+
+    combined_audio = await _concat_audio(audio_tracks, ctx.work_dir, adapters.ffmpeg_bin)
+
+    # 8. assemble_video
+    final_video = await run_stage(
+        "assemble_video", adapters.assemble,
+        AssembleRequest(
+            clips=synced_clips,
+            audio=combined_audio,
+            caption_text=script.caption_text,
+            aspect_ratio=config.channel_profile.aspect_ratio,
+            made_for_kids=config.channel_profile.made_for_kids,
+            disclosure_label_required=config.channel_profile.disclosure_label_required,
+        ),
+        job, artifact_store, job_store,
+    )
+
+    return script, final_video
+
+
+async def _publish_candidate(
+    ctx: _JobContext,
+    script: Script,
+    final_video: FinalVideo,
+) -> None:
+    """Publish an assembled candidate to the manual review folder."""
+    await run_stage(
+        "publish", ctx.adapters.publish,
+        PublishRequest(
+            video=final_video,
+            rights_cleared=ctx.job.rights_cleared,
+            made_for_kids=ctx.config.channel_profile.made_for_kids,
+            disclosure_label_required=ctx.config.channel_profile.disclosure_label_required,
+            learning_objective_summary=script.learning_objective.success_phrase,
+        ),
+        ctx.job, ctx.artifact_store, ctx.job_store,
+    )
+
+
+async def _critique_candidate(
+    ctx: _JobContext,
+    script: Script,
+    final_video: FinalVideo,
+    attempt: int,
+) -> CritiqueResult:
+    """Run and persist one critique attempt."""
+    return await run_stage(
+        f"critique_attempt_{attempt}",
+        ctx.adapters.critique,
+        CritiqueRequest(
+            video_uri=final_video.uri,
+            script=script,
+            channel_profile_id=ctx.config.channel_profile.id,
+        ),
+        ctx.job,
+        ctx.artifact_store,
+        ctx.job_store,
+    )
+
+
+def _critique_reason(result: CritiqueResult) -> str:
+    reasons = "; ".join(result.reasons) if result.reasons else "no reason provided"
+    return f"critique verdict={result.verdict}: {reasons}"
+
+
+def _mark_job_failed(ctx: _JobContext, reason: str, *, blocked: bool = False) -> None:
+    ctx.job.status = JobStatus.BLOCKED if blocked else JobStatus.FAILED
+    log_event(logger, "job_failed", job_id=ctx.job.job_id, reason=reason)
+    ctx.job_store.save_job(ctx.job)
+
+
 async def run_pipeline_job(
     source_url: str,
     rights_cleared: bool = False,
@@ -275,110 +461,15 @@ async def run_pipeline_job(
         app_config:     Override the default YAML-loaded config (useful in tests).
     """
     config = app_config or load_app_config()
-    settings = config.settings
-    artifact_store = create_artifact_store(settings)
-    job_store = create_job_store(settings)
-
-    job = Job(
-        source_url=source_url,
-        channel_profile_ref=config.channel_profile.id,
-        cast_ref=config.cast.id,
-        rights_cleared=rights_cleared,
-    )
-    job.status = JobStatus.RUNNING
-    job_store.save_job(job)
-    log_event(logger, "job_started", job_id=job.job_id, source_url=source_url)
-
-    work_dir = settings.data_dir / "jobs" / job.job_id
-    work_dir.mkdir(parents=True, exist_ok=True)
-
-    adapters = _make_adapters(config, work_dir)
+    ctx = _make_job_context(source_url, rights_cleared, config)
+    job = ctx.job
 
     try:
-        # 1. fetch_media
-        fetch_result = await run_stage(
-            "fetch_media", adapters.fetch_media,
-            FetchMediaRequest(source_url=source_url),
-            job, artifact_store, job_store,
-        )
-
-        # 2. transcribe
-        transcribe_result = await run_stage(
-            "transcribe", adapters.transcribe,
-            TranscribeRequest(audio_uri=fetch_result.audio_uri),
-            job, artifact_store, job_store,
-        )
-
-        # 3. analyze_content
-        metadata = await run_stage(
-            "analyze_content", adapters.analyze,
-            AnalyzeRequest(
-                transcript=transcribe_result,
-                channel_profile=config.channel_profile,
-            ),
-            job, artifact_store, job_store,
-        )
-
-        # 4. rights gate (not a capability — runs synchronously)
-        check_rights(job)
-
-        # 5. adapt_script
-        script: Script = await run_stage(
-            "adapt_script", adapters.adapt,
-            AdaptScriptRequest(
-                metadata=metadata,
-                cast=config.cast,
-                channel_profile=config.channel_profile,
-            ),
-            job, artifact_store, job_store,
-        )
-
-        # 6. plan_shots
-        storyboard: Storyboard = await run_stage(
-            "plan_shots", adapters.plan,
-            PlanShotsRequest(script=script, cast=config.cast),
-            job, artifact_store, job_store,
-        )
-
-        # 7. per-shot loop
-        synced_clips: list[VideoClip] = []
-        audio_tracks: list[AudioTrack] = []
-        for shot in storyboard.shots:
-            synced, audio = await _run_shot(shot, script, config.cast, adapters)
-            synced_clips.append(synced)
-            audio_tracks.append(audio)
-
-        combined_audio = await _concat_audio(audio_tracks, work_dir, adapters.ffmpeg_bin)
-
-        # 8. assemble_video
-        final_video = await run_stage(
-            "assemble_video", adapters.assemble,
-            AssembleRequest(
-                clips=synced_clips,
-                audio=combined_audio,
-                caption_text=script.caption_text,
-                aspect_ratio=config.channel_profile.aspect_ratio,
-                made_for_kids=config.channel_profile.made_for_kids,
-                disclosure_label_required=config.channel_profile.disclosure_label_required,
-            ),
-            job, artifact_store, job_store,
-        )
-
-        # 9. publish
-        await run_stage(
-            "publish", adapters.publish,
-            PublishRequest(
-                video=final_video,
-                rights_cleared=job.rights_cleared,
-                made_for_kids=config.channel_profile.made_for_kids,
-                disclosure_label_required=config.channel_profile.disclosure_label_required,
-                learning_objective_summary=script.learning_objective.success_phrase,
-            ),
-            job, artifact_store, job_store,
-        )
+        script, final_video = await _run_to_assembled_video(ctx)
+        await _publish_candidate(ctx, script, final_video)
 
         job.status = JobStatus.COMPLETED
-        job_store.save_job(job)
+        ctx.job_store.save_job(job)
         log_event(logger, "job_completed", job_id=job.job_id)
         return job
 
@@ -390,11 +481,100 @@ async def run_pipeline_job(
             logger, "job_failed",
             job_id=job.job_id, stage=exc.stage_name, reason=exc.reason,
         )
-        job_store.save_job(job)
+        ctx.job_store.save_job(job)
         raise
 
     except Exception as exc:
         job.status = JobStatus.FAILED
         log_event(logger, "job_failed", job_id=job.job_id, reason=str(exc))
-        job_store.save_job(job)
+        ctx.job_store.save_job(job)
+        raise
+
+
+async def run_with_critique(
+    source_url: str,
+    rights_cleared: bool = False,
+    app_config: AppConfig | None = None,
+) -> Job:
+    """
+    Phase 2 pipeline: generate candidate → critique → regenerate or publish.
+
+    `Settings.max_regenerations` means retries after the first candidate. For
+    example, max_regenerations=3 allows up to 4 assembled candidates.
+    Critiques are persisted as `critique_attempt_1`, `critique_attempt_2`, ...
+    """
+    config = app_config or load_app_config()
+    ctx = _make_job_context(source_url, rights_cleared, config)
+    max_attempts = max(1, config.settings.max_regenerations + 1)
+
+    try:
+        for attempt in range(1, max_attempts + 1):
+            log_event(
+                logger,
+                "candidate_attempt_started",
+                job_id=ctx.job.job_id,
+                attempt=attempt,
+                max_attempts=max_attempts,
+            )
+
+            script, final_video = await _run_to_assembled_video(ctx)
+            critique = await _critique_candidate(ctx, script, final_video, attempt)
+
+            log_event(
+                logger,
+                "candidate_critiqued",
+                job_id=ctx.job.job_id,
+                attempt=attempt,
+                verdict=critique.verdict,
+                reasons=critique.reasons,
+            )
+
+            if critique.verdict == "pass":
+                await _publish_candidate(ctx, script, final_video)
+                ctx.job.status = JobStatus.COMPLETED
+                ctx.job_store.save_job(ctx.job)
+                log_event(logger, "job_completed", job_id=ctx.job.job_id)
+                return ctx.job
+
+            if critique.verdict == "reject":
+                reason = _critique_reason(critique)
+                _mark_job_failed(ctx, reason, blocked=True)
+                raise StageError("critique", reason)
+
+            if attempt < max_attempts:
+                log_event(
+                    logger,
+                    "candidate_regeneration_requested",
+                    job_id=ctx.job.job_id,
+                    attempt=attempt,
+                    reasons=critique.reasons,
+                )
+                continue
+
+            reason = (
+                f"max_regenerations exhausted after {max_attempts} attempts; "
+                f"{_critique_reason(critique)}"
+            )
+            _mark_job_failed(ctx, reason)
+            raise StageError("critique", reason)
+
+        # Unreachable, but keeps type-checkers honest if loop bounds change.
+        reason = "critique loop exited without a verdict"
+        _mark_job_failed(ctx, reason)
+        raise StageError("critique", reason)
+
+    except StageError as exc:
+        if ctx.job.status not in (JobStatus.BLOCKED, JobStatus.FAILED):
+            ctx.job.status = JobStatus.FAILED
+            ctx.job_store.save_job(ctx.job)
+        log_event(
+            logger, "job_failed",
+            job_id=ctx.job.job_id, stage=exc.stage_name, reason=exc.reason,
+        )
+        raise
+
+    except Exception as exc:
+        ctx.job.status = JobStatus.FAILED
+        log_event(logger, "job_failed", job_id=ctx.job.job_id, reason=str(exc))
+        ctx.job_store.save_job(ctx.job)
         raise

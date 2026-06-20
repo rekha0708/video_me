@@ -45,7 +45,7 @@ VIDEO_ME PROJECT STATUS — <today's date>
 PHASE SUMMARY
 ─────────────
 ✅ Phase 0 — Skeleton         COMPLETE
-✅ Phase 1 — Full pipeline    COMPLETE (code) — 264 tests passing
+✅ Phase 1 — Full pipeline    COMPLETE (code)
    A1.0  core/executor.py (stage runner + rights gate)
    A1.1  fetch_media (yt-dlp + ffmpeg)
    A1.2  transcribe (faster-whisper)
@@ -59,7 +59,7 @@ PHASE SUMMARY
    A1.10 assemble_video (ffmpeg)
    A1.11 publish (review folder + metadata sidecar)
    A1.12 workflow DAG (run_pipeline_job)
-⏳ Phase 2 — Critic loop      NOT STARTED
+✅ Phase 2 — Critic loop      COMPLETE (code) — run_with_critique + VLM adapter
 ⏳ Phase 3 — Framework        NOT STARTED
 ⏳ Phase 4 — Learning loop    NOT STARTED
 
@@ -85,7 +85,7 @@ Wav2Lip              :8040   — <UP/DOWN>
 
 BLOCKING DECISIONS (operator must act)
 ───────────────────────────────────────
-#3  Max/Zoe reference sheets — needed for Track B LoRA training
+#3  Final Max/Zoe reference sheets — needed for production LoRA training
 #10 Build budget ceiling — needed for Track D GPU provisioning
 #E  Compliance posture sign-off — needed for Track E
 
@@ -105,17 +105,17 @@ NEXT ACTIONS (in priority order)
 
 3. [Track E] Operator compliance sign-off
 
-4. [Once B + D ready] Run pipeline smoke test:
+4. [Once B + D + VLM ready] Run Phase 2 pipeline smoke test:
    python -c "
    import asyncio
    from core.config import load_app_config
-   from core.workflow import run_pipeline_job
-   job = asyncio.run(run_pipeline_job(
+   from core.workflow import run_with_critique
+   job = asyncio.run(run_with_critique(
        'https://youtube.com/watch?v=EXAMPLE',
        rights_cleared=True))
    print(job.status)"
 
-5. [Phase 2] Build critique adapter (VLM-based age-appropriateness check)
+5. [Phase 3] Build registry/router + self-healing fallback
 ═══════════════════════════════════════════════════════
 ```
 

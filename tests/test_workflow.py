@@ -7,6 +7,7 @@ from core.config import Settings, load_app_config
 from core.executor import StageError
 from core.models.capabilities import (
     AudioTrack,
+    CritiqueResult,
     FetchMediaResult,
     FinalVideo,
     PublishResult,
@@ -24,7 +25,13 @@ from core.models.content import (
 )
 from core.models.guardrails import SourceRights
 from core.models.job import JobStatus
-from core.workflow import _concat_audio, _resolve_line, _run_shot, run_pipeline_job
+from core.workflow import (
+    _concat_audio,
+    _resolve_line,
+    _run_shot,
+    run_pipeline_job,
+    run_with_critique,
+)
 
 
 # ------------------------------------------------------------------ shared fixtures
@@ -142,6 +149,15 @@ def _publish_result() -> PublishResult:
     )
 
 
+def _critique_result(verdict: str = "pass") -> CritiqueResult:
+    return CritiqueResult(
+        scores={"age_appropriateness": 0.9, "learning_clarity": 0.8},
+        verdict=verdict,
+        reasons=[f"verdict {verdict}"],
+        suggested_param_overrides={},
+    )
+
+
 def _synced_clip() -> VideoClip:
     return VideoClip(uri="/tmp/synced.mp4", duration_sec=3.5, shot_id="s01")
 
@@ -165,6 +181,22 @@ def _stage_results():
 def _make_run_stage(results: dict):
     async def _run_stage(stage_name, capability, request, job, artifact_store, job_store):
         return results[stage_name]
+    return _run_stage
+
+
+def _make_run_stage_with_critiques(verdicts: list[str], call_order: list[str] | None = None):
+    critique_index = 0
+
+    async def _run_stage(stage_name, capability, request, job, artifact_store, job_store):
+        nonlocal critique_index
+        if call_order is not None:
+            call_order.append(stage_name)
+        if stage_name.startswith("critique_attempt_"):
+            verdict = verdicts[critique_index]
+            critique_index += 1
+            return _critique_result(verdict)
+        return _stage_results()[stage_name]
+
     return _run_stage
 
 
@@ -387,6 +419,135 @@ async def test_work_dir_created_under_data_dir(tmp_path) -> None:
 
     job_work_dir = tmp_path / "jobs" / job.job_id
     assert job_work_dir.is_dir()
+
+
+# ------------------------------------------------------------------ run_with_critique
+
+
+@pytest.mark.asyncio
+async def test_run_with_critique_pass_publishes(tmp_path) -> None:
+    config = _make_config(tmp_path)
+    call_order: list[str] = []
+
+    with (
+        patch("core.workflow._make_adapters", return_value=MagicMock(ffmpeg_bin="ffmpeg")),
+        patch(
+            "core.workflow.run_stage",
+            new=_make_run_stage_with_critiques(["pass"], call_order),
+        ),
+        patch("core.workflow._run_shot", new=AsyncMock(return_value=(_synced_clip(), _audio_track()))),
+        patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
+        patch("core.workflow.create_job_store", return_value=MagicMock()),
+        patch("core.workflow.create_artifact_store", return_value=MagicMock()),
+    ):
+        job = await run_with_critique("http://example.com", rights_cleared=True, app_config=config)
+
+    assert job.status == JobStatus.COMPLETED
+    assert "critique_attempt_1" in call_order
+    assert call_order[-1] == "publish"
+
+
+@pytest.mark.asyncio
+async def test_run_with_critique_regenerates_then_publishes(tmp_path) -> None:
+    config = _make_config(tmp_path)
+    call_order: list[str] = []
+
+    with (
+        patch("core.workflow._make_adapters", return_value=MagicMock(ffmpeg_bin="ffmpeg")),
+        patch(
+            "core.workflow.run_stage",
+            new=_make_run_stage_with_critiques(["regenerate", "pass"], call_order),
+        ),
+        patch("core.workflow._run_shot", new=AsyncMock(return_value=(_synced_clip(), _audio_track()))),
+        patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
+        patch("core.workflow.create_job_store", return_value=MagicMock()),
+        patch("core.workflow.create_artifact_store", return_value=MagicMock()),
+    ):
+        job = await run_with_critique("http://example.com", rights_cleared=True, app_config=config)
+
+    assert job.status == JobStatus.COMPLETED
+    assert call_order.count("assemble_video") == 2
+    assert "critique_attempt_1" in call_order
+    assert "critique_attempt_2" in call_order
+    assert call_order.count("publish") == 1
+
+
+@pytest.mark.asyncio
+async def test_run_with_critique_reject_blocks_without_publish(tmp_path) -> None:
+    config = _make_config(tmp_path)
+    mock_job_store = MagicMock()
+    call_order: list[str] = []
+
+    with (
+        patch("core.workflow._make_adapters", return_value=MagicMock(ffmpeg_bin="ffmpeg")),
+        patch(
+            "core.workflow.run_stage",
+            new=_make_run_stage_with_critiques(["reject"], call_order),
+        ),
+        patch("core.workflow._run_shot", new=AsyncMock(return_value=(_synced_clip(), _audio_track()))),
+        patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
+        patch("core.workflow.create_job_store", return_value=mock_job_store),
+        patch("core.workflow.create_artifact_store", return_value=MagicMock()),
+    ):
+        with pytest.raises(StageError, match="reject"):
+            await run_with_critique("http://example.com", rights_cleared=True, app_config=config)
+
+    last_saved = mock_job_store.save_job.call_args_list[-1][0][0]
+    assert last_saved.status == JobStatus.BLOCKED
+    assert "publish" not in call_order
+
+
+@pytest.mark.asyncio
+async def test_run_with_critique_max_regenerations_sets_failed(tmp_path) -> None:
+    config = _make_config(tmp_path)
+    config.settings.max_regenerations = 1
+    mock_job_store = MagicMock()
+    call_order: list[str] = []
+
+    with (
+        patch("core.workflow._make_adapters", return_value=MagicMock(ffmpeg_bin="ffmpeg")),
+        patch(
+            "core.workflow.run_stage",
+            new=_make_run_stage_with_critiques(["regenerate", "regenerate"], call_order),
+        ),
+        patch("core.workflow._run_shot", new=AsyncMock(return_value=(_synced_clip(), _audio_track()))),
+        patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
+        patch("core.workflow.create_job_store", return_value=mock_job_store),
+        patch("core.workflow.create_artifact_store", return_value=MagicMock()),
+    ):
+        with pytest.raises(StageError, match="max_regenerations exhausted"):
+            await run_with_critique("http://example.com", rights_cleared=True, app_config=config)
+
+    last_saved = mock_job_store.save_job.call_args_list[-1][0][0]
+    assert last_saved.status == JobStatus.FAILED
+    assert call_order.count("assemble_video") == 2
+    assert "critique_attempt_1" in call_order
+    assert "critique_attempt_2" in call_order
+    assert "publish" not in call_order
+
+
+@pytest.mark.asyncio
+async def test_run_with_critique_blocks_when_rights_not_cleared(tmp_path) -> None:
+    config = _make_config(tmp_path)
+    mock_job_store = MagicMock()
+    call_order: list[str] = []
+
+    with (
+        patch("core.workflow._make_adapters", return_value=MagicMock(ffmpeg_bin="ffmpeg")),
+        patch(
+            "core.workflow.run_stage",
+            new=_make_run_stage_with_critiques(["pass"], call_order),
+        ),
+        patch("core.workflow.create_job_store", return_value=mock_job_store),
+        patch("core.workflow.create_artifact_store", return_value=MagicMock()),
+    ):
+        with pytest.raises(StageError):
+            await run_with_critique("http://example.com", rights_cleared=False, app_config=config)
+
+    last_saved = mock_job_store.save_job.call_args_list[-1][0][0]
+    assert last_saved.status == JobStatus.BLOCKED
+    assert "critique_attempt_1" not in call_order
+    assert "publish" not in call_order
 
 
 # ------------------------------------------------------------------ _resolve_line
