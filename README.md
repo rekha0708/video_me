@@ -1,7 +1,7 @@
 # video_me
 
 Orchestration pipeline that turns a reference video URL into an original animated kids'
-educational short starring a swappable 4-member pig cast. Every model is an
+educational short starring the swappable `kids_duo` cast: Max and Zoe. Every model is an
 interchangeable adapter behind a typed capability ABC.
 
 ## Status
@@ -64,20 +64,17 @@ Place LoRA weights and reference voice WAVs at these exact paths:
 
 ```
 loras/
-  pig_kids_placeholder_c1.safetensors   (Pippa)
-  pig_kids_placeholder_c2.safetensors   (Milo)
-  pig_kids_placeholder_c3.safetensors   (Nia)
-  pig_kids_placeholder_c4.safetensors   (Luma)
+  kids_duo_max.safetensors   (Max)
+  kids_duo_zoe.safetensors   (Zoe)
 
 voices/
-  pig_kids_placeholder/
-    c1.wav   (Pippa — ~10–30s reference speech)
-    c2.wav   (Milo)
-    c3.wav   (Nia)
-    c4.wav   (Luma)
+  kids_duo/
+    max.wav   (Max — ~10–30s reference speech)
+    zoe.wav   (Zoe)
 ```
 
-See `.claude/agents/track-b-setup.md` for the full setup guide.
+Run `python -m scripts.check_track_b` to verify placement. See
+`.claude/agents/track-b-setup.md` and `assets/kids_duo/` for the full setup guide.
 
 ## Track D — Services required before pipeline runs
 
@@ -108,7 +105,7 @@ The full DAG is in `core/workflow.py:run_pipeline_job()`.
 
 Channel and cast config live in `config/`:
 - `config/channels/education_kids.yaml` — 9:16, age 3–6, `made_for_kids: true`
-- `config/casts/pig_kids_placeholder.yaml` — 4-member pig cast
+- `config/casts/kids_duo.yaml` — final Max/Zoe cast
 
 Environment variables (via `.env` or shell):
 ```bash

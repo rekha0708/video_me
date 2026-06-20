@@ -4,12 +4,13 @@
 > Phase 1 of that plan for the first concrete product instance.
 > **Audience:** the AI coding agent building the system.
 > **Deliverable of Phase 1:** a working end-to-end pipeline that turns a reference link into an
-> original, captioned, age-appropriate animated short starring a fixed cast of 4 original
+> original, captioned, age-appropriate animated short starring a fixed cast of original
 > child characters, for an educational-kids channel — with manual review before publishing.
 
 This instance is deliberately *one configuration* of a general system. The genre (education-kids)
-is a swappable `ChannelProfile`; the cast (4 pig kids) is a swappable `Cast`. Nothing about
-"education" or "pigs" is hardcoded into the pipeline — see Section 8 (Extensibility).
+is a swappable `ChannelProfile`; the cast (`kids_duo`: Max and Zoe) is a swappable `Cast`.
+Nothing about "education" or this cast is hardcoded into the pipeline — see Section 8
+(Extensibility).
 
 ---
 
@@ -44,26 +45,33 @@ pedagogy:
   positive_framing: true
 ```
 
-### 2b. Cast: `pig_kids_v1` (config/casts/pig_kids_v1.yaml)
+### 2b. Cast: `kids_duo` (config/casts/kids_duo.yaml)
 A `Cast` is an ensemble of `CastMember`s. Species, count, and identities are all config.
 ```yaml
-id: pig_kids_v1
-species: pig                    # SWAPPABLE: dog, bear, robot, human-kid, etc.
+id: kids_duo
+species: human                  # SWAPPABLE: pig, dog, bear, robot, etc.
 is_original_synthetic: true     # REQUIRED true; design must be original, not an existing show
 members:
-  - id: c1
-    name: <choose original name>
+  - id: max
+    name: Max
     gender: boy
-    visual_descriptor: <original look — color, clothing, distinguishing feature>
-    lora_ref: loras/pig_kids_v1/c1
-    voice_profile_ref: voices/pig_kids_v1/c1   # designed synthetic child-like voice
-    personality: curious, asks the questions
-    signature_expressions: [wide-eyed wonder, big grin]
-  - id: c2 { gender: boy,  name: ..., personality: playful/silly, ... }
-  - id: c3 { gender: girl, name: ..., personality: knows-the-answer/explainer, ... }
-  - id: c4 { gender: girl, name: ..., personality: shy/kind, ... }
+    visual_descriptor: soft cartoon 5-year-old boy with blue and white striped t-shirt
+    lora_ref: loras/kids_duo/max
+    voice_profile_ref: voices/kids_duo/max
+    personality: enthusiastic and patient big-kid teacher
+    signature_expressions: [wide-eyed teaching face, proud big-kid grin]
+  - id: zoe
+    name: Zoe
+    gender: girl
+    visual_descriptor: soft cartoon 3-year-old girl with pink polka-dot dress
+    lora_ref: loras/kids_duo/zoe
+    voice_profile_ref: voices/kids_duo/zoe
+    personality: confident little expert in cooking, art, and creative play
+    signature_expressions: [hands-on-hips confident pose, giggly laugh]
 design_constraints:
-  - Original silhouette and color palette; do NOT mimic any existing kids' show character.
+  - Original character designs; do NOT mimic any existing kids' show character.
+  - Max must visually read as older than Zoe.
+  - Zoe must have toddler proportions.
   - Distinct shape/color per member so young viewers tell them apart instantly.
   - Consistent across shots via per-member LoRA (built in Stage 4).
 ```
@@ -181,13 +189,13 @@ These extend the master-plan guardrails and are enforced as checks, not advice:
 ## 7. Phase 1 acceptance criteria
 
 - A real educational-kids reference link produces a watchable ~30–60s 9:16 short starring the
-  4-member original cast, teaching the same concept via an original transformed script.
+  configured original cast, teaching the same concept via an original transformed script.
 - Each character is visually consistent across its shots and has a distinct synthetic voice.
 - Dialogue is correctly attributed and lip-synced per shot; captions are present and readable.
 - The output sidecar contains: learning objective, rights record, made-for-kids flag, disclosure flag.
 - All Section 6 guardrails are enforced: a job with a non-original cast, missing rights, or a failed
   age-appropriateness check is blocked and routed to review — never written as final output.
-- Swapping `species: pig` → another value in the cast config changes the characters with **no code
+- Swapping `species` or cast descriptors in the cast config changes the characters with **no code
   change** (LoRAs aside). Swapping the channel profile changes genre with no code change.
 
 ---
@@ -214,7 +222,7 @@ If any of these requires editing pipeline code, the abstraction is wrong — fix
 Fixture: one short educational-kids reference link (concept e.g. "counting to five").
 Assert: transcript produced → `LearningObjective` extracted → multi-speaker transformed `Script`
 with lines assigned across all 4 members → `Storyboard` with ≤2 characters per shot → per-shot
-clips generated and lip-synced → 4 distinct voices → assembled 9:16 captioned file → sidecar with
+clips generated and lip-synced → distinct voices for every cast member → assembled 9:16 captioned file → sidecar with
 all required flags → all guardrail checks pass. Mock the GPU models in unit tests; run the real
 models in the GPU integration suite on rented capacity.
 

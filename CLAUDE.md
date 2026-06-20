@@ -3,7 +3,7 @@
 ## What this project is
 
 `video_me` is an orchestration pipeline that turns a reference video URL into an original animated
-kids' educational short starring a 4-member pig cast (Pippa, Milo, Nia, Luma). Every model is an
+kids' educational short starring the final `kids_duo` cast: Max and Zoe. Every model is an
 interchangeable adapter behind a typed capability ABC. The pipeline is guardrail-enforced — jobs
 with uncleared rights or unoriginal content are blocked, not silently passed.
 
@@ -17,7 +17,7 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 |---|---|---|
 | Phase 0 — Skeleton | ✅ COMPLETE | — |
 | Phase 1 — Full pipeline A1.0–A1.12 | ✅ COMPLETE (code) | Track B + Track D files/services needed to run |
-| Track B — LoRAs + voice files | ❌ MISSING | Character art not finalized; LoRAs not trained |
+| Track B — LoRAs + voice files | ❌ MISSING | `kids_duo` selected; LoRAs and voice refs not placed |
 | Track D — GPU services | ❌ NOT RUNNING | Budget decision #10 pending; no GPU provisioned |
 | Track E — Compliance sign-off | ❌ PENDING | Operator hasn't signed off |
 | Phase 2 — Critic loop (A2.x) | ⏳ NOT STARTED | Depends on Phase 1 running end-to-end |
@@ -92,7 +92,8 @@ The stage runner is `core/executor.py:run_stage()`. The full DAG is `core/workfl
 | `adapters/assemble_video/ffmpeg_adapter.py` | ffmpeg subprocess |
 | `adapters/publish/manual_adapter.py` | local file copy + metadata.json |
 | `config/channels/education_kids.yaml` | Channel: 9:16, age 3-6, made_for_kids=true |
-| `config/casts/pig_kids_placeholder.yaml` | 4-member pig cast with lora_ref + voice_profile_ref |
+| `config/casts/kids_duo.yaml` | final Max/Zoe cast with lora_ref + voice_profile_ref |
+| `assets/kids_duo/` | Track B reference plan, LoRA notes, and voice scripts |
 | `loras/` | LoRA weight files — **MUST EXIST** for render_character (Track B) |
 | `voices/` | Reference WAV files — **MUST EXIST** for synthesize_voice (Track B) |
 | `review/` | Output: `<timestamp>_<stem>/video.mp4` + `metadata.json` sidecar |
@@ -108,27 +109,28 @@ The stage runner is `core/executor.py:run_stage()`. The full DAG is `core/workfl
 `RuntimeError("Complete Track B…")` before any HTTP call if files are absent.
 
 ### LoRA files (render_character)
-`lora_ref` in the YAML is `loras/pig_kids_placeholder/c1`. The adapter derives the flat filename:
+`lora_ref` in the YAML is `loras/kids_duo/max`. The adapter derives the flat filename:
 ```
 loras/
-  pig_kids_placeholder_c1.safetensors   ← Pippa
-  pig_kids_placeholder_c2.safetensors   ← Milo
-  pig_kids_placeholder_c3.safetensors   ← Nia
-  pig_kids_placeholder_c4.safetensors   ← Luma
+  kids_duo_max.safetensors   ← Max
+  kids_duo_zoe.safetensors   ← Zoe
 ```
 Also accepts `.pt` or `.ckpt` extensions.
 
 ### Voice reference files (synthesize_voice)
-`voice_profile_ref` is `voices/pig_kids_placeholder/c1`. Adapter checks nested path:
+`voice_profile_ref` is `voices/kids_duo/max`. Adapter checks nested path:
 ```
 voices/
-  pig_kids_placeholder/
-    c1.wav    ← Pippa reference voice (~10s clear single-speaker speech)
-    c2.wav    ← Milo
-    c3.wav    ← Nia
-    c4.wav    ← Luma
+  kids_duo/
+    max.wav    ← Max reference voice (~10–30s clear single-speaker speech)
+    zoe.wav    ← Zoe
 ```
 Also accepts `.mp3` or `.flac`.
+
+Quick check:
+```bash
+python -m scripts.check_track_b
+```
 
 ---
 
@@ -258,7 +260,7 @@ These are enforced in code — pipeline blocks or raises, never silently skips.
 |---|---|---|---|
 | 1 | Confirm workflow engine | Phase 3 refactor | asyncio (core/executor.py) |
 | 2 | Confirm target platform | Publish adapter upgrade | Manual review folder |
-| 3 | Cast visual designs approved | Track B LoRA training | Placeholder designs |
+| 3 | Final Max/Zoe reference sheets approved | Track B LoRA training | `kids_duo` config selected |
 | 10 | Build budget ceiling | Track D GPU | No GPU provisioned |
 | E | Compliance posture sign-off | Track E | Unsigned |
 

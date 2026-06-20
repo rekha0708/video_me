@@ -428,7 +428,7 @@ def test_resolve_line_maps_one_indexed_scene() -> None:
     script = _script()
     # scene-1 → index 0 (the only scene)
     line = _resolve_line("scene-1-line-0", script)
-    assert line.speaker == "c1"
+    assert line.speaker == "max"
 
 
 # ------------------------------------------------------------------ _concat_audio

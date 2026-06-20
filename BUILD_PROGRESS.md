@@ -133,10 +133,10 @@ It is the implementation journal for `Agent.md`, `project-flow-and-execution-pla
 
 ### Track B — cast sign-off (needed before render_character / synthesize_voice adapters)
 
-- [x] ~~Resolve Pippa (c1) gender vs. name inconsistency in `pig_kids_placeholder.yaml`.~~ **FIXED 2026-06-19.**
-- [ ] Finalize original character art and visual designs for all 4 members.
+- [x] Select final cast config: `kids_duo` with Max and Zoe.
+- [ ] Approve final Max and Zoe reference sheets.
 - [ ] Train per-member character LoRAs once designs are approved.
-- [ ] Design per-member synthetic child voices.
+- [ ] Design and place per-member synthetic child voice references.
 
 ### Track A — framework (critical path; build in this order)
 
@@ -233,7 +233,7 @@ Built and tested all Track A adapters A1.0–A1.12. **264 tests passing** across
 - Stage-ordering errors with named upstream stage in `generate_video`, `lip_sync`, `assemble_video`, `publish`
 
 > Acceptance criteria (Phase 1): a real educational-kids reference link produces a watchable
-> ~30–60s 9:16 short starring the 4-member original cast, with correct captions, distinct voices,
+> ~30–60s 9:16 short starring the configured original cast, with correct captions, distinct voices,
 > per-shot lip sync, and a metadata sidecar containing all required flags. A job with a non-original
 > cast, missing rights, or a failed age-appropriateness check is blocked — never written as output.
 
@@ -266,8 +266,8 @@ Built and tested all Track A adapters A1.0–A1.12. **264 tests passing** across
 The code is complete. Two things must happen before the pipeline can run on real content:
 
 **Track B (file blockers)**
-- `loras/pig_kids_placeholder_c{1-4}.safetensors` — must be trained from approved character art
-- `voices/pig_kids_placeholder/c{1-4}.wav` — must be recorded, matching each character's personality
+- `loras/kids_duo_max.safetensors` and `loras/kids_duo_zoe.safetensors` — must be trained from approved character art
+- `voices/kids_duo/max.wav` and `voices/kids_duo/zoe.wav` — must be recorded, matching each character's personality
 - See `.claude/agents/track-b-setup.md` for exact setup steps
 
 **Track D (service blockers)**
@@ -316,10 +316,43 @@ Phase 2 adds an automated quality gate: generate → evaluate → regenerate if 
 - What's the age-appropriateness rubric? (operator defines pass/fail criteria)
 - What's the max cost ceiling for regenerations? (each retry = full GPU cost)
 
-## Open Gates (updated 2026-06-19)
+## Open Gates (updated 2026-06-20)
 
 - **#1** Workflow engine — asyncio is the working default; Prefect/Temporal can replace if needed in Phase 3
 - **#2** Target platform — review folder is the default; real platform TBD by operator
-- **#3** Cast visual designs — placeholder designs; must be replaced before the "test the waters" milestone
+- **#3** Max/Zoe reference sheets — must be approved before LoRA training and the "test the waters" milestone
 - **#10** Build budget ceiling — required before any paid GPU provisioning (Track D)
 - **#E** Compliance posture — Track E sign-off required before first real video publish
+
+## Track B Kickoff — 2026-06-20
+
+`kids_duo` is now the final cast for the current pipeline. Track B has been
+reframed around Max and Zoe instead of the earlier pig placeholder cast.
+
+Added:
+
+- `assets/kids_duo/README.md` — reference sheet, LoRA, and voice requirements.
+- `assets/kids_duo/voice_scripts.md` — clean reference recording scripts for Max and Zoe.
+- `assets/kids_duo/reference/max_reference_sheet_v1.png` — first-pass Max reference sheet for review.
+- `assets/kids_duo/reference/zoe_reference_sheet_v1.png` — first-pass Zoe reference sheet for review.
+- `loras/README.md` — exact LoRA drop paths.
+- `voices/kids_duo/README.md` — exact voice reference drop paths.
+- `voices/kids_duo/VOICE_SELECTION.md` — provisional local voice choices.
+- `scripts/check_track_b.py` — repeatable preflight that checks the active cast config.
+
+Current test status:
+
+- `python -m scripts.check_track_b` returns `Track B: READY_FOR_CODE_TESTS`.
+- Provisional voices are present:
+  `voices/kids_duo/max.wav` uses macOS `Junior`;
+  `voices/kids_duo/zoe.wav` uses macOS `Sandy (English (US))`.
+- First-pass Max and Zoe reference sheets are accepted for code testing.
+
+Still pending before real end-to-end rendering:
+
+- Final operator approval of Max and Zoe reference sheets.
+- Real trained LoRAs to replace local test placeholders:
+  `loras/kids_duo_max.safetensors` and `loras/kids_duo_zoe.safetensors`.
+- Final designed voices to replace provisional macOS `say` references:
+  `voices/kids_duo/max.wav` (`Junior`) and `voices/kids_duo/zoe.wav`
+  (`Sandy (English (US))`).

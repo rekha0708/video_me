@@ -247,7 +247,7 @@ for root, dirs, files in os.walk(work_dir):
 
 Phase 1 acceptance criteria (from `orchestration-build-plan.md §9`):
 - ✅ A real educational-kids link produces a watchable ~30–60s 9:16 short
-- ✅ Starring the 4-member original cast with correct captions
+- ✅ Starring the configured original cast with correct captions
 - ✅ Distinct voices, per-shot lip sync
 - ✅ Metadata sidecar with all required flags
 - ✅ A job with non-original cast / missing rights / failed age-check is blocked

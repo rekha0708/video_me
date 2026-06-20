@@ -15,160 +15,123 @@ You are the Track B specialist for `video_me`. Track B covers everything needed
 to make `render_character` and `synthesize_voice` work: character art, LoRA
 weights, and reference voice files.
 
-**Current state: Track B is INCOMPLETE. The pipeline will not run until these
-files exist.**
+**Current state: Track B is READY_FOR_CODE_TESTS. `kids_duo` is the final cast,
+Max/Zoe reference sheets are provisionally accepted for testing, and provisional
+voice WAVs are present. The local LoRA files are test placeholders only, not real
+model weights.**
 
 ---
 
 ## What Track B needs
 
-### Step 1 — Finalize character designs (operator decision #3)
+### Step 1 — Approve Max and Zoe reference sheets
 
-The 4 cast members are placeholder designs. Before LoRA training, the operator must
-approve final character art for each member:
+The active cast is `config/casts/kids_duo.yaml`.
 
 | ID | Name | Description |
 |----|------|-------------|
-| c1 | Pippa | Round pig kid, teal overalls, star patch |
-| c2 | Milo | Small pig kid, green hoodie, square glasses |
-| c3 | Nia | Pig kid, purple jumper, sunflower hair clip |
-| c4 | Luma | Pig kid, yellow rain boots, blue scarf |
+| max | Max | Soft cartoon 5-year-old boy, striped blue/white shirt, navy shorts, energetic big-kid teacher |
+| zoe | Zoe | Soft cartoon 3-year-old girl, pink polka-dot dress, curly hair puffs with pink bows, confident toddler expert |
 
-Constraint from `config/casts/pig_kids_placeholder.yaml`:
-> "Original silhouette and color palette; do not mimic any existing kids show character."
-> "Distinct shape and color per member so young viewers can tell them apart instantly."
+Constraints from `config/casts/kids_duo.yaml`:
 
-**Deliverable**: Reference sheet images for each character, approved by operator.
+- Original character designs; must not resemble characters from any existing kids' show.
+- Max must visually read as older than Zoe.
+- Zoe must have toddler proportions.
+- Both characters must be instantly distinguishable by color palette and silhouette.
+- Their teaching dynamic is asymmetric: each is an expert in their own subject and a learner in the other's subject.
+
+Deliverable: approved reference sheet images for Max and Zoe. See
+`assets/kids_duo/README.md` for the reference sheet requirements.
 
 ### Step 2 — Train LoRAs
 
 Train one LoRA per cast member using SDXL or SD 1.5, targeting the AUTOMATIC1111
 webUI format.
 
-**Training inputs needed per member:**
-- 15–30 training images of the character in consistent style
-- Captions describing the character's visual features
-- Trigger word format: `<lora:pig_kids_placeholder_c1:0.9>` (the adapter injects this)
+Training inputs needed per member:
 
-**Output files must be placed at** (from project root):
-```
+- 15-30 training images of the character in consistent style.
+- Captions describing the character's visual features.
+- Trigger stems: `kids_duo_max` and `kids_duo_zoe`.
+
+Output files must be placed at:
+
+```text
 loras/
-  pig_kids_placeholder_c1.safetensors   ← Pippa
-  pig_kids_placeholder_c2.safetensors   ← Milo
-  pig_kids_placeholder_c3.safetensors   ← Nia
-  pig_kids_placeholder_c4.safetensors   ← Luma
+  kids_duo_max.safetensors   <- Max
+  kids_duo_zoe.safetensors   <- Zoe
 ```
 
-> **Important**: The filename is derived from `lora_ref` in the YAML by joining path
-> parts with underscores. `loras/pig_kids_placeholder/c1` → `pig_kids_placeholder_c1`.
-> The adapter looks for `.safetensors`, `.pt`, or `.ckpt` extensions (in that order).
+Important: the filename is derived from `lora_ref` in the YAML by joining path
+parts with underscores. `loras/kids_duo/max` becomes `kids_duo_max`. The adapter
+looks for `.safetensors`, `.pt`, or `.ckpt` extensions in that order.
 
-**Verify placement:**
+Verify placement:
+
 ```bash
-ls -la loras/pig_kids_placeholder_c*.safetensors
-# Should show all 4 files
-```
-
-**Test that the adapter finds the files:**
-```python
-from pathlib import Path
-from adapters.render_character.diffusion_adapter import DiffusionRenderAdapter
-from core.config import load_app_config
-
-config = load_app_config()
-adapter = DiffusionRenderAdapter(work_dir=Path("/tmp/test"), lora_dir=Path("loras"))
-for member in config.cast.members:
-    try:
-        path = adapter._check_lora(member)
-        print(f"✅ {member.name}: {path}")
-    except RuntimeError as e:
-        print(f"❌ {member.name}: {e}")
+ls -la loras/kids_duo_*.safetensors
+python -m scripts.check_track_b
 ```
 
 ### Step 3 — Record reference voice files
 
-Each cast member needs a reference audio file (10–30 seconds of clear, single-speaker
-speech in the character's voice). This is used as the voice cloning reference by
-Chatterbox TTS.
+Each cast member needs a reference audio file: 10-30 seconds of clear,
+single-speaker speech in the character's designed voice. Use a designed
+synthetic or consented performer voice only. Do not clone an identifiable real
+child or public figure.
 
-**Output files must be placed at:**
-```
+Output files must be placed at:
+
+```text
 voices/
-  pig_kids_placeholder/
-    c1.wav    ← Pippa — curious, asks questions
-    c2.wav    ← Milo  — playful and silly
-    c3.wav    ← Nia   — confident, explains gently
-    c4.wav    ← Luma  — shy and kind
+  kids_duo/
+    max.wav    <- Max, enthusiastic and patient big-kid teacher
+    zoe.wav    <- Zoe, confident toddler expert
 ```
 
-> **Important**: The adapter constructs the path as `voices/<name>` where `name` is
-> derived from `voice_profile_ref` by stripping the leading `voices/` component.
-> `voices/pig_kids_placeholder/c1` → `voices/pig_kids_placeholder/c1.wav`.
-> The directory `voices/pig_kids_placeholder/` must exist.
+Important: the adapter constructs the path as `voices/<name>` where `name` is
+derived from `voice_profile_ref` by stripping the leading `voices/` component.
+`voices/kids_duo/max` becomes `voices/kids_duo/max.wav`.
 
-**Create the directory and verify:**
-```bash
-mkdir -p voices/pig_kids_placeholder
-ls -la voices/pig_kids_placeholder/
-# Should show c1.wav, c2.wav, c3.wav, c4.wav
-```
+Audio requirements:
 
-**Check audio quality requirements:**
-- Mono or stereo WAV (PCM), 16kHz+ sample rate
-- No background music or noise
-- 10–30 seconds of natural speech
-- Matches the character's age/personality
+- Mono or stereo WAV, PCM preferred, 16 kHz or higher.
+- No background music or room noise.
+- 10-30 seconds of natural speech.
+- Matches the character's age/personality.
 
-**Test that the adapter finds the files:**
-```python
-from pathlib import Path
-from adapters.synthesize_voice.tts_adapter import TtsAdapter
-from core.config import load_app_config
-
-config = load_app_config()
-adapter = TtsAdapter(work_dir=Path("/tmp/test"), voice_dir=Path("voices"))
-for member in config.cast.members:
-    try:
-        path = adapter._check_voice(member.voice_profile_ref)
-        print(f"✅ {member.name}: {path}")
-    except RuntimeError as e:
-        print(f"❌ {member.name}: {e}")
-```
+Recording scripts live in `assets/kids_duo/voice_scripts.md`.
 
 ---
 
-## Full Track B verification (run when all files are placed)
+## Full Track B Verification
+
+Run this from the repo root:
 
 ```bash
-python -c "
-from pathlib import Path
-from adapters.render_character.diffusion_adapter import DiffusionRenderAdapter
-from adapters.synthesize_voice.tts_adapter import TtsAdapter
-from core.config import load_app_config
-
-config = load_app_config()
-render = DiffusionRenderAdapter(work_dir=Path('/tmp'), lora_dir=Path('loras'))
-voice = TtsAdapter(work_dir=Path('/tmp'), voice_dir=Path('voices'))
-
-print('LoRA checks:')
-for m in config.cast.members:
-    try:
-        p = render._check_lora(m)
-        print(f'  ✅ {m.name}: {p}')
-    except RuntimeError as e:
-        print(f'  ❌ {m.name}: {e}')
-
-print('Voice checks:')
-for m in config.cast.members:
-    try:
-        p = voice._check_voice(m.voice_profile_ref)
-        print(f'  ✅ {m.name}: {p}')
-    except RuntimeError as e:
-        print(f'  ❌ {m.name}: {e}')
-"
+python -m scripts.check_track_b
 ```
 
-All 8 checks must show ✅ before the pipeline can run end-to-end.
+Expected for real Track B completion:
+
+```text
+Track B preflight for cast: kids_duo
+
+LoRA checks:
+  OK      Max: loras/kids_duo_max.safetensors
+  OK      Zoe: loras/kids_duo_zoe.safetensors
+
+Voice checks:
+  OK      Max: voices/kids_duo/max.wav
+  OK      Zoe: voices/kids_duo/zoe.wav
+
+Track B: READY
+```
+
+Current code-test output may show `OK TEST` for LoRAs and
+`Track B: READY_FOR_CODE_TESTS`. That is enough for local file-gate and mocked
+pipeline work, but real rendering still requires trained LoRA weights.
 
 ---
 
@@ -176,13 +139,17 @@ All 8 checks must show ✅ before the pipeline can run end-to-end.
 
 | Error | Cause | Fix |
 |---|---|---|
-| `LoRA for 'Pippa' not found. Expected: loras/pig_kids_placeholder_c1.safetensors` | File missing or wrong name | Place file at exact path shown |
-| `Voice profile not found for 'voices/pig_kids_placeholder/c1'` | WAV missing or directory missing | `mkdir -p voices/pig_kids_placeholder && cp <your_wav> voices/pig_kids_placeholder/c1.wav` |
-| Track B gate raises before health check | Correct — this is by design | Fix the files, not the code |
+| `LoRA for 'Max' ... Expected: loras/kids_duo_max.safetensors` | File missing or wrong name | Place Max's trained LoRA at the exact path shown |
+| `Voice profile not found for 'voices/kids_duo/max'` | WAV missing or directory missing | Place `max.wav` under `voices/kids_duo/` |
+| Track B gate raises before health check | Correct by design | Fix local files before starting GPU services |
 
 ---
 
 ## After Track B is complete
 
-Once all 8 ✅ appear, proceed to Track D (start GPU services) then run the pipeline.
-See `.claude/agents/pipeline-runner.md` for the end-to-end run guide.
+Once `python -m scripts.check_track_b` prints `Track B: READY`, proceed to Track D:
+start GPU services, then run the pipeline. See `.claude/agents/pipeline-runner.md`
+for the end-to-end run guide.
+
+If it prints `Track B: READY_FOR_CODE_TESTS`, Phase 2-4 code work can proceed
+with mocks, but do not expect AUTOMATIC1111 to load the placeholder LoRA files.

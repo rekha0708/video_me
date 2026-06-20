@@ -19,8 +19,7 @@ current repo state. Follow these steps every time:
 Run these in parallel:
 - `git log --oneline -5` — last 5 commits
 - `python -m pytest -q --tb=no 2>&1 | tail -3` — current test count and pass/fail
-- `ls loras/ 2>/dev/null || echo "loras/ MISSING"` — Track B lora files
-- `ls voices/pig_kids_placeholder/ 2>/dev/null || echo "voices/ MISSING"` — Track B voice files
+- `python -m scripts.check_track_b || true` — Track B LoRA and voice file preflight
 
 Also read `BUILD_PROGRESS.md` for the implementation journal.
 
@@ -70,10 +69,10 @@ TESTS
 
 TRACK B — LoRAs + voices (MUST exist before pipeline runs)
 ──────────────────────────────────────────────────────────
-Expected:  loras/pig_kids_placeholder_c{1-4}.safetensors
-Found:     <list files or "NONE — Track B not complete">
+Expected:  loras/kids_duo_{max,zoe}.safetensors
+Found:     <list files or "NONE — Track B not complete"; note if placeholders>
 
-Expected:  voices/pig_kids_placeholder/c{1-4}.wav
+Expected:  voices/kids_duo/{max,zoe}.wav
 Found:     <list files or "NONE — Track B not complete">
 
 TRACK D — GPU services
@@ -86,7 +85,7 @@ Wav2Lip              :8040   — <UP/DOWN>
 
 BLOCKING DECISIONS (operator must act)
 ───────────────────────────────────────
-#3  Cast visual designs — needed for Track B LoRA training
+#3  Max/Zoe reference sheets — needed for Track B LoRA training
 #10 Build budget ceiling — needed for Track D GPU provisioning
 #E  Compliance posture sign-off — needed for Track E
 
@@ -96,9 +95,9 @@ RECENT COMMITS
 
 NEXT ACTIONS (in priority order)
 ─────────────────────────────────
-1. [Track B] Finalize character art for Pippa, Milo, Nia, Luma
-   → Train per-member LoRAs → drop in loras/pig_kids_placeholder_c*.safetensors
-   → Record reference voices → drop in voices/pig_kids_placeholder/c*.wav
+1. [Track B] Finalize character art for Max and Zoe
+   → Train per-member LoRAs → drop in loras/kids_duo_*.safetensors
+   → Record reference voices → drop in voices/kids_duo/*.wav
 
 2. [Track D] Set budget ceiling (decision #10) → provision GPU
    → Stand up AUTOMATIC1111, Chatterbox, Wan 2.7, Wav2Lip

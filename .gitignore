@@ -11,3 +11,12 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+
+# Track B generated/runtime assets. Keep the folders and READMEs in git, but
+# store large model/audio files locally or in the future asset store.
+loras/*.safetensors
+loras/*.pt
+loras/*.ckpt
+voices/**/*.wav
+voices/**/*.mp3
+voices/**/*.flac
