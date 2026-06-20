@@ -47,7 +47,7 @@ def load_yaml_model(path: Path, model: type[ModelT]) -> ModelT:
 
 def load_app_config(
     channel_path: Path = Path("config/channels/education_kids.yaml"),
-    cast_path: Path = Path("config/casts/pig_kids_placeholder.yaml"),
+    cast_path: Path = Path("config/casts/kids_duo.yaml"),
 ) -> AppConfig:
     return AppConfig(
         channel_profile=load_yaml_model(channel_path, ChannelProfile),

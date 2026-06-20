@@ -17,14 +17,14 @@ from core.models.profile import CastMember
 
 def _member() -> CastMember:
     return CastMember(
-        id="c1",
-        name="Pippa",
-        gender="girl",
-        visual_descriptor="original round pig kid with teal overalls and star patch",
-        lora_ref="loras/pig_kids_placeholder/c1",
-        voice_profile_ref="voices/pig_kids_placeholder/c1",
-        personality="curious, asks the questions",
-        signature_expressions=["wide-eyed wonder", "big grin"],
+        id="max",
+        name="Max",
+        gender="boy",
+        visual_descriptor="soft cartoon 5-year-old boy with blue and white striped t-shirt",
+        lora_ref="loras/kids_duo/max",
+        voice_profile_ref="voices/kids_duo/max",
+        personality="enthusiastic big-kid teacher who loves letters",
+        signature_expressions=["wide-eyed teaching face", "proud big-kid grin"],
     )
 
 
@@ -88,12 +88,12 @@ def _mock_httpx(b64_image: str | None = None, *, get_error: Exception | None = N
 
 def test_lora_name_strips_loras_prefix(tmp_path: Path) -> None:
     adapter = _adapter(tmp_path)
-    assert adapter.lora_name("loras/pig_kids_placeholder/c1") == "pig_kids_placeholder_c1"
+    assert adapter.lora_name("loras/kids_duo/max") == "kids_duo_max"
 
 
 def test_lora_name_no_prefix(tmp_path: Path) -> None:
     adapter = _adapter(tmp_path)
-    assert adapter.lora_name("pig_kids_placeholder/c1") == "pig_kids_placeholder_c1"
+    assert adapter.lora_name("kids_duo/max") == "kids_duo_max"
 
 
 def test_lora_name_single_segment(tmp_path: Path) -> None:
@@ -106,7 +106,7 @@ def test_lora_name_single_segment(tmp_path: Path) -> None:
 def test_check_lora_finds_safetensors(tmp_path: Path) -> None:
     lora_dir = tmp_path / "loras"
     lora_dir.mkdir()
-    lora_file = lora_dir / "pig_kids_placeholder_c1.safetensors"
+    lora_file = lora_dir / "kids_duo_max.safetensors"
     lora_file.write_bytes(b"fake lora")
 
     adapter = _adapter(tmp_path, lora_dir=lora_dir)
@@ -117,7 +117,7 @@ def test_check_lora_finds_safetensors(tmp_path: Path) -> None:
 def test_check_lora_finds_pt_extension(tmp_path: Path) -> None:
     lora_dir = tmp_path / "loras"
     lora_dir.mkdir()
-    (lora_dir / "pig_kids_placeholder_c1.pt").write_bytes(b"fake")
+    (lora_dir / "kids_duo_max.pt").write_bytes(b"fake")
 
     adapter = _adapter(tmp_path, lora_dir=lora_dir)
     path = adapter._check_lora(_member())
@@ -130,9 +130,9 @@ def test_check_lora_raises_with_track_b_message_when_missing(tmp_path: Path) -> 
         adapter._check_lora(_member())
     msg = str(exc_info.value)
     assert "Track B" in msg
-    assert "Pippa" in msg
-    assert "c1" in msg
-    assert "pig_kids_placeholder_c1.safetensors" in msg
+    assert "Max" in msg
+    assert "max" in msg
+    assert "kids_duo_max.safetensors" in msg
 
 
 # ------------------------------------------------------------------ _build_prompt
@@ -140,13 +140,13 @@ def test_check_lora_raises_with_track_b_message_when_missing(tmp_path: Path) -> 
 def test_build_prompt_contains_lora_tag(tmp_path: Path) -> None:
     adapter = _adapter(tmp_path)
     prompt = adapter._build_prompt(_request())
-    assert "<lora:pig_kids_placeholder_c1:" in prompt
+    assert "<lora:kids_duo_max:" in prompt
 
 
 def test_build_prompt_contains_visual_descriptor(tmp_path: Path) -> None:
     adapter = _adapter(tmp_path)
     prompt = adapter._build_prompt(_request())
-    assert "teal overalls" in prompt
+    assert "striped t-shirt" in prompt
 
 
 def test_build_prompt_contains_setting(tmp_path: Path) -> None:
@@ -235,7 +235,7 @@ async def test_health_down_when_service_unreachable(tmp_path: Path) -> None:
 async def test_run_returns_image_set(tmp_path: Path) -> None:
     lora_dir = tmp_path / "loras"
     lora_dir.mkdir()
-    (lora_dir / "pig_kids_placeholder_c1.safetensors").write_bytes(b"fake")
+    (lora_dir / "kids_duo_max.safetensors").write_bytes(b"fake")
 
     adapter = _adapter(tmp_path, lora_dir=lora_dir)
     fake_httpx, _ = _mock_httpx()
@@ -243,7 +243,7 @@ async def test_run_returns_image_set(tmp_path: Path) -> None:
     with patch.dict(sys.modules, {"httpx": fake_httpx}):
         result = await adapter.run(_request())
 
-    assert result.member_id == "c1"
+    assert result.member_id == "max"
     assert len(result.images) == 1
     assert Path(result.images[0]).exists()
 
@@ -251,7 +251,7 @@ async def test_run_returns_image_set(tmp_path: Path) -> None:
 async def test_run_creates_member_subdir(tmp_path: Path) -> None:
     lora_dir = tmp_path / "loras"
     lora_dir.mkdir()
-    (lora_dir / "pig_kids_placeholder_c1.safetensors").write_bytes(b"fake")
+    (lora_dir / "kids_duo_max.safetensors").write_bytes(b"fake")
 
     adapter = _adapter(tmp_path, lora_dir=lora_dir)
     fake_httpx, _ = _mock_httpx()
@@ -259,7 +259,7 @@ async def test_run_creates_member_subdir(tmp_path: Path) -> None:
     with patch.dict(sys.modules, {"httpx": fake_httpx}):
         result = await adapter.run(_request())
 
-    assert (tmp_path / "renders" / "c1").is_dir()
+    assert (tmp_path / "renders" / "max").is_dir()
 
 
 async def test_run_raises_when_lora_missing(tmp_path: Path) -> None:
@@ -271,7 +271,7 @@ async def test_run_raises_when_lora_missing(tmp_path: Path) -> None:
 async def test_run_posts_to_correct_endpoint(tmp_path: Path) -> None:
     lora_dir = tmp_path / "loras"
     lora_dir.mkdir()
-    (lora_dir / "pig_kids_placeholder_c1.safetensors").write_bytes(b"fake")
+    (lora_dir / "kids_duo_max.safetensors").write_bytes(b"fake")
 
     adapter = _adapter(tmp_path, lora_dir=lora_dir)
     fake_httpx, mock_client = _mock_httpx()
@@ -287,7 +287,7 @@ async def test_run_posts_to_correct_endpoint(tmp_path: Path) -> None:
 async def test_run_propagates_api_error(tmp_path: Path) -> None:
     lora_dir = tmp_path / "loras"
     lora_dir.mkdir()
-    (lora_dir / "pig_kids_placeholder_c1.safetensors").write_bytes(b"fake")
+    (lora_dir / "kids_duo_max.safetensors").write_bytes(b"fake")
 
     adapter = _adapter(tmp_path, lora_dir=lora_dir)
     fake_httpx, _ = _mock_httpx(post_error=RuntimeError("SD server error"))

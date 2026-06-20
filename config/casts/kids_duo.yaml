@@ -1,0 +1,62 @@
+id: kids_duo
+species: human
+is_original_synthetic: true
+members:
+  - id: max
+    name: Max
+    gender: boy
+    visual_descriptor: >
+      soft cartoon 5-year-old boy, round friendly face, short wavy brown hair,
+      big warm brown eyes, blue and white striped t-shirt, navy blue shorts,
+      white sneakers with blue laces, cheerful and expressive, energetic posture
+    lora_ref: loras/kids_duo/max
+    voice_profile_ref: voices/kids_duo/max
+    personality: >
+      enthusiastic and patient big-kid teacher; loves letters and words;
+      gets excited when Zoe learns something new; clumsy but eager when
+      Zoe teaches him cooking or art; uses simple encouraging words
+    signature_expressions:
+      - wide-eyed "aha!" teaching face
+      - proud big-kid grin when Zoe succeeds
+      - puzzled but trying face when learning from Zoe
+      - counting on fingers with tongue out in concentration
+    signature_moves:
+      - points at imaginary letters in the air with big arm sweep
+      - claps hands in a big cheer when Zoe gets it right
+      - stirs bowl very carefully and slowly while following Zoe's instructions
+      - holds pencil proudly and draws a letter in the air
+
+  - id: zoe
+    name: Zoe
+    gender: girl
+    visual_descriptor: >
+      soft cartoon 3-year-old girl, round chubby toddler face,
+      curly black hair in two small puffs with pink bows,
+      big sparkly dark brown eyes, pink polka-dot dress,
+      white t-shirt underneath, pink shoes,
+      often has flour on hands or paint on fingers
+    lora_ref: loras/kids_duo/zoe
+    voice_profile_ref: voices/kids_duo/zoe
+    personality: >
+      confident little expert in cooking, art, and creative play;
+      loves teaching Max and gets proud when he tries;
+      giggles when Max makes a mess; listens carefully
+      during Max's letter lessons; uses simple step-by-step instructions
+    signature_expressions:
+      - hands-on-hips confident "watch me!" pose
+      - giggly laugh when Max makes a mess
+      - serious concentrating face when mixing or painting
+      - delighted clap when something comes out perfectly
+    signature_moves:
+      - stirs mixing bowl with both hands very seriously
+      - holds up a painting proudly at arm's length to show Max
+      - dabs pretend makeup brush on cheek with a big grin
+      - traces letters carefully with one finger while Max teaches
+
+design_constraints:
+  - Original character designs; must not resemble characters from any existing kids' show.
+  - Max must visually read as older than Zoe — taller, slightly less round face, more defined features.
+  - Zoe must have toddler proportions — chubbier cheeks, shorter, bigger head-to-body ratio than Max.
+  - Soft cartoon aesthetic consistent with age 3-6 educational content; bright, friendly, non-scary colors.
+  - Both characters must be instantly distinguishable at a glance by color palette and silhouette.
+  - "Teaching dynamic: each character is an expert in their own subject and a learner in the other's subject."

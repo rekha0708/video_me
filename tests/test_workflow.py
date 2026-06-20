@@ -75,9 +75,9 @@ def _script() -> Script:
         scenes=[
             Scene(
                 setting="cozy classroom",
-                characters_present=["c1"],
+                characters_present=["max"],
                 lines=[
-                    Line(speaker="c1", text="Let's count to five!", expression="excited"),
+                    Line(speaker="max", text="Let's count to five!", expression="excited"),
                 ],
             )
         ],
@@ -92,7 +92,7 @@ def _storyboard() -> Storyboard:
             Shot(
                 shot_id="s01",
                 scene_ref="scene-1",
-                characters_on_screen=["c1"],
+                characters_on_screen=["max"],
                 setting="cozy classroom",
                 camera="medium shot",
                 action="character points at numbers",
@@ -109,7 +109,7 @@ def _two_shot_storyboard() -> Storyboard:
             Shot(
                 shot_id="s01",
                 scene_ref="scene-1",
-                characters_on_screen=["c1"],
+                characters_on_screen=["max"],
                 setting="cozy classroom",
                 camera="medium shot",
                 action="character waves",
@@ -119,7 +119,7 @@ def _two_shot_storyboard() -> Storyboard:
             Shot(
                 shot_id="s02",
                 scene_ref="scene-1",
-                characters_on_screen=["c1"],
+                characters_on_screen=["max"],
                 setting="cozy classroom",
                 camera="close-up",
                 action="character counts fingers",
@@ -147,7 +147,7 @@ def _synced_clip() -> VideoClip:
 
 
 def _audio_track() -> AudioTrack:
-    return AudioTrack(uri="/tmp/dialogue.wav", duration_sec=2.5, speaker_id="c1")
+    return AudioTrack(uri="/tmp/dialogue.wav", duration_sec=2.5, speaker_id="max")
 
 
 def _stage_results():
@@ -519,7 +519,7 @@ async def test_run_shot_calls_adapters_in_sequence(tmp_path) -> None:
 
     async def _voice(req):
         call_order.append("voice")
-        return AudioTrack(uri="/d.wav", duration_sec=2.0, speaker_id="c1")
+        return AudioTrack(uri="/d.wav", duration_sec=2.0, speaker_id="max")
 
     async def _video(req):
         call_order.append("video")
@@ -546,7 +546,7 @@ async def test_run_shot_calls_adapters_in_sequence(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_run_shot_returns_synced_clip_and_audio_track(tmp_path) -> None:
     expected_synced = VideoClip(uri="/synced.mp4", duration_sec=3.5, shot_id="s01")
-    expected_audio = AudioTrack(uri="/dlg.wav", duration_sec=2.0, speaker_id="c1")
+    expected_audio = AudioTrack(uri="/dlg.wav", duration_sec=2.0, speaker_id="max")
 
     adapters = MagicMock()
     adapters.render.run = AsyncMock(
@@ -574,7 +574,7 @@ async def test_run_shot_passes_speaker_id_to_voice(tmp_path) -> None:
         return_value=type("ImageSet", (), {"images": ["/img.png"]})()
     )
     adapters.voice.run = AsyncMock(
-        return_value=AudioTrack(uri="/d.wav", duration_sec=1.0, speaker_id="c1")
+        return_value=AudioTrack(uri="/d.wav", duration_sec=1.0, speaker_id="max")
     )
     adapters.video.run = AsyncMock(
         return_value=VideoClip(uri="/c.mp4", duration_sec=1.0, shot_id="s01")
@@ -589,7 +589,7 @@ async def test_run_shot_passes_speaker_id_to_voice(tmp_path) -> None:
     await _run_shot(shot, _script(), config.cast, adapters)
 
     voice_req = adapters.voice.run.call_args[0][0]
-    assert voice_req.speaker_id == "c1"
+    assert voice_req.speaker_id == "max"
 
 
 @pytest.mark.asyncio
@@ -599,7 +599,7 @@ async def test_run_shot_passes_shot_id_to_lipsync(tmp_path) -> None:
         return_value=type("ImageSet", (), {"images": ["/img.png"]})()
     )
     adapters.voice.run = AsyncMock(
-        return_value=AudioTrack(uri="/d.wav", duration_sec=1.0, speaker_id="c1")
+        return_value=AudioTrack(uri="/d.wav", duration_sec=1.0, speaker_id="max")
     )
     adapters.video.run = AsyncMock(
         return_value=VideoClip(uri="/c.mp4", duration_sec=1.0, shot_id="s01")

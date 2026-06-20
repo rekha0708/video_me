@@ -13,7 +13,7 @@ def test_config_loads_default_profiles() -> None:
     assert config.channel_profile.id == "education_kids"
     assert config.channel_profile.made_for_kids is True
     assert config.cast.is_original_synthetic is True
-    assert len(config.cast.members) == 4
+    assert len(config.cast.members) == 2
 
 
 def test_cast_must_be_original_synthetic() -> None:

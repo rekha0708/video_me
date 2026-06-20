@@ -29,7 +29,7 @@ def _make_wav(duration_sec: float = 1.0, sample_rate: int = 22050) -> bytes:
     return buf.getvalue()
 
 
-def _make_ref_wav(voice_dir: Path, member_id: str = "pig_kids_placeholder/c1") -> Path:
+def _make_ref_wav(voice_dir: Path, member_id: str = "kids_duo/max") -> Path:
     """Write a reference WAV to voice_dir and return its path."""
     ref_path = voice_dir / member_id
     ref_path.parent.mkdir(parents=True, exist_ok=True)
@@ -41,8 +41,8 @@ def _make_ref_wav(voice_dir: Path, member_id: str = "pig_kids_placeholder/c1") -
 def _request(**kwargs) -> VoiceRequest:
     return VoiceRequest(
         text=kwargs.get("text", "How many apples do you see?"),
-        voice_profile_ref=kwargs.get("voice_profile_ref", "voices/pig_kids_placeholder/c1"),
-        speaker_id=kwargs.get("speaker_id", "c1"),
+        voice_profile_ref=kwargs.get("voice_profile_ref", "voices/kids_duo/max"),
+        speaker_id=kwargs.get("speaker_id", "max"),
         expression=kwargs.get("expression", None),
     )
 
@@ -90,11 +90,11 @@ def _mock_httpx(
 # ------------------------------------------------------------------ voice_name
 
 def test_voice_name_strips_voices_prefix(tmp_path: Path) -> None:
-    assert _adapter(tmp_path).voice_name("voices/pig_kids_placeholder/c1") == "pig_kids_placeholder/c1"
+    assert _adapter(tmp_path).voice_name("voices/kids_duo/max") == "kids_duo/max"
 
 
 def test_voice_name_no_prefix(tmp_path: Path) -> None:
-    assert _adapter(tmp_path).voice_name("pig_kids_placeholder/c1") == "pig_kids_placeholder/c1"
+    assert _adapter(tmp_path).voice_name("kids_duo/max") == "kids_duo/max"
 
 
 def test_voice_name_single_segment(tmp_path: Path) -> None:
@@ -107,27 +107,27 @@ def test_check_voice_finds_wav(tmp_path: Path) -> None:
     voice_dir = tmp_path / "voices"
     ref = _make_ref_wav(voice_dir)
     adapter = _adapter(tmp_path, voice_dir=voice_dir)
-    path = adapter._check_voice("voices/pig_kids_placeholder/c1")
+    path = adapter._check_voice("voices/kids_duo/max")
     assert path == ref
 
 
 def test_check_voice_finds_mp3(tmp_path: Path) -> None:
     voice_dir = tmp_path / "voices"
-    mp3_path = voice_dir / "pig_kids_placeholder" / "c1.mp3"
+    mp3_path = voice_dir / "kids_duo" / "max.mp3"
     mp3_path.parent.mkdir(parents=True, exist_ok=True)
     mp3_path.write_bytes(b"fake mp3")
     adapter = _adapter(tmp_path, voice_dir=voice_dir)
-    path = adapter._check_voice("voices/pig_kids_placeholder/c1")
+    path = adapter._check_voice("voices/kids_duo/max")
     assert path.suffix == ".mp3"
 
 
 def test_check_voice_raises_with_track_b_message(tmp_path: Path) -> None:
     adapter = _adapter(tmp_path)  # empty voice_dir
     with pytest.raises(RuntimeError) as exc_info:
-        adapter._check_voice("voices/pig_kids_placeholder/c1")
+        adapter._check_voice("voices/kids_duo/max")
     msg = str(exc_info.value)
     assert "Track B" in msg
-    assert "pig_kids_placeholder/c1.wav" in msg
+    assert "kids_duo/max.wav" in msg
 
 
 # ------------------------------------------------------------------ _exaggeration_for
@@ -257,7 +257,7 @@ async def test_run_returns_audio_track(tmp_path: Path) -> None:
         result = await adapter.run(_request())
 
     assert isinstance(result, AudioTrack)
-    assert result.speaker_id == "c1"
+    assert result.speaker_id == "max"
     assert result.duration_sec > 0
     assert Path(result.uri).exists()
 
@@ -271,7 +271,7 @@ async def test_run_creates_speaker_subdir(tmp_path: Path) -> None:
     with patch.dict(sys.modules, {"httpx": fake_httpx}):
         await adapter.run(_request())
 
-    assert (tmp_path / "audio" / "c1").is_dir()
+    assert (tmp_path / "audio" / "max").is_dir()
 
 
 async def test_run_raises_when_voice_profile_missing(tmp_path: Path) -> None:
