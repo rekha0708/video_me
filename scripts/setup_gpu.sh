@@ -329,7 +329,7 @@ setup_wan() {
   run "$PYTHON_BIN" -m pip install flash-attn --no-build-isolation || \
       warn "flash_attn install failed — Wan2.2 will run without flash attention (slower but functional)"
 
-  run "$PYTHON_BIN" -m pip install "huggingface_hub[cli]" fastapi uvicorn
+  run "$PYTHON_BIN" -m pip install "huggingface_hub[cli]" hf_transfer fastapi uvicorn
 
   if [[ ! -d "$wan_model_dir" ]]; then
     log "Downloading Wan2.2-I2V-A14B model (~30 GB) — this will take a while"
