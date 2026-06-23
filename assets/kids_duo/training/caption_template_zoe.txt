@@ -1,0 +1,31 @@
+# Zoe — Caption Template
+#
+# For each training image, create a sidecar .txt file with the SAME filename stem.
+# Example: zoe_001.png → zoe_001.txt
+#
+# Base caption (copy this for every image, then append the pose/expression tag from the list below):
+
+kids_duo_zoe, soft cartoon 3-year-old toddler girl, round chubby toddler face, light olive skin tone with cool undertone, soft black loosely curled hair in two small puffs with pink bows, big sparkly dark brown eyes, pink polka-dot dress, white t-shirt underneath, pink shoes, toddler proportions, soft cartoon illustration, 2D flat shading, children's educational character, clean white background
+
+# ── Append one pose/expression tag per image ──────────────────────────
+#
+# zoe_001.txt → base + ", full body front view, neutral happy expression, arms relaxed"
+# zoe_002.txt → base + ", full body 3/4 view, gentle sway stance"
+# zoe_003.txt → base + ", full body side profile, standing"
+# zoe_004.txt → base + ", full body back view, hair puffs and dress clearly visible"
+# zoe_005.txt → base + ", full body, hands-on-hips confident pose, flour on hands"
+# zoe_006.txt → base + ", full body, sitting, stirring mixing bowl with both hands, flour on hands, concentrating"
+# zoe_007.txt → base + ", full body, delighted clap, big happy laugh, eyes squinted with joy"
+# zoe_008.txt → base + ", full body, toddler walking pose, arms slightly out for balance"
+# zoe_009.txt → base + ", waist up, hands-on-hips, confident watch-me expression, chin up"
+# zoe_010.txt → base + ", waist up, giggly laugh, hands on cheeks, eyes crinkled"
+# zoe_011.txt → base + ", waist up, serious concentrating face, lips pressed, furrowed brow"
+# zoe_012.txt → base + ", waist up 3/4, holding painting at arm's length proudly, paint on fingers"
+# zoe_013.txt → base + ", waist up, dabbing pretend brush on cheek, playful grin"
+# zoe_014.txt → base + ", waist up, tracing a letter with one finger, focused listening face"
+# zoe_015.txt → base + ", waist up, waving hello, big toddler smile"
+# zoe_016.txt → base + ", waist up, pointing off-screen, explaining proud expression"
+# zoe_017.txt → base + ", close-up face, happy warm smile, looking forward, chubby toddler cheeks"
+# zoe_018.txt → base + ", close-up face, delighted surprised expression, small o-mouth, wide eyes"
+# zoe_019.txt → base + ", close-up face, serious concentrating face, furrowed brow"
+# zoe_020.txt → base + ", waist up, both arms raised, triumphant I-did-it pose, flour on hands"

@@ -1,0 +1,73 @@
+# kohya_ss LoRA training config — kids_duo characters
+# Requires: kohya_ss installed and AUTOMATIC1111 running with the base model loaded
+#
+# Usage:
+#   accelerate launch train_network.py --config_file assets/kids_duo/training/kohya_config.toml
+#
+# Run twice — once for Max, once for Zoe (change [dataset.general] paths and output_name each time)
+
+[model_arguments]
+pretrained_model_name_or_path = "models/Stable-diffusion/v1-5-pruned-emaonly.safetensors"
+# Use whatever cartoon-friendly base you have. Good options:
+#   - toonyou, cartoonStyle, CuteCartoonAF (civitai)
+#   - v1-5 works too but a cartoon-specialized base gives cleaner results
+
+[output_arguments]
+output_dir           = "loras/"
+output_name          = "kids_duo_max"    # change to kids_duo_zoe for Zoe's run
+save_model_as        = "safetensors"
+save_every_n_epochs  = 5
+
+[training_arguments]
+max_train_epochs     = 20
+train_batch_size     = 1
+gradient_accumulation_steps = 1
+learning_rate        = 1e-4
+unet_lr              = 1e-4
+text_encoder_lr      = 5e-5
+lr_scheduler         = "cosine_with_restarts"
+lr_warmup_steps      = 50
+optimizer_type       = "AdamW8bit"
+mixed_precision      = "fp16"
+seed                 = 42
+clip_skip            = 2
+xformers             = true
+gradient_checkpointing = true
+
+[network_arguments]
+network_module = "networks.lora"
+network_dim    = 32      # 32-64 is a good range for character LoRAs
+network_alpha  = 16      # half of network_dim is standard
+
+[dataset_arguments]
+cache_latents = true
+
+[[dataset.general]]
+resolution       = 768
+batch_size       = 1
+keep_tokens      = 1
+
+[[dataset.general.subsets]]
+# MAX — point at your generated + curated images folder
+image_dir        = "assets/kids_duo/training/images/max"
+caption_extension = ".txt"
+num_repeats      = 15    # with 20 images: 20 × 15 = 300 steps/epoch → ~6000 total
+
+# ── For Zoe run: comment above, uncomment below ──
+# [[dataset.general.subsets]]
+# image_dir        = "assets/kids_duo/training/images/zoe"
+# caption_extension = ".txt"
+# num_repeats      = 15
+
+[sample_prompt_arguments]
+sample_every_n_epochs = 5
+sample_sampler        = "dpm_2m"
+
+[[sample_prompts]]
+# Quick sanity check during training — swap trigger for Zoe run
+prompt = "kids_duo_max, 5-year-old cartoon boy, blue and white striped t-shirt, pointing finger up, teaching expression, soft cartoon illustration, clean white background"
+negative_prompt = "blurry, deformed, photorealistic, 3d render, watermark"
+width  = 768
+height = 768
+steps  = 28
+scale  = 7.0

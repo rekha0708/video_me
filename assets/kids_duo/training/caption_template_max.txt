@@ -1,0 +1,31 @@
+# Max — Caption Template
+#
+# For each training image, create a sidecar .txt file with the SAME filename stem.
+# Example: max_001.png → max_001.txt
+#
+# Base caption (copy this for every image, then append the pose/expression tag from the list below):
+
+kids_duo_max, soft cartoon 5-year-old boy, round friendly face, light olive skin tone with cool undertone, short wavy brown hair, big warm brown eyes, blue and white striped t-shirt, navy blue shorts, white sneakers with blue laces, soft cartoon illustration, 2D flat shading, children's educational character, clean white background
+
+# ── Append one pose/expression tag per image ──────────────────────────
+#
+# max_001.txt → base + ", full body front view, neutral happy expression, arms at sides"
+# max_002.txt → base + ", full body 3/4 view, cheerful walking pose"
+# max_003.txt → base + ", full body side profile, standing tall"
+# max_004.txt → base + ", full body, pointing at imaginary letters in the air, excited teaching pose"
+# max_005.txt → base + ", full body, clapping hands, enthusiastic cheer"
+# max_006.txt → base + ", full body, sitting cross-legged, attentive listening"
+# max_007.txt → base + ", full body, jumping with arms raised, joyful"
+# max_008.txt → base + ", waist up, wide-eyed excited teaching face, pointing finger up"
+# max_009.txt → base + ", waist up, proud big-kid grin, arms spread wide"
+# max_010.txt → base + ", waist up 3/4, puzzled but trying face, finger to chin"
+# max_011.txt → base + ", waist up, counting on fingers, tongue slightly out in concentration"
+# max_012.txt → base + ", waist up, holding picture book open, big encouraging smile"
+# max_013.txt → base + ", waist up, holding pencil, drawing a letter in the air"
+# max_014.txt → base + ", waist up 3/4, waving hello, cheerful smile"
+# max_015.txt → base + ", waist up, both hands framing face, wide excited expression"
+# max_016.txt → base + ", close-up face, happy neutral smile, looking forward"
+# max_017.txt → base + ", close-up face, surprised open-mouth expression, eyebrows raised"
+# max_018.txt → base + ", close-up face, serious concentrating expression"
+# max_019.txt → base + ", close-up face, big proud grin, eyes squinting with happiness"
+# max_020.txt → base + ", waist up, bent forward, hands on knees, curious delighted expression"

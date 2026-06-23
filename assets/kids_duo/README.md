@@ -23,7 +23,7 @@ First-pass review sheets:
 Max:
 
 - Soft cartoon 5-year-old boy.
-- Round friendly face, short wavy brown hair, big warm brown eyes.
+- Round friendly face, light olive skin tone with cool undertone, short wavy brown hair, big warm brown eyes.
 - Blue and white striped t-shirt, navy shorts, white sneakers with blue laces.
 - Energetic posture; reads as older and taller than Zoe.
 - Expressions: teaching face, proud grin, puzzled-but-trying face, finger-counting concentration.
@@ -31,7 +31,7 @@ Max:
 Zoe:
 
 - Soft cartoon 3-year-old girl.
-- Round chubby toddler face, curly black hair in two puffs with pink bows.
+- Round chubby toddler face, light olive skin tone with cool undertone, soft black loosely curled hair in two puffs with pink bows.
 - Pink polka-dot dress over white t-shirt, pink shoes.
 - Often has flour on hands or paint on fingers.
 - Expressions: confident watch-me pose, giggly laugh, serious concentrating face, delighted clap.

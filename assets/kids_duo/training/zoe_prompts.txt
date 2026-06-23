@@ -1,0 +1,66 @@
+# Zoe — LoRA Training Image Generation Prompts
+# Generate these in Leonardo.ai → Image Generation tab.
+#
+# RECOMMENDED MODEL: Leonardo Anime XL  (or DreamShaper v7 as fallback)
+# Enable "Alchemy" for higher quality output.
+#
+# SHARED POSITIVE SUFFIX (append to every prompt):
+#   soft cartoon illustration, 2D flat shading, children's educational character design,
+#   clean white background, bright cheerful colors, crisp clean line art, high quality
+#
+# SHARED NEGATIVE PROMPT (paste into Leonardo's negative prompt field):
+#   blurry, low quality, deformed, ugly, photorealistic, 3d render, watermark, text,
+#   extra fingers, missing limbs, bad anatomy, different outfit, different hair color,
+#   different bow color, background clutter, dark colors, older child proportions
+#
+# SETTINGS: Guidance Scale 7  |  Steps 25  |  Dimensions 768×768
+# Generate 1 image per prompt, save as: zoe_001.png through zoe_020.png
+# ──────────────────────────────────────────────────────────────────────
+
+# POSES & ANGLES — full body
+
+[001] full body front view, kids_duo_zoe, 3-year-old cartoon toddler girl, round chubby toddler face, light olive skin tone with cool undertone, soft black loosely curled hair in two small puffs with pink bows, big sparkly dark brown eyes, pink polka-dot dress, white t-shirt underneath, pink shoes, neutral happy expression, arms relaxed, toddler proportions (bigger head, chubby cheeks, shorter stature)
+
+[002] full body 3/4 view, kids_duo_zoe, 3-year-old cartoon toddler girl, round chubby toddler face, light olive skin tone with cool undertone, soft black loosely curled hair in two small puffs with pink bows, big sparkly dark brown eyes, pink polka-dot dress, white t-shirt underneath, pink shoes, slight gentle sway stance, toddler proportions
+
+[003] full body side profile view, kids_duo_zoe, 3-year-old cartoon toddler girl, light olive skin tone with cool undertone, soft black loosely curled hair puff with pink bow visible, pink polka-dot dress, white t-shirt underneath, pink shoes, toddler proportions
+
+[004] full body back view, kids_duo_zoe, 3-year-old cartoon toddler girl, light olive skin tone with cool undertone, two soft black loosely curled hair puffs with pink bows clearly visible from behind, pink polka-dot dress, white t-shirt underneath, pink shoes, small toddler silhouette
+
+[005] full body front view, kids_duo_zoe, 3-year-old cartoon toddler girl, light olive skin tone with cool undertone, soft black loosely curled hair puffs with pink bows, pink polka-dot dress, pink shoes, hands-on-hips confident "watch me!" pose, chin slightly up, proud expression, small traces of flour on hands
+
+[006] full body front view, kids_duo_zoe, 3-year-old cartoon toddler girl, light olive skin tone with cool undertone, soft black loosely curled hair puffs with pink bows, pink polka-dot dress, pink shoes, sitting down, seriously stirring a mixing bowl with both hands, flour on hands, concentrating expression, tongue barely showing in concentration
+
+[007] full body front view, kids_duo_zoe, 3-year-old cartoon toddler girl, light olive skin tone with cool undertone, soft black loosely curled hair puffs with pink bows, pink polka-dot dress, pink shoes, delighted clap with both hands, mouth open in a big happy laugh, eyes squinted with joy
+
+[008] full body front view, kids_duo_zoe, 3-year-old cartoon toddler girl, light olive skin tone with cool undertone, soft black loosely curled hair puffs with pink bows, pink polka-dot dress, pink shoes, toddler walking pose with arms slightly out for balance, cheerful expression
+
+# EXPRESSIONS — waist up
+
+[009] waist up front view, kids_duo_zoe, 3-year-old cartoon toddler girl, round chubby toddler face, light olive skin tone with cool undertone, soft black loosely curled hair puffs with pink bows, big sparkly dark brown eyes, pink polka-dot dress, hands-on-hips, confident "watch me!" expression, proud chin up
+
+[010] waist up front view, kids_duo_zoe, 3-year-old cartoon toddler girl, round chubby toddler face, light olive skin tone with cool undertone, soft black loosely curled hair puffs with pink bows, big sparkly dark brown eyes, pink polka-dot dress, giggly laugh, both hands on cheeks, eyes crinkled with laughter, shoulders raised
+
+[011] waist up front view, kids_duo_zoe, 3-year-old cartoon toddler girl, round chubby toddler face, light olive skin tone with cool undertone, soft black loosely curled hair puffs with pink bows, big sparkly dark brown eyes, pink polka-dot dress, serious concentrating face, lips pressed together, eyebrows furrowed slightly, mixing bowl partially visible
+
+[012] waist up 3/4 view, kids_duo_zoe, 3-year-old cartoon toddler girl, round chubby toddler face, light olive skin tone with cool undertone, soft black loosely curled hair puffs with pink bows, big sparkly dark brown eyes, pink polka-dot dress, holding up a small colorful painting at arm's length proudly, big satisfied grin, paint on fingers
+
+[013] waist up front view, kids_duo_zoe, 3-year-old cartoon toddler girl, round chubby toddler face, light olive skin tone with cool undertone, soft black loosely curled hair puffs with pink bows, big sparkly dark brown eyes, pink polka-dot dress, dabbing a pretend makeup brush on cheek, playful grin, squinting one eye
+
+[014] waist up front view, kids_duo_zoe, 3-year-old cartoon toddler girl, round chubby toddler face, light olive skin tone with cool undertone, soft black loosely curled hair puffs with pink bows, big sparkly dark brown eyes, pink polka-dot dress, tracing a letter carefully with one finger on an imaginary surface, focused listening face
+
+[015] waist up front view, kids_duo_zoe, 3-year-old cartoon toddler girl, round chubby toddler face, light olive skin tone with cool undertone, soft black loosely curled hair puffs with pink bows, big sparkly dark brown eyes, pink polka-dot dress, waving hello with a big toddler smile, hand raised, slight lean forward
+
+[016] waist up front view, kids_duo_zoe, 3-year-old cartoon toddler girl, round chubby toddler face, light olive skin tone with cool undertone, soft black loosely curled hair puffs with pink bows, big sparkly dark brown eyes, pink polka-dot dress, pointing at something off-screen with one finger, explaining proud expression
+
+# CLOSE-UP FACES
+
+[017] close-up face portrait, kids_duo_zoe, 3-year-old cartoon toddler girl, round chubby toddler face, light olive skin tone with cool undertone, soft black loosely curled hair puffs with pink bows, big sparkly dark brown eyes, happy warm smile, looking directly forward, soft cartoon shading, chubby toddler cheeks
+
+[018] close-up face portrait, kids_duo_zoe, 3-year-old cartoon toddler girl, round chubby toddler face, light olive skin tone with cool undertone, soft black loosely curled hair puffs with pink bows, big sparkly dark brown eyes, delighted surprised expression, small "o" shaped mouth, wide sparkling eyes, eyebrows raised high
+
+[019] close-up face portrait, kids_duo_zoe, 3-year-old cartoon toddler girl, round chubby toddler face, light olive skin tone with cool undertone, soft black loosely curled hair puffs with pink bows, big sparkly dark brown eyes, serious concentrating face, furrowed brow, lips pressed, quietly focused
+
+# ACTION SHOT
+
+[020] waist up front view, kids_duo_zoe, 3-year-old cartoon toddler girl, light olive skin tone with cool undertone, soft black loosely curled hair puffs with pink bows, pink polka-dot dress, both arms raised above head in a triumphant "I did it!" pose, face beaming with proud accomplishment, flour on hands

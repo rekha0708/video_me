@@ -6,8 +6,8 @@ members:
     name: Max
     gender: boy
     visual_descriptor: >
-      soft cartoon 5-year-old boy, round friendly face, short wavy brown hair,
-      big warm brown eyes, blue and white striped t-shirt, navy blue shorts,
+      soft cartoon 5-year-old boy, round friendly face, light olive skin tone with cool undertone,
+      short wavy brown hair, big warm brown eyes, blue and white striped t-shirt, navy blue shorts,
       white sneakers with blue laces, cheerful and expressive, energetic posture
     lora_ref: loras/kids_duo/max
     voice_profile_ref: voices/kids_duo/max
@@ -30,8 +30,8 @@ members:
     name: Zoe
     gender: girl
     visual_descriptor: >
-      soft cartoon 3-year-old girl, round chubby toddler face,
-      curly black hair in two small puffs with pink bows,
+      soft cartoon 3-year-old girl, round chubby toddler face, light olive skin tone with cool undertone,
+      soft black loosely curled hair in two small puffs with pink bows,
       big sparkly dark brown eyes, pink polka-dot dress,
       white t-shirt underneath, pink shoes,
       often has flour on hands or paint on fingers

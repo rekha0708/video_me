@@ -1,0 +1,66 @@
+# Max — LoRA Training Image Generation Prompts
+# Generate these in Leonardo.ai → Image Generation tab.
+#
+# RECOMMENDED MODEL: Leonardo Anime XL  (or DreamShaper v7 as fallback)
+# Enable "Alchemy" for higher quality output.
+#
+# SHARED POSITIVE SUFFIX (append to every prompt):
+#   soft cartoon illustration, 2D flat shading, children's educational character design,
+#   clean white background, bright cheerful colors, crisp clean line art, high quality
+#
+# SHARED NEGATIVE PROMPT (paste into Leonardo's negative prompt field):
+#   blurry, low quality, deformed, ugly, photorealistic, 3d render, watermark, text,
+#   extra fingers, missing limbs, bad anatomy, different outfit, different hair color,
+#   different eye color, accessories not in design, background clutter, dark colors
+#
+# SETTINGS: Guidance Scale 7  |  Steps 25  |  Dimensions 768×768
+# Generate 1 image per prompt, save as: max_001.png through max_020.png
+# ──────────────────────────────────────────────────────────────────────
+
+# POSES & ANGLES — full body
+
+[001] full body front view, kids_duo_max, 5-year-old cartoon boy, round friendly face, light olive skin tone with cool undertone, short wavy brown hair, big warm brown eyes, blue and white striped t-shirt, navy blue shorts, white sneakers with blue laces, neutral happy expression, arms relaxed at sides, energetic upright posture
+
+[002] full body 3/4 view, kids_duo_max, 5-year-old cartoon boy, round friendly face, light olive skin tone with cool undertone, short wavy brown hair, big warm brown eyes, blue and white striped t-shirt, navy blue shorts, white sneakers with blue laces, cheerful walking pose, slight forward lean
+
+[003] full body side profile view, kids_duo_max, 5-year-old cartoon boy, light olive skin tone with cool undertone, short wavy brown hair, blue and white striped t-shirt, navy blue shorts, white sneakers with blue laces, standing tall
+
+[004] full body front view, kids_duo_max, 5-year-old cartoon boy, light olive skin tone with cool undertone, blue and white striped t-shirt, navy blue shorts, white sneakers, pointing at imaginary letters in the air with one arm in a big sweep gesture, excited teaching pose
+
+[005] full body front view, kids_duo_max, 5-year-old cartoon boy, light olive skin tone with cool undertone, blue and white striped t-shirt, navy blue shorts, white sneakers, clapping both hands together in a big enthusiastic cheer, mouth open in a big happy shout
+
+[006] full body front view, kids_duo_max, 5-year-old cartoon boy, light olive skin tone with cool undertone, blue and white striped t-shirt, navy blue shorts, white sneakers, sitting cross-legged on ground, attentive listening pose, hands on knees, curious expression
+
+[007] full body front view, kids_duo_max, 5-year-old cartoon boy, light olive skin tone with cool undertone, blue and white striped t-shirt, navy blue shorts, white sneakers, jumping with both arms raised in excitement, joyful expression
+
+# EXPRESSIONS — waist up
+
+[008] waist up front view, kids_duo_max, 5-year-old cartoon boy, round friendly face, light olive skin tone with cool undertone, short wavy brown hair, big warm brown eyes, blue and white striped t-shirt, wide-eyed excited "aha!" teaching face, pointing one finger up in the air, mouth slightly open with a big smile
+
+[009] waist up front view, kids_duo_max, 5-year-old cartoon boy, round friendly face, light olive skin tone with cool undertone, short wavy brown hair, big warm brown eyes, blue and white striped t-shirt, proud big-kid grin, both arms spread wide, chest out, beaming with pride
+
+[010] waist up 3/4 view, kids_duo_max, 5-year-old cartoon boy, round friendly face, light olive skin tone with cool undertone, short wavy brown hair, big warm brown eyes, blue and white striped t-shirt, puzzled-but-trying face, one finger to chin, eyebrows slightly furrowed, gentle smile
+
+[011] waist up front view, kids_duo_max, 5-year-old cartoon boy, round friendly face, light olive skin tone with cool undertone, short wavy brown hair, big warm brown eyes, blue and white striped t-shirt, counting on fingers with tongue slightly out in concentration, looking down at hands
+
+[012] waist up front view, kids_duo_max, 5-year-old cartoon boy, round friendly face, light olive skin tone with cool undertone, short wavy brown hair, big warm brown eyes, blue and white striped t-shirt, holding a small picture book open and showing it proudly, big encouraging smile
+
+[013] waist up front view, kids_duo_max, 5-year-old cartoon boy, round friendly face, light olive skin tone with cool undertone, short wavy brown hair, blue and white striped t-shirt, holding pencil in hand, drawing a letter in the air with the pencil tip, focused concentration face
+
+[014] waist up 3/4 view, kids_duo_max, 5-year-old cartoon boy, round friendly face, light olive skin tone with cool undertone, short wavy brown hair, big warm brown eyes, blue and white striped t-shirt, waving hello with a big cheerful smile, hand raised high
+
+[015] waist up front view, kids_duo_max, 5-year-old cartoon boy, round friendly face, light olive skin tone with cool undertone, short wavy brown hair, blue and white striped t-shirt, both hands framing face, wide excited expression, eyebrows raised high
+
+# CLOSE-UP FACES — for expression diversity
+
+[016] close-up face portrait, kids_duo_max, 5-year-old cartoon boy, round friendly face, light olive skin tone with cool undertone, short wavy brown hair, big warm brown eyes, happy neutral smile, looking directly forward, soft cartoon shading
+
+[017] close-up face portrait, kids_duo_max, 5-year-old cartoon boy, round friendly face, light olive skin tone with cool undertone, short wavy brown hair, big warm brown eyes, surprised open-mouth expression, eyebrows raised, wide eyes
+
+[018] close-up face portrait, kids_duo_max, 5-year-old cartoon boy, round friendly face, light olive skin tone with cool undertone, short wavy brown hair, big warm brown eyes, serious concentrating expression, lips pressed together, slight furrow
+
+[019] close-up face portrait, kids_duo_max, 5-year-old cartoon boy, round friendly face, light olive skin tone with cool undertone, short wavy brown hair, big warm brown eyes, big proud grin showing teeth, squinting eyes with happiness
+
+# ACTION SHOT
+
+[020] waist up front view, kids_duo_max, 5-year-old cartoon boy, light olive skin tone with cool undertone, short wavy brown hair, big warm brown eyes, blue and white striped t-shirt, bent forward slightly, hands on knees, peering down at something with curious delighted expression
