@@ -319,7 +319,16 @@ setup_wan() {
     run git -C "$wan_dir" pull --ff-only || warn "git pull failed — continuing"
   fi
 
-  run "$PYTHON_BIN" -m pip install -r "$wan_dir/requirements.txt"
+  # flash_attn requires compilation and often fails — install everything else first,
+  # then attempt flash_attn via --no-build-isolation (uses already-built torch headers)
+  log "Installing Wan2.2 requirements (excluding flash_attn)"
+  grep -v -i "flash.attn\|flash_attn" "$wan_dir/requirements.txt" > /tmp/wan_req_noflash.txt
+  run "$PYTHON_BIN" -m pip install -r /tmp/wan_req_noflash.txt
+
+  log "Installing flash_attn (pre-built, no compilation)"
+  run "$PYTHON_BIN" -m pip install flash-attn --no-build-isolation || \
+      warn "flash_attn install failed — Wan2.2 will run without flash attention (slower but functional)"
+
   run "$PYTHON_BIN" -m pip install "huggingface_hub[cli]" fastapi uvicorn
 
   if [[ ! -d "$wan_model_dir" ]]; then
