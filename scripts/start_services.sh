@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Start all Track D services for the video_me pipeline.
+# Run this after every pod restart.
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WORKSPACE="${WORKSPACE:-/workspace}"
+LOG_DIR="$WORKSPACE/logs"
+mkdir -p "$LOG_DIR"
+
+log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
+ok()  { printf '\033[0;32m  ✓ %s\033[0m\n' "$*"; }
+warn(){ printf '\033[0;33m  ! %s\033[0m\n' "$*"; }
+
+# ── Ollama ────────────────────────────────────────────────────────────────────
+log "Starting Ollama (LLM + VLM critique, port 11434)"
+if pgrep -x ollama >/dev/null 2>&1; then
+  ok "Ollama already running"
+else
+  OLLAMA_MODELS="$WORKSPACE/ollama" setsid -f ollama serve >"$LOG_DIR/ollama.log" 2>&1 &
+  ok "Ollama started (log: $LOG_DIR/ollama.log)"
+fi
+
+# ── AUTOMATIC1111 ─────────────────────────────────────────────────────────────
+log "Starting AUTOMATIC1111 Stable Diffusion (port 7860)"
+A1111_DIR="$WORKSPACE/stable-diffusion-webui"
+if ! curl -sf http://localhost:7860/sdapi/v1/sd-models >/dev/null 2>&1; then
+  cd "$A1111_DIR"
+  STABLE_DIFFUSION_REPO="https://github.com/joypaul162/Stability-AI-stablediffusion.git" STABLE_DIFFUSION_COMMIT_HASH="f16630a927e00098b524d687640719e4eb469b76" setsid -f bash webui.sh     -f     --api     --listen     --port 7860     --nowebui     --skip-torch-cuda-test     >"$LOG_DIR/a1111.log" 2>&1 &
+  ok "AUTOMATIC1111 starting (log: $LOG_DIR/a1111.log) — takes ~60s to load"
+else
+  ok "AUTOMATIC1111 already responding"
+fi
+cd "$ROOT_DIR"
+
+# ── Chatterbox TTS ────────────────────────────────────────────────────────────
+log "Starting Chatterbox TTS (port 8020)"
+if ! curl -sf http://localhost:8020/health >/dev/null 2>&1; then
+  cd "$ROOT_DIR"
+  if [[ -f ".venv/bin/python" ]]; then UVICORN=".venv/bin/uvicorn"; else UVICORN="uvicorn"; fi
+  setsid -f "$UVICORN" services.chatterbox_server:app     --host 0.0.0.0 --port 8020 >"$LOG_DIR/chatterbox.log" 2>&1 &
+  ok "Chatterbox TTS starting (log: $LOG_DIR/chatterbox.log)"
+else
+  ok "Chatterbox TTS already responding"
+fi
+
+# ── Wan 2.2 ───────────────────────────────────────────────────────────────────
+log "Starting Wan2.2 image-to-video (port 8030)"
+if ! curl -sf http://localhost:8030/health >/dev/null 2>&1; then
+  cd "$ROOT_DIR"
+  if [[ -f ".venv/bin/python" ]]; then UVICORN=".venv/bin/uvicorn"; else UVICORN="uvicorn"; fi
+  WAN_DIR="$WORKSPACE/Wan2.2" WAN_MODEL_DIR="$WORKSPACE/Wan2.2-I2V-A14B"   setsid -f "$UVICORN" services.wan_server:app     --host 0.0.0.0 --port 8030 >"$LOG_DIR/wan.log" 2>&1 &
+  ok "Wan2.2 starting (log: $LOG_DIR/wan.log)"
+else
+  ok "Wan2.2 already responding"
+fi
+
+# ── MuseTalk ──────────────────────────────────────────────────────────────────
+log "Starting MuseTalk lip-sync (port 8040)"
+if ! curl -sf http://localhost:8040/health >/dev/null 2>&1; then
+  cd "$ROOT_DIR"
+  # Use the MuseTalk conda env if it exists (needed for Python 3.10 + CUDA 11.8)
+  if conda env list 2>/dev/null | grep -q "MuseTalk"; then
+    MUSETALK_PYTHON="$(conda run -n MuseTalk which python)"
+    MUSETALK_UVICORN="$(conda run -n MuseTalk which uvicorn)"
+  elif [[ -f ".venv/bin/uvicorn" ]]; then
+    MUSETALK_UVICORN=".venv/bin/uvicorn"
+  else
+    MUSETALK_UVICORN="uvicorn"
+  fi
+  MUSETALK_DIR="$WORKSPACE/MuseTalk"   setsid -f "$MUSETALK_UVICORN" services.musetalk_server:app     --host 0.0.0.0 --port 8040 >"$LOG_DIR/musetalk.log" 2>&1 &
+  ok "MuseTalk starting (log: $LOG_DIR/musetalk.log)"
+else
+  ok "MuseTalk already responding"
+fi
+
+# ── Health check ──────────────────────────────────────────────────────────────
+printf '\nWaiting 20s for services to start...\n'
+sleep 20
+
+cd "$ROOT_DIR"
+if [[ -f ".venv/bin/python" ]]; then
+  .venv/bin/python -m scripts.check_runtime_readiness --allow-missing-services
+else
+  python -m scripts.check_runtime_readiness --allow-missing-services
+fi
