@@ -130,6 +130,22 @@ The shell script creates/uses `.venv`, installs Python runtime extras, installs/
 Lower-level helpers remain available as `python -m scripts.setup_gpu ...` and
 `python -m scripts.check_runtime_readiness ...`.
 
+### Training venv workaround
+
+The current project `.venv` is fine for pipeline checks, but it has a Torch/CUDA
+mismatch for local LoRA training on this GPU image. Use `/workspace/venv` for
+sd-scripts training instead:
+
+```bash
+/workspace/venv/bin/python3 -m pip install -r /workspace/sd-scripts/requirements.txt
+HF_HUB_ENABLE_HF_TRANSFER=0 /workspace/venv/bin/python3 /workspace/sd-scripts/train_network.py \
+  --dataset_config assets/kids_duo/training/dataset_max.toml \
+  --output_dir loras --output_name kids_duo_max
+```
+
+Use `.venv/bin/python` for normal project commands such as `scripts.check_track_b`
+and `scripts.check_runtime_readiness`.
+
 ## Track D — Services required before pipeline runs
 
 | Service | Port | Purpose |

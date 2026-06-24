@@ -461,8 +461,11 @@ Notes:
 
 - The trained `.safetensors` files are intentionally ignored by git; keep them on the GPU
   workspace or move them to the future asset store.
-- The project `.venv` currently has a Torch/CUDA mismatch for training; the successful run used
-  `/workspace/venv` with Torch 2.8.0+cu128 and sd-scripts requirements installed.
+- Venv workaround: use the project `.venv` for normal pipeline commands, but use
+  `/workspace/venv` for local sd-scripts LoRA training. The project `.venv` currently has a
+  Torch/CUDA mismatch for training; the successful run used `/workspace/venv` with
+  Torch 2.8.0+cu128 and sd-scripts requirements installed from
+  `/workspace/sd-scripts/requirements.txt`.
 - `python -m scripts.check_track_b` now reports LoRA checks as OK, but Track B remains
   incomplete because `voices/kids_duo/max.wav` and `voices/kids_duo/zoe.wav` are missing.
 

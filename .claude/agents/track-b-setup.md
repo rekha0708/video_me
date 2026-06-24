@@ -73,6 +73,10 @@ ls -la loras/kids_duo_*.safetensors
 python -m scripts.check_track_b
 ```
 
+Local training venv workaround: use `/workspace/venv/bin/python3` for sd-scripts
+training commands and `.venv/bin/python` for normal project preflights. The current
+project `.venv` has a Torch/CUDA mismatch for local training on this GPU image.
+
 ### Step 3 — Record reference voice files
 
 Each cast member needs a reference audio file: 10-30 seconds of clear,

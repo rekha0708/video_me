@@ -55,9 +55,13 @@ assets/kids_duo/training/dataset_max.toml
 assets/kids_duo/training/dataset_zoe.toml
 ```
 
-The successful training environment used `/workspace/venv` because the project `.venv` had
-a Torch/CUDA mismatch for training. The trainer dependencies were installed from
-`/workspace/sd-scripts/requirements.txt`.
+Venv workaround: use `/workspace/venv` for sd-scripts training. The project `.venv`
+is still the normal env for pipeline commands, but it had a Torch/CUDA mismatch for
+training on this GPU image. The trainer dependencies were installed with:
+
+```bash
+/workspace/venv/bin/python3 -m pip install -r /workspace/sd-scripts/requirements.txt
+```
 
 Max command:
 

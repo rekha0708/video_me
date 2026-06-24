@@ -129,4 +129,5 @@ If the tests fail, show the failure summary and suggest the fix.
 - Track B is still incomplete until both voice references exist:
   - `voices/kids_duo/max.wav`
   - `voices/kids_duo/zoe.wav`
-- If `python -m scripts.check_track_b` is run with the wrong Python and fails on imports, rerun with the project venv: `.venv/bin/python -m scripts.check_track_b`.
+- Use `.venv/bin/python` for normal project checks, for example `.venv/bin/python -m scripts.check_track_b`.
+- Use `/workspace/venv/bin/python3` only for local sd-scripts LoRA training; it avoids the current project `.venv` Torch/CUDA training mismatch.
