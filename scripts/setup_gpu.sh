@@ -237,6 +237,7 @@ setup_ollama() {
   log "Pulling Ollama models (qwen2.5:7b + llava:7b)"
   if [[ "$DRY_RUN" == "0" ]]; then
     OLLAMA_MODELS="$WORKSPACE/ollama" nohup ollama serve &>/tmp/ollama_setup.log &
+    OLLAMA_MODELS="$WORKSPACE/ollama" nohup ollama serve &>/tmp/ollama_setup.log &
     OLLAMA_PID=$!
     sleep 5  # give server time to start
 
@@ -459,6 +460,7 @@ if pgrep -x ollama >/dev/null 2>&1; then
   ok "Ollama already running"
 else
   OLLAMA_MODELS="\$WORKSPACE/ollama" setsid -f ollama serve >"\$LOG_DIR/ollama.log" 2>&1 &
+  OLLAMA_MODELS="\$WORKSPACE/ollama" setsid -f ollama serve >"\$LOG_DIR/ollama.log" 2>&1 &
   ok "Ollama started (log: \$LOG_DIR/ollama.log)"
 fi
 
@@ -498,6 +500,7 @@ if ! curl -sf http://localhost:8020/health >/dev/null 2>&1; then
   cd "\$ROOT_DIR"
   if [[ -f ".venv/bin/python" ]]; then UVICORN=".venv/bin/uvicorn"; else UVICORN="uvicorn"; fi
   setsid -f "\$UVICORN" services.chatterbox_server:app \
+  setsid -f "\$UVICORN" services.chatterbox_server:app \
     --host 0.0.0.0 --port 8020 >"\$LOG_DIR/chatterbox.log" 2>&1 &
   ok "Chatterbox TTS starting (log: \$LOG_DIR/chatterbox.log)"
 else
@@ -510,6 +513,7 @@ if ! curl -sf http://localhost:8030/health >/dev/null 2>&1; then
   cd "\$ROOT_DIR"
   if [[ -f ".venv/bin/python" ]]; then UVICORN=".venv/bin/uvicorn"; else UVICORN="uvicorn"; fi
   WAN_DIR="\$WORKSPACE/Wan2.2" WAN_MODEL_DIR="\$WORKSPACE/Wan2.2-I2V-A14B" \
+  setsid -f "\$UVICORN" services.wan_server:app \
   setsid -f "\$UVICORN" services.wan_server:app \
     --host 0.0.0.0 --port 8030 >"\$LOG_DIR/wan.log" 2>&1 &
   ok "Wan2.2 starting (log: \$LOG_DIR/wan.log)"
@@ -531,6 +535,7 @@ if ! curl -sf http://localhost:8040/health >/dev/null 2>&1; then
     MUSETALK_UVICORN="uvicorn"
   fi
   MUSETALK_DIR="\$WORKSPACE/MuseTalk" \
+  setsid -f "\$MUSETALK_UVICORN" services.musetalk_server:app \
   setsid -f "\$MUSETALK_UVICORN" services.musetalk_server:app \
     --host 0.0.0.0 --port 8040 >"\$LOG_DIR/musetalk.log" 2>&1 &
   ok "MuseTalk starting (log: \$LOG_DIR/musetalk.log)"
