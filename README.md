@@ -7,15 +7,15 @@ interchangeable adapter behind a typed capability ABC.
 ## Status
 
 **Phase 2 code-complete — 313 tests passing.**
-Pipeline is ready for code tests with Track B placeholders, and real end-to-end output is blocked
-on real LoRA weights plus Track D GPU/model services.
+Pipeline has real Max/Zoe LoRA weights trained locally. Real end-to-end output is now blocked
+on reference voice WAVs plus Track D GPU/model services.
 See `BUILD_PROGRESS.md` for the full implementation journal and next steps.
 
 ```
 Phase 0  Skeleton + storage          ✅ COMPLETE
 Phase 1  Full pipeline A1.0–A1.12   ✅ COMPLETE (code) — blocked on Track B + D
 Phase 2  Critic loop A2.x            ✅ COMPLETE (code) — VLM service needed for real judgment
-Track B  LoRAs + voice files         ⚠️ READY_FOR_CODE_TESTS — real LoRAs still pending
+Track B  LoRAs + voice files         ⚠️ PARTIAL — LoRAs trained; voice WAVs pending
 Track D  GPU services                ❌ Not provisioned — budget decision pending
 ```
 
@@ -85,7 +85,7 @@ backends need the same preprocessing.
 
 ## Track B — Files required before pipeline runs
 
-Place LoRA weights and reference voice WAVs at these exact paths:
+LoRA weights are trained locally and must exist at the exact paths below. Reference voice WAVs are still required before the full pipeline can run:
 
 ```
 loras/
@@ -101,14 +101,8 @@ voices/
 Run `python -m scripts.check_track_b` to verify placement. See
 `.claude/agents/track-b-setup.md` and `assets/kids_duo/` for the full setup guide.
 
-Temporary smoke testing can proceed with explicit test-only LoRA placeholders by setting:
-
-```bash
-export VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA=true
-```
-
-In that mode, `render_character` omits the fake LoRA tag from the Stable Diffusion prompt.
-Keep this unset/false for real runs; strict readiness fails if placeholder LoRAs are present.
+The current local LoRA files are real trained weights from the 2026-06-24 A100 training run.
+They are intentionally ignored by git because model binaries live outside source control.
 
 ## GPU setup and readiness
 
@@ -124,7 +118,7 @@ Run strict readiness before renting or launching a real run:
 python -m scripts.check_runtime_readiness
 ```
 
-For local/mock code testing with placeholder LoRAs and no services:
+For local/mock code testing without starting model services:
 
 ```bash
 bash scripts/setup_gpu.sh --dry-run

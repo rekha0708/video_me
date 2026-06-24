@@ -12,19 +12,14 @@ loras/
 The adapter also accepts `.pt` or `.ckpt`, but `.safetensors` is preferred.
 These binary files are intentionally ignored by git.
 
-For development only, tiny placeholder `.safetensors` files may exist locally to
-pass the file-gate preflight. They are not trained LoRAs and will not work in
-AUTOMATIC1111. Replace them with real weights before any real render run.
+Current local status as of 2026-06-24: real trained weights exist at both expected
+paths. They were trained locally with sd-scripts for 1000 steps each, rank 32,
+against the SD 1.5 `v1-5-pruned-emaonly.safetensors` base model. Keep these files
+on the GPU workspace or move them to the future asset store; they will not be
+pushed to git.
 
-Temporary smoke tests may opt into placeholder mode:
-
-```bash
-export VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA=true
-bash scripts/setup_gpu.sh --code-test --skip-services
-```
-
-In that mode the render adapter omits the fake LoRA tag from the prompt. Strict
-readiness still fails placeholders:
+Strict readiness should pass the LoRA checks and then continue to the remaining
+Track B voice checks:
 
 ```bash
 python -m scripts.check_runtime_readiness

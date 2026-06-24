@@ -236,7 +236,7 @@ setup_ollama() {
   # Start Ollama server in background for model pulls, stop it after
   log "Pulling Ollama models (qwen2.5:7b + llava:7b)"
   if [[ "$DRY_RUN" == "0" ]]; then
-    OLLAMA_MODELS="$WORKSPACE/ollama" ollama serve &>/tmp/ollama_setup.log &
+    OLLAMA_MODELS="$WORKSPACE/ollama" nohup ollama serve &>/tmp/ollama_setup.log &
     OLLAMA_PID=$!
     sleep 5  # give server time to start
 
@@ -458,7 +458,7 @@ log "Starting Ollama (LLM + VLM critique, port 11434)"
 if pgrep -x ollama >/dev/null 2>&1; then
   ok "Ollama already running"
 else
-  OLLAMA_MODELS="\$WORKSPACE/ollama" ollama serve >"\$LOG_DIR/ollama.log" 2>&1 &
+  OLLAMA_MODELS="\$WORKSPACE/ollama" setsid -f ollama serve >"\$LOG_DIR/ollama.log" 2>&1 &
   ok "Ollama started (log: \$LOG_DIR/ollama.log)"
 fi
 
@@ -467,7 +467,19 @@ log "Starting AUTOMATIC1111 Stable Diffusion (port 7860)"
 A1111_DIR="\$WORKSPACE/stable-diffusion-webui"
 if ! curl -sf http://localhost:7860/sdapi/v1/sd-models >/dev/null 2>&1; then
   cd "\$A1111_DIR"
-  nohup bash webui.sh \
+  A1111_TAMING_REPO="\$A1111_DIR/repositories/taming-transformers"
+  A1111_SITE_PACKAGES=""
+  for candidate in "\$A1111_DIR"/venv/lib/python*/site-packages; do
+    if [[ -d "\$candidate" ]]; then
+      A1111_SITE_PACKAGES="\$candidate"
+      break
+    fi
+  done
+  if [[ -n "\$A1111_SITE_PACKAGES" && -d "\$A1111_TAMING_REPO" ]]; then
+    printf '%s\n' "\$A1111_TAMING_REPO" > "\$A1111_SITE_PACKAGES/taming_transformers_repo.pth"
+  fi
+  HF_HUB_ENABLE_HF_TRANSFER=0 STABLE_DIFFUSION_REPO="https://github.com/joypaul162/Stability-AI-stablediffusion.git" STABLE_DIFFUSION_COMMIT_HASH="f16630a927e00098b524d687640719e4eb469b76" setsid -f bash webui.sh \
+    -f \
     --api \
     --listen \
     --port 7860 \
@@ -485,7 +497,7 @@ log "Starting Chatterbox TTS (port 8020)"
 if ! curl -sf http://localhost:8020/health >/dev/null 2>&1; then
   cd "\$ROOT_DIR"
   if [[ -f ".venv/bin/python" ]]; then UVICORN=".venv/bin/uvicorn"; else UVICORN="uvicorn"; fi
-  nohup "\$UVICORN" services.chatterbox_server:app \
+  setsid -f "\$UVICORN" services.chatterbox_server:app \
     --host 0.0.0.0 --port 8020 >"\$LOG_DIR/chatterbox.log" 2>&1 &
   ok "Chatterbox TTS starting (log: \$LOG_DIR/chatterbox.log)"
 else
@@ -498,7 +510,7 @@ if ! curl -sf http://localhost:8030/health >/dev/null 2>&1; then
   cd "\$ROOT_DIR"
   if [[ -f ".venv/bin/python" ]]; then UVICORN=".venv/bin/uvicorn"; else UVICORN="uvicorn"; fi
   WAN_DIR="\$WORKSPACE/Wan2.2" WAN_MODEL_DIR="\$WORKSPACE/Wan2.2-I2V-A14B" \
-  nohup "\$UVICORN" services.wan_server:app \
+  setsid -f "\$UVICORN" services.wan_server:app \
     --host 0.0.0.0 --port 8030 >"\$LOG_DIR/wan.log" 2>&1 &
   ok "Wan2.2 starting (log: \$LOG_DIR/wan.log)"
 else
@@ -519,7 +531,7 @@ if ! curl -sf http://localhost:8040/health >/dev/null 2>&1; then
     MUSETALK_UVICORN="uvicorn"
   fi
   MUSETALK_DIR="\$WORKSPACE/MuseTalk" \
-  nohup "\$MUSETALK_UVICORN" services.musetalk_server:app \
+  setsid -f "\$MUSETALK_UVICORN" services.musetalk_server:app \
     --host 0.0.0.0 --port 8040 >"\$LOG_DIR/musetalk.log" 2>&1 &
   ok "MuseTalk starting (log: \$LOG_DIR/musetalk.log)"
 else

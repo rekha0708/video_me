@@ -67,7 +67,7 @@ TESTS
 TRACK B — LoRAs + voices (MUST exist before pipeline runs)
 ──────────────────────────────────────────────────────────
 Expected:  loras/kids_duo_{max,zoe}.safetensors
-Found:     <list files or "NONE — Track B not complete"; note if placeholders and whether strict readiness fails>
+Found:     <list files or "NONE — Track B not complete"; note if files are real trained weights or placeholders>
 
 Expected:  voices/kids_duo/{max,zoe}.wav
 Found:     <list files or "NONE — Track B not complete">
@@ -82,7 +82,7 @@ Wav2Lip              :8040   — <UP/DOWN>
 
 BLOCKING DECISIONS (operator must act)
 ───────────────────────────────────────
-#3  Final Max/Zoe reference sheets — needed for production LoRA training
+#3  Final Max/Zoe reference sheets — provisionally accepted for trained LoRAs; final production sign-off still needed
 #10 Build budget ceiling — needed for Track D GPU provisioning
 #E  Compliance posture sign-off — needed for Track E
 
@@ -92,9 +92,9 @@ RECENT COMMITS
 
 NEXT ACTIONS (in priority order)
 ─────────────────────────────────
-1. [Track B] Finalize character art for Max and Zoe
-   → Train per-member LoRAs → drop in loras/kids_duo_*.safetensors
-   → Record reference voices → drop in voices/kids_duo/*.wav
+1. [Track B] Record reference voices → drop in voices/kids_duo/*.wav
+   → Current LoRAs are trained locally at loras/kids_duo_{max,zoe}.safetensors
+   → Re-run python -m scripts.check_track_b until Track B: READY
 
 2. [Track D] Set budget ceiling (decision #10) → provision GPU
    → Run bash scripts/setup_gpu.sh
@@ -119,3 +119,14 @@ NEXT ACTIONS (in priority order)
 
 Always verify Track B file existence from the filesystem, never from memory.
 If the tests fail, show the failure summary and suggest the fix.
+
+## Current Known State — 2026-06-24
+
+- Real local LoRAs are trained for Max and Zoe:
+  - `loras/kids_duo_max.safetensors`
+  - `loras/kids_duo_zoe.safetensors`
+- These model files are intentionally git-ignored, so verify from the filesystem.
+- Track B is still incomplete until both voice references exist:
+  - `voices/kids_duo/max.wav`
+  - `voices/kids_duo/zoe.wav`
+- If `python -m scripts.check_track_b` is run with the wrong Python and fails on imports, rerun with the project venv: `.venv/bin/python -m scripts.check_track_b`.

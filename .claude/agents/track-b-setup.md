@@ -15,10 +15,9 @@ You are the Track B specialist for `video_me`. Track B covers everything needed
 to make `render_character` and `synthesize_voice` work: character art, LoRA
 weights, and reference voice files.
 
-**Current state: Track B is READY_FOR_CODE_TESTS. `kids_duo` is the final cast,
-Max/Zoe reference sheets are provisionally accepted for testing, and provisional
-voice WAVs are present. The local LoRA files are test placeholders only, not real
-model weights.**
+**Current state: Max and Zoe LoRAs are trained locally and pass the LoRA file gate.
+Track B remains incomplete because `voices/kids_duo/max.wav` and
+`voices/kids_duo/zoe.wav` are missing.**
 
 ---
 
@@ -47,7 +46,7 @@ Deliverable: approved reference sheet images for Max and Zoe. See
 ### Step 2 — Train LoRAs
 
 Train one LoRA per cast member using SDXL or SD 1.5, targeting the AUTOMATIC1111
-webUI format.
+webUI format. Current local trained outputs already exist at the expected paths.
 
 Training inputs needed per member:
 
@@ -129,23 +128,9 @@ Voice checks:
 Track B: READY
 ```
 
-Current code-test output may show `OK TEST` for LoRAs and
-`Track B: READY_FOR_CODE_TESTS`. That is enough for local file-gate and mocked
-pipeline work, but real rendering still requires trained LoRA weights.
-
-For temporary render smoke tests only, the render adapter can skip placeholder
-LoRA tags instead of sending fake weights to Stable Diffusion:
-
-```bash
-export VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA=true
-bash scripts/setup_gpu.sh --code-test --skip-services
-```
-
-Strict real-run readiness intentionally fails while placeholder LoRAs are present:
-
-```bash
-python -m scripts.check_runtime_readiness
-```
+Current output should show `OK` for LoRAs and `MISSING` for both voice WAVs.
+If the LoRA files are absent on a fresh clone, restore them from the GPU workspace
+or the future asset store; model binaries are intentionally ignored by git.
 
 ---
 
@@ -165,7 +150,5 @@ Once `python -m scripts.check_track_b` prints `Track B: READY`, proceed to Track
 start GPU services, then run the pipeline. See `.claude/agents/pipeline-runner.md`
 for the end-to-end run guide.
 
-If it prints `Track B: READY_FOR_CODE_TESTS`, Phase 2-4 code work can proceed
-with mocks, but do not expect AUTOMATIC1111 to load the placeholder LoRA files.
-Use `VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA=true` only for temporary smoke tests;
-replace placeholders with trained weights before a real GPU render.
+If it prints LoRA `OK` but voice `MISSING`, create the two reference WAVs first.
+Once voices are present and Track B prints `READY`, proceed to Track D service startup.

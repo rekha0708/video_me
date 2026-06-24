@@ -4,21 +4,23 @@ Two characters: **Max** (5-year-old boy) and **Zoe** (3-year-old girl).
 
 ---
 
-## Important: two paths
+## Important: three paths
 
 Leonardo.ai's trained Custom Models are **platform-locked** — you can use them inside Leonardo
 but can't download a `.safetensors` file. This means:
 
-| | Path A — Replicate LoRA | Path B — Leonardo adapter |
-|---|---|---|
-| Generate images | Leonardo.ai | Leonardo.ai |
-| Train LoRA | Replicate (cloud kohya) | Leonardo Custom Model |
-| render_character | AUTOMATIC1111 (Track D) | Leonardo API (no A1111 needed) |
-| Code changes | None | Update diffusion_adapter.py |
-| Local GPU needed | No (Replicate handles it) | No |
+| | Path A — local sd-scripts LoRA | Path B — Replicate LoRA | Path C — Leonardo adapter |
+|---|---|---|---|
+| Generate images | Leonardo.ai | Leonardo.ai | Leonardo.ai |
+| Train LoRA | Local A100 + sd-scripts | Replicate cloud kohya | Leonardo Custom Model |
+| render_character | AUTOMATIC1111 (Track D) | AUTOMATIC1111 (Track D) | Leonardo API (no A1111 needed) |
+| Code changes | None | None | Update diffusion_adapter.py |
+| Local GPU needed | Yes | No | No |
 
-**Recommendation:** Start with Path A if you want zero code changes and a simpler handoff.
-Choose Path B if you want to eliminate the AUTOMATIC1111 Track D dependency entirely.
+**Current completed path:** Path A was used locally on 2026-06-24. Max and Zoe LoRAs
+were trained for 1000 steps each, rank 32, against SD 1.5. Use Path B only if the
+local weights must be retrained without a GPU, and Path C only if replacing the
+AUTOMATIC1111 render adapter is worth the extra code.
 
 ---
 
@@ -44,9 +46,52 @@ assets/kids_duo/training/images/zoe/   ← zoe_001.png … zoe_020.png
 
 ---
 
-## Path A — Train on Replicate, use with AUTOMATIC1111
+## Path A — Train locally with sd-scripts, use with AUTOMATIC1111
 
-### Step 2A — Train on Replicate
+This is the current completed path for the local workspace. Dataset configs live at:
+
+```text
+assets/kids_duo/training/dataset_max.toml
+assets/kids_duo/training/dataset_zoe.toml
+```
+
+The successful training environment used `/workspace/venv` because the project `.venv` had
+a Torch/CUDA mismatch for training. The trainer dependencies were installed from
+`/workspace/sd-scripts/requirements.txt`.
+
+Max command:
+
+```bash
+HF_HUB_ENABLE_HF_TRANSFER=0 /workspace/venv/bin/python3 /workspace/sd-scripts/train_network.py \
+  --pretrained_model_name_or_path /workspace/stable-diffusion-webui/models/Stable-diffusion/v1-5-pruned-emaonly.safetensors \
+  --dataset_config assets/kids_duo/training/dataset_max.toml \
+  --output_dir loras --output_name kids_duo_max --save_model_as safetensors \
+  --network_module networks.lora --network_dim 32 --network_alpha 16 \
+  --train_batch_size 1 --max_train_steps 1000 \
+  --learning_rate 1e-4 --unet_lr 1e-4 --text_encoder_lr 5e-5 \
+  --lr_scheduler cosine_with_restarts --lr_warmup_steps 50 \
+  --optimizer_type AdamW8bit --mixed_precision fp16 --save_precision fp16 \
+  --clip_skip 2 --seed 42 --cache_latents --gradient_checkpointing --sdpa \
+  --max_data_loader_n_workers 0 --save_every_n_steps 500
+```
+
+Zoe uses the same command with `dataset_zoe.toml`, `--output_name kids_duo_zoe`,
+and `--seed 43`.
+
+Expected outputs:
+
+```text
+loras/kids_duo_max.safetensors
+loras/kids_duo_zoe.safetensors
+```
+
+Training logs are local-only under `training_logs/` and are ignored by git.
+
+---
+
+## Path B — Train on Replicate, use with AUTOMATIC1111
+
+### Step 2B — Train on Replicate
 
 Go to [replicate.com/ostris/flux-dev-lora-trainer](https://replicate.com/ostris/flux-dev-lora-trainer).
 
@@ -64,7 +109,7 @@ Run. When complete, download the output as `kids_duo_max.safetensors`.
 
 Repeat for Zoe: zip `images/zoe/`, trigger word `kids_duo_zoe`, output `kids_duo_zoe.safetensors`.
 
-### Step 3A — Drop files and verify
+### Step 3B — Drop files and verify
 
 ```
 loras/kids_duo_max.safetensors   ← download from Replicate
@@ -79,9 +124,9 @@ Render still requires AUTOMATIC1111 running (Track D).
 
 ---
 
-## Path B — Train on Leonardo, update the render adapter
+## Path C — Train on Leonardo, update the render adapter
 
-### Step 2B — Train Custom Model on Leonardo.ai
+### Step 2C — Train Custom Model on Leonardo.ai
 
 1. Go to Leonardo.ai → **Train a Custom Model**
 2. Upload your curated images for Max
@@ -92,7 +137,7 @@ Render still requires AUTOMATIC1111 running (Track D).
 4. Train. Note the **Model ID** from the URL when done (e.g. `abc123-...`)
 5. Repeat for Zoe, note its Model ID
 
-### Step 3B — Update diffusion_adapter.py
+### Step 3C — Update diffusion_adapter.py
 
 The current adapter calls AUTOMATIC1111's `/sdapi/v1/txt2img`. It needs a Leonardo variant
 that calls `POST https://cloud.leonardo.ai/api/rest/v1/generations` and polls for results.
@@ -106,19 +151,22 @@ Tell your engineer (or ask Claude Code):
 The existing `DiffusionRenderAdapter` and its tests stay untouched — the Leonardo adapter
 is additive. Swap which adapter is wired in `core/workflow.py`.
 
-### Step 4B — Dummy LoRA files (keep gate passing)
+### Step 4C — Keep local file gates satisfied
 
-The file-gate check (`_check_lora`) still runs at startup. Keep the placeholder files:
+The current pipeline still verifies the cast asset paths before rendering. If using a
+future Leonardo adapter, keep valid files at the expected paths or update the gate for
+that adapter:
+
+```text
+loras/kids_duo_max.safetensors
+loras/kids_duo_zoe.safetensors
 ```
-loras/kids_duo_max.safetensors   ← placeholder already there, fine to keep
-loras/kids_duo_zoe.safetensors   ← same
-```
-Set `VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA=true` in your env — the Leonardo adapter
-won't use them for anything, but the gate check will pass.
+
+In the current workspace these are real trained LoRA weights, not placeholders.
 
 ---
 
-## Verify (both paths)
+## Verify
 
 ```bash
 python -m scripts.check_track_b
@@ -126,8 +174,8 @@ python -m scripts.check_track_b
 
 Expected:
 ```
-Track B: READY_FOR_CODE_TESTS   ← Path B (placeholder files + allow flag)
-Track B: READY                  ← Path A (real trained weights)
+Track B: INCOMPLETE            ← current local state until voice WAVs exist
+Track B: READY                  ← LoRAs plus voice WAVs are present
 ```
 
 ---
@@ -139,5 +187,6 @@ Track B: READY                  ← Path A (real trained weights)
 | Max | `kids_duo_max` |
 | Zoe | `kids_duo_zoe` |
 
-Used in Leonardo training instance prompt and (Path A) injected as `<lora:kids_duo_max:0.9>`
-by `DiffusionRenderAdapter._build_prompt()`.
+Used in Leonardo training instance prompt and injected by the current AUTOMATIC1111
+`DiffusionRenderAdapter._build_prompt()` as `<lora:kids_duo_max:0.9>` /
+`<lora:kids_duo_zoe:0.9>`.

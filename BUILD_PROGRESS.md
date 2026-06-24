@@ -369,7 +369,7 @@ When to move to Option 1, a dedicated VLM wrapper service:
 
 - **#1** Workflow engine — asyncio is the working default; Prefect/Temporal can replace if needed in Phase 3
 - **#2** Target platform — review folder is the default; real platform TBD by operator
-- **#3** Max/Zoe reference sheets — must be approved before LoRA training and the "test the waters" milestone
+- **#3** Max/Zoe reference sheets — provisionally accepted for current LoRA training; final operator sign-off still needed before production use
 - **#10** Build budget ceiling — required before any paid GPU provisioning (Track D)
 - **#E** Compliance posture — Track E sign-off required before first real video publish
 
@@ -391,20 +391,16 @@ Added:
 
 Current test status:
 
-- `python -m scripts.check_track_b` returns `Track B: READY_FOR_CODE_TESTS`.
-- Provisional voices are present:
-  `voices/kids_duo/max.wav` uses macOS `Junior`;
-  `voices/kids_duo/zoe.wav` uses macOS `Sandy (English (US))`.
+- `python -m scripts.check_track_b` now passes LoRA checks for Max and Zoe.
 - First-pass Max and Zoe reference sheets are accepted for code testing.
+- Reference voice WAVs are currently missing and remain the Track B blocker.
 
 Still pending before real end-to-end rendering:
 
 - Final operator approval of Max and Zoe reference sheets.
-- Real trained LoRAs to replace local test placeholders:
-  `loras/kids_duo_max.safetensors` and `loras/kids_duo_zoe.safetensors`.
-- Final designed voices to replace provisional macOS `say` references:
-  `voices/kids_duo/max.wav` (`Junior`) and `voices/kids_duo/zoe.wav`
-  (`Sandy (English (US))`).
+- Final designed voices:
+  `voices/kids_duo/max.wav` and `voices/kids_duo/zoe.wav`.
+- Final operator approval/sign-off for Max and Zoe production character assets.
 
 ## GPU Readiness Prep — 2026-06-20
 
@@ -435,12 +431,39 @@ Added:
 Current validation:
 
 - `python -m pytest -q` returns `313 passed`.
-- Local `python -m scripts.check_runtime_readiness --code-test --skip-services` correctly warns
-  on placeholder LoRAs and fails missing local runtime dependencies/tools (`openai`, `httpx`,
-  `faster-whisper`, `yt-dlp`, `ffmpeg`, `ffprobe`).
+- Local readiness now passes the LoRA file checks when the trained local weights are present;
+  it still fails until voice WAVs and required runtime services/tools are available.
 
 Still pending before a real GPU launch:
 
 - Run `bash scripts/setup_gpu.sh` on the GPU box.
 - Start and validate Ollama/VLM, AUTOMATIC1111, Chatterbox, Wan, and Wav2Lip services.
-- Replace placeholder LoRAs with trained weights for strict real-run readiness.
+- Place final voice WAVs for strict Track B readiness.
+
+## Track B LoRA Training Complete — 2026-06-24
+
+Trained real SD 1.5 LoRA weights locally on the A100 using `sd-scripts` and the curated
+20-image-per-character datasets under `assets/kids_duo/training/images/`.
+
+Added:
+
+- `assets/kids_duo/training/dataset_max.toml` — concrete sd-scripts dataset config for Max.
+- `assets/kids_duo/training/dataset_zoe.toml` — concrete sd-scripts dataset config for Zoe.
+
+Training details:
+
+| Character | Output | Steps | Rank | Base model |
+| --- | --- | ---: | ---: | --- |
+| Max | `loras/kids_duo_max.safetensors` | 1000 | 32 | SD 1.5 `v1-5-pruned-emaonly.safetensors` |
+| Zoe | `loras/kids_duo_zoe.safetensors` | 1000 | 32 | SD 1.5 `v1-5-pruned-emaonly.safetensors` |
+
+Notes:
+
+- The trained `.safetensors` files are intentionally ignored by git; keep them on the GPU
+  workspace or move them to the future asset store.
+- The project `.venv` currently has a Torch/CUDA mismatch for training; the successful run used
+  `/workspace/venv` with Torch 2.8.0+cu128 and sd-scripts requirements installed.
+- `python -m scripts.check_track_b` now reports LoRA checks as OK, but Track B remains
+  incomplete because `voices/kids_duo/max.wav` and `voices/kids_duo/zoe.wav` are missing.
+
+Next Track B action: create the two reference voice WAVs, then rerun `python -m scripts.check_track_b`.

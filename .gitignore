@@ -20,3 +20,6 @@ loras/*.ckpt
 voices/**/*.wav
 voices/**/*.mp3
 voices/**/*.flac
+
+# Local training output logs. Model weights are ignored above.
+training_logs/
