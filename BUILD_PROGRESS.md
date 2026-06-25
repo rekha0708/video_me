@@ -217,7 +217,7 @@ Built and tested all Track A adapters A1.0–A1.12. **264 tests passing** across
 
 | Service | Default port | What to run |
 | --- | --- | --- |
-| LLM (Ollama) | 11434 | `ollama serve` + `ollama pull qwen2.5:7b` |
+| LLM (Ollama) | 11434 | `ollama serve` + `ollama pull qwen3:14b` |
 | Stable Diffusion | 7860 | AUTOMATIC1111 webui |
 | TTS | 8020 | FastAPI wrapper around Chatterbox |
 | Wan 2.7 | 8030 | FastAPI wrapper around Wan image-to-video |
@@ -484,7 +484,7 @@ All five Track D services are now running on the GPU machine.
 
 | Service | Port | Venv | Status |
 |---|---|---|---|
-| Ollama (qwen2.5:7b + llava:7b) | 11434 | base Linux (reinstall on restart) | ✅ Running |
+| Ollama (qwen3:14b + llava:7b) | 11434 | base Linux (reinstall on restart) | ✅ Running |
 | AUTOMATIC1111 | 7860 | self-managed `/workspace/stable-diffusion-webui/venv` | ✅ Running |
 | Chatterbox TTS | 8020 | `/workspace/.venv_chatterbox` | ✅ Running |
 | Wan2.2-I2V-A14B | 8030 | `/workspace/.venv_wan` | ✅ Running |
@@ -650,6 +650,31 @@ mmcv 2.2.0 | mmpose 1.3.2 | all weights present
 http://localhost:8040/health → {"status": "ok"}
 Process: /workspace/.venv_musetalk/bin/uvicorn services.musetalk_server:app --port 8040
 ```
+
+---
+
+## Observability + Model Upgrades — 2026-06-25
+
+### Prompt logging added
+
+Both GPU adapter log the actual prompts sent to downstream services:
+
+| Adapter | New log fields |
+|---|---|
+| `render_character/diffusion_adapter.py` | `prompt`, `negative_prompt` on `render_character_started` |
+| `generate_video/wan_adapter.py` | `prompt` on `generate_video_started` |
+
+### Job ID format changed
+
+`core/models/job.py`: `uuid4()` → `YYYYMMDD-HHMMSS-xxx` (e.g. `20260625-071848-7lk`).
+3-char alphanumeric suffix prevents collisions when two jobs start in the same second.
+
+### LLM upgraded: qwen2.5:7b → qwen3:14b
+
+- Pulled `qwen3:14b` (9.3 GB) via Ollama API; model stored at `/workspace/ollama/`
+- Updated default in `core/config.py`: `llm_model = "qwen3:14b"`
+- qwen3 is the direct successor to qwen2.5, with improved reasoning and instruction following
+- qwen2.5:7b kept in Ollama for rollback (`VIDEO_ME_LLM_MODEL=qwen2.5:7b`)
 
 ---
 

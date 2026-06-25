@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     lora_dir: Path = Path("loras")
     voice_dir: Path = Path("voices")
     review_dir: Path = Path("review")
-    llm_model: str = "qwen2.5:7b"
+    llm_model: str = "qwen3:14b"
     llm_base_url: str = "http://localhost:11434/v1"
     llm_api_key: str = "ollama"
     critique_model: str = "llava:7b"

@@ -188,7 +188,7 @@ Do NOT install `perth` (wrong package on PyPI); it must be `resemble-perth`.
 
 **Ollama is in base Linux** (`/usr/local/bin/ollama`) and is WIPED on RunPod pod restart.
 `start_services.sh` detects the missing binary and reinstalls via `curl | sh` before starting.
-Models at `/workspace/ollama/` persist on the network volume (qwen2.5:7b + llava:7b).
+Models at `/workspace/ollama/` persist on the network volume (qwen3:14b + qwen2.5:7b + llava:7b).
 
 `start_services.sh` uses the correct interpreter for each service. Never install
 heavy ML packages into the project `.venv` — keep it lightweight for fast CI.
@@ -224,7 +224,7 @@ Local/mock placeholder check without services:
 bash scripts/setup_gpu.sh --code-test --skip-services
 ```
 
-LLM model needed: `qwen2.5:7b`; critique defaults to `llava:7b`. Phase 2 samples local video
+LLM model needed: `qwen3:14b`; critique defaults to `llava:7b`. Phase 2 samples local video
 frames in the adapter and sends them as multimodal `image_url` data URLs. This keeps the MVP
 inspectable because sampled frames are saved under the job work directory and persisted on
 `CritiqueResult.sampled_frame_uris`.
@@ -310,7 +310,7 @@ VIDEO_ME_DATA_DIR=/data/video_me       # where job work dirs are created
 VIDEO_ME_REVIEW_DIR=/data/review       # where publish output goes
 VIDEO_ME_LORA_DIR=/models/loras        # where LoRA files are
 VIDEO_ME_VOICE_DIR=/data/voices        # where reference WAV files are
-VIDEO_ME_LLM_MODEL=qwen2.5:7b
+VIDEO_ME_LLM_MODEL=qwen3:14b
 VIDEO_ME_LLM_BASE_URL=http://localhost:11434/v1
 VIDEO_ME_CRITIQUE_MODEL=llava:7b
 VIDEO_ME_CRITIQUE_BASE_URL=http://localhost:11434/v1
