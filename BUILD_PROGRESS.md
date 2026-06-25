@@ -769,3 +769,65 @@ _unload_ollama_model(config.settings.llm_base_url, config.settings.llm_model)
 - `_WORDS_PER_SEC`: 2.0 (unchanged)
 
 At 2 words/sec, a 10-word line = 5s (new floor). Wan trade-off: 5s shots × 14 shots ≈ 70 min vs 3s shots ≈ 45 min.
+
+## Resume, Phase Control, and Wan Resident Model — 2026-06-25
+
+### Resume support (`--resume-job JOB_ID`)
+
+`core/workflow.py` + `core/storage.py` + `run_pipeline.py`:
+- `ArtifactStore` gained `get_json()` for reading back persisted stage results
+- `_restore_job_context(job_id, config)`: reconstructs a job context from an existing job ID
+- `RunOptions` dataclass: `phase` (plan/render/assemble/all), `resume` (bool), `only_shot` (str|None)
+- Per-shot skip logic:
+  - `synced/{shot_id}/synced.mp4` exists → skip whole shot
+  - `renders/{speaker}/render_00.png` exists → skip render_character
+  - `audio/{speaker}/*.wav` exists → skip synthesize_voice
+  - `video/{shot_id}/clip.mp4` exists → skip generate_video
+- Fixed bugs found during first resume run:
+  - `ImageSet(member_id=...)` required field missing on resume path
+  - synced.mp4 skip-check used wrong path (`video/` instead of `synced/`)
+
+### Phase control (`--phase plan|render|assemble|all`)
+
+- `plan`: fetch → transcribe → analyze → adapt → plan_shots, then stop
+- `render`: restore plan artifacts, run shot loop, then stop
+- `assemble`: collect existing `synced.mp4` files, assemble + publish
+- `--only-shot s03`: run only one shot in the render phase
+
+Usage:
+```
+python run_pipeline.py video.mp4 --phase plan
+python run_pipeline.py --resume-job <ID> --phase render
+python run_pipeline.py --resume-job <ID> --phase render --only-shot s03
+python run_pipeline.py --resume-job <ID> --phase assemble
+python run_pipeline.py --resume-job <ID>          # full resume
+```
+
+### Wan resident model — GPU performance fix
+
+**Problem**: `wan_server.py` spawned `generate.py` as a subprocess every shot:
+- 4–5 min cold model reload from disk per shot
+- `offload_model=True` default (Wan's single-GPU default): DiT layers shuffled between CPU/GPU
+  on every denoising step → 7% GPU utilization / 280% CPU
+
+**Root cause of GPU idleness**: The two DiT model shards are **54 GB each** (108 GB combined),
+which exceeds the A100 80 GB VRAM. Both cannot be resident on GPU simultaneously. During
+inference, one 54 GB model is on GPU while the other is in CPU RAM; they swap for each step.
+
+**Fix** (`services/wan_server.py` rewritten):
+- `WanI2V` loaded once at startup via FastAPI lifespan (4–5 min, then stays in CPU RAM)
+- `t5_cpu=True`: T5 (11 GB) stays on CPU, runs once per inference for text encoding
+- `init_on_cpu=True` (default): DiT models stay in CPU RAM between shots — no disk reload
+- `offload_model=True` (required): one DiT on GPU at a time during denoising
+- Inference runs in `ThreadPoolExecutor` so FastAPI event loop is not blocked
+
+**Why GPU now runs at ~100%**: with model already in CPU RAM, CPU→GPU PCIe transfers are
+fast (RAM bandwidth >> disk I/O), so GPU is continuously fed. Old approach: subprocess
+startup + disk I/O overhead dominated; GPU appeared mostly idle until data arrived.
+
+**Result**: per-shot time reduced from ~26 min to ~21 min (save ~5 min × 13 shots = 65 min
+across a full 14-shot run).
+
+**Path to further speedup**: INT8 quantization (54 GB → 27 GB per DiT). Both DiTs would
+fit in VRAM simultaneously with room to spare → no offloading → GPU runs 100% continuously
+→ estimated 3–5 min per shot. Requires one-time quantization run (~30–60 min setup).

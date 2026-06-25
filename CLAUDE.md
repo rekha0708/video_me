@@ -11,15 +11,14 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 
 ## Current state (as of 2026-06-25)
 
-**Phase 2 code is complete. 313 tests pass ✅. Track B is READY. All 5 Track D GPU services are running. Pipeline running end-to-end through generate_video; MuseTalk fixes applied and first full run in progress.**
+**313 tests pass ✅. Resume + phase control implemented. Wan resident model active. Pipeline run 17 in progress (resuming from s03 after server restart).**
 
-- **Fix applied**: `test_generate_video.py` now properly sets `status_code = 200` on mock responses (was missing, causing TypeError on comparison)
-- **yt-dlp installed system-wide** at `/usr/local/bin/yt-dlp` (was missing from PATH — previously only in project `.venv`)
-- **Chatterbox startup**: loads PerthNet model (~60s). The `wait_for` timeout in `start_services.sh` was tight; consider increasing Chatterbox's wait window if pods restart frequently.
-- **LLM upgraded to qwen3.6:35b** (MoE 35B). Thinking mode disabled via `extra_body={"think": False}` + removed `response_format`. `max_tokens=16384`. `json_repair` fallback for malformed JSON.
-- **VRAM unload**: `core/workflow.py` explicitly evicts qwen3.6:35b before the shot loop so Wan has full VRAM.
-- **MuseTalk fixed**: mmcv rebuilt from source at 2.1.0; all 9 `torch.load` calls patched with `weights_only=False` for PyTorch 2.8 compatibility.
-- **Shot duration**: 5–8s (was 2–5s); 2 words/sec, floor 5s, ceiling 8s.
+- **LLM**: qwen3.6:35b (MoE 35B). Thinking mode disabled via `extra_body={"think": False}` + no `response_format`. `max_tokens=16384`. `json_repair` fallback.
+- **VRAM unload**: workflow evicts qwen3.6:35b before shot loop so Wan has full 80 GB.
+- **MuseTalk fixed**: mmcv 2.1.0 built from source; 9 `torch.load` calls patched `weights_only=False`. Returns original video on face-detection failure (cartoon passthrough).
+- **Shot duration**: 5–8s (2 words/sec, floor 5s, ceiling 8s).
+- **Resume**: `--resume-job JOB_ID` skips completed stages/shots. `--phase plan|render|assemble|all` runs one phase at a time. `--only-shot s03` isolates a single shot.
+- **Wan resident model**: `wan_server.py` loads `WanI2V` once at startup into CPU RAM. No subprocess per shot. Both DiTs (54 GB each, 108 GB total) exceed A100 80 GB — `offload_model=True` required; one DiT on GPU at a time. Per-shot: ~21 min (was ~26 min). Path to ~5 min: INT8 quantization.
 
 | Track / Phase | Status | Blocker |
 |---|---|---|

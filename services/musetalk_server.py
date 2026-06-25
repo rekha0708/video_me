@@ -137,7 +137,15 @@ async def lipsync(
         if not mp4s:
             avis = glob.glob(str(result_dir / "**/*.avi"), recursive=True)
             if not avis:
-                raise HTTPException(500, detail="MuseTalk produced no output video")
+                # Face detection likely failed (cartoon/stylised input). Return the
+                # original Wan video unchanged so the pipeline can continue without
+                # lip sync rather than crashing the whole run.
+                logger.warning(
+                    "MuseTalk produced no output for shot %s — face not detected in "
+                    "cartoon-style frames. Returning original video as passthrough.",
+                    shot_id,
+                )
+                return Response(content=video_path.read_bytes(), media_type="video/mp4")
             output_path = _convert_to_mp4(Path(avis[0]), tmpdir_path / "synced.mp4")
         else:
             output_path = Path(mp4s[-1])

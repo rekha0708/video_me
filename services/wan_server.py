@@ -72,6 +72,12 @@ def _load_pipeline() -> None:
             checkpoint_dir=str(WAN_MODEL_DIR),
             device_id=0,
             t5_cpu=True,   # T5 on CPU: saves ~11 GB VRAM; runs once per inference
+            # init_on_cpu=True (default): both 54 GB DiT models start in CPU RAM.
+            # offload_model=True (in generate): swaps one DiT to GPU per denoising step.
+            # Both DiTs together (108 GB) + other services (7 GB) > 80 GB, so they
+            # can never both be in VRAM simultaneously — offloading is unavoidable.
+            # The benefit of this resident approach vs subprocess: no 4-5 min disk
+            # reload per shot; model stays in CPU RAM between calls.
         )
         logger.info("WanI2V ready — model resident in VRAM")
     except Exception as exc:
@@ -125,7 +131,7 @@ def _inference(pil_image, prompt: str, num_frames: int, fps: int) -> bytes:
             sampling_steps=40,
             guide_scale=5.0,
             seed=-1,
-            offload_model=False,  # keep DiT + VAE on GPU; eliminates CPU/GPU shuffling
+            offload_model=True,   # required: both DiTs (108 GB) > 80 GB VRAM; one at a time
         )
 
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
