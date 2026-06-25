@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(curl *)",
+      "Bash(.venv/bin/python -c \"import chatterbox; print\\('chatterbox OK'\\)\")",
+      "Bash(/workspace/venv/bin/python3 *)",
+      "Bash(pip show *)",
+      "Bash(pip3 show *)",
+      "Read(//workspace/**)",
+      "Bash(python3 *)",
+      "Bash(/workspace/venv/bin/pip install *)",
+      "Bash(jobs -l)",
+      "Bash(apt-get list *)",
+      "Bash(dpkg -l espeak espeak-ng festival)",
+      "Bash(awk '{print $2}')",
+      "Read(//usr/**)",
+      "Bash(ldconfig -p)",
+      "Bash(nm -D /workspace/video_me/.venv/lib/python3.12/site-packages/nvidia/nccl/lib/libnccl.so.2)",
+      "Bash(nm -D /usr/local/lib/python3.12/dist-packages/nvidia/nccl/lib/libnccl.so.2)"
+    ]
+  }
+}

@@ -582,3 +582,61 @@ Two-step workflow:
 python download_video.py <url> --output-dir /workspace/downloads/
 python run_pipeline.py /workspace/downloads/video.mp4 --rights-cleared --whisper-device cuda
 ```
+
+---
+
+## MuseTalk (lip_sync) Setup — 2026-06-25
+
+Setting up MuseTalk v1.5 for the lip_sync stage. Service will run on port 8040.
+
+### Bugs found and fixed in `services/musetalk_server.py`
+
+| Bug | Fix |
+|---|---|
+| `_INFERENCE_SCRIPT = "inference.py"` — wrong path | Changed to `"scripts/inference.py"` |
+| CLI args `--video_path`/`--audio_path` don't exist in inference.py | Rewritten: creates temp YAML config (`task_0: {video_path, audio_path}`) and passes `--inference_config` |
+| inference.py subprocess can't find `musetalk` package | Added `PYTHONPATH=/workspace/MuseTalk` to subprocess env (script lives in `scripts/`, musetalk package at repo root) |
+| `_MUSETALK_VERSION = "v1.5"` — wrong version string | Changed to `"v15"` (what `scripts/inference.py --version` expects) |
+
+### Venv: `/workspace/.venv_musetalk`
+
+Created with `python3 -m venv --system-site-packages /workspace/.venv_musetalk` (Python 3.12, inherits torch 2.8.0+cu128).
+
+| Package | Status |
+|---|---|
+| torch (system) | ✅ via system-site-packages |
+| cv2, librosa, einops, soundfile, omegaconf | ✅ installed |
+| diffusers==0.30.2, accelerate, transformers | ✅ installed |
+| face-alignment (face_detection provider) | ✅ installed |
+| mmengine, mmdet>=3.0.0, mmpose==1.1.0 | ✅ installed |
+| mmcv | ⏳ building from source (nvcc compiling CUDA extensions, ~20–30 min) |
+| fastapi, uvicorn, python-multipart | ✅ installed |
+
+**Note:** MuseTalk's bundled `face_detection` is at `musetalk/utils/face_detection/`. This is added to sys.path by `musetalk/__init__.py` (appends `parent+'/utils'`). No separate install needed.
+
+### Model weights downloaded
+
+| File | Size | Source |
+|---|---|---|
+| `models/musetalkV15/musetalk.json` | 748 B | TMElyralab/MuseTalk |
+| `models/musetalkV15/unet.pth` | 3.2 GB | TMElyralab/MuseTalk |
+| `models/sd-vae/config.json` + `diffusion_pytorch_model.bin` | 320 MB | stabilityai/sd-vae-ft-mse |
+| `models/whisper/` (config, pytorch_model.bin, preprocessor_config.json) | 145 MB | openai/whisper-tiny |
+| `models/dwpose/dw-ll_ucoco_384.pth` | 389 MB | yzd-v/DWPose |
+| `models/face-parse-bisent/79999_iter.pth` | 51 MB | Google Drive |
+| `models/face-parse-bisent/resnet18-5c106cde.pth` | 45 MB | pytorch.org |
+
+### Start command
+
+```bash
+MUSETALK_DIR=/workspace/MuseTalk \
+PYTHONPATH=/workspace/MuseTalk \
+/workspace/.venv_musetalk/bin/uvicorn services.musetalk_server:app \
+  --host 0.0.0.0 --port 8040
+```
+
+### Pending
+
+- mmcv CUDA build to complete (needed by mmpose → needed by preprocessing.py)
+- Start MuseTalk service and verify `/health` returns `{"status": "ok"}`
+- End-to-end test with a real video + audio clip
