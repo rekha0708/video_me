@@ -237,7 +237,6 @@ setup_ollama() {
   log "Pulling Ollama models (qwen2.5:7b + llava:7b)"
   if [[ "$DRY_RUN" == "0" ]]; then
     OLLAMA_MODELS="$WORKSPACE/ollama" nohup ollama serve &>/tmp/ollama_setup.log &
-    OLLAMA_MODELS="$WORKSPACE/ollama" nohup ollama serve &>/tmp/ollama_setup.log &
     OLLAMA_PID=$!
     sleep 5  # give server time to start
 
@@ -348,44 +347,98 @@ setup_wan() {
 # ── Step 6c: MuseTalk ─────────────────────────────────────────────────────────
 setup_musetalk() {
   log "Setting up MuseTalk lip-sync (port 8040)"
-  # MuseTalk requires Python 3.10 + CUDA 11.8. If the current env is Python 3.11+,
-  # create a separate conda env and install there, then point start_services.sh at it.
+  # Strategy: isolated venv at /workspace/.venv_musetalk with --system-site-packages
+  # so it inherits system torch 2.8.0+cu128 without reinstalling it.
+  # mmcv must be built from source (no cp312 wheels exist); takes ~15-20 min on A100.
 
   local musetalk_dir="$WORKSPACE/MuseTalk"
+  local venv_dir="$WORKSPACE/.venv_musetalk"
 
   if [[ ! -d "$musetalk_dir" ]]; then
     run git clone https://github.com/TMElyralab/MuseTalk.git "$musetalk_dir"
   else
     ok "MuseTalk already cloned at $musetalk_dir"
-    run git -C "$musetalk_dir" pull --ff-only || warn "git pull failed — continuing"
   fi
 
-  if need_cmd conda; then
-    log "Creating dedicated MuseTalk conda env (Python 3.10, CUDA 11.8)"
-    run conda create -n MuseTalk python=3.10 -y || true
-    run conda run -n MuseTalk pip install \
-        torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 \
-        --index-url https://download.pytorch.org/whl/cu118
-    run conda run -n MuseTalk pip install -r "$musetalk_dir/requirements.txt"
-    run conda run -n MuseTalk pip install --no-cache-dir -U openmim
-    run conda run -n MuseTalk mim install mmengine "mmcv==2.0.1" "mmdet==3.1.0" "mmpose==1.1.0"
-    run conda run -n MuseTalk pip install fastapi uvicorn
-    ok "MuseTalk conda env ready"
-
-    log "Downloading MuseTalk model weights"
-    run conda run -n MuseTalk bash -c "cd $musetalk_dir && bash download_weights.sh" \
-        || warn "Weight download failed — run manually: cd $musetalk_dir && bash download_weights.sh"
+  # Create isolated venv inheriting system torch
+  if [[ ! -d "$venv_dir" ]]; then
+    log "Creating $venv_dir (system-site-packages for torch 2.8.0+cu128)"
+    run python3 -m venv --system-site-packages "$venv_dir"
   else
-    warn "conda not found — installing MuseTalk into the main venv (may conflict with other deps)"
-    warn "Recommended: install conda/miniconda, then rerun with --skip-chatterbox --skip-wan"
-    run "$PYTHON_BIN" -m pip install \
-        torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 \
-        --index-url https://download.pytorch.org/whl/cu118
-    run "$PYTHON_BIN" -m pip install -r "$musetalk_dir/requirements.txt"
-    run "$PYTHON_BIN" -m pip install --no-cache-dir -U openmim
-    run "$PYTHON_BIN" -m python -m mim install mmengine "mmcv==2.0.1" "mmdet==3.1.0" "mmpose==1.1.0"
-    run "$PYTHON_BIN" -m pip install fastapi uvicorn
+    ok "MuseTalk venv already exists at $venv_dir"
   fi
+
+  local pip="$venv_dir/bin/pip"
+
+  # Core inference deps
+  run "$pip" install \
+    opencv-python omegaconf librosa einops soundfile "imageio[ffmpeg]" \
+    tqdm Pillow gdown huggingface_hub transformers \
+    "diffusers==0.30.2" "accelerate>=0.28.0" \
+    face-alignment ffmpeg-python moviepy \
+    Cython xtcocotools \
+    mmengine "mmdet>=3.0.0" \
+    fastapi uvicorn python-multipart
+
+  # mmpose 1.3.2 supports mmcv <3.0.0 (compatible with 2.2.0)
+  run "$pip" install "mmpose==1.3.2" --no-deps
+
+  # mmcv must be built from source for Python 3.12 (no prebuilt cp312 wheels).
+  # MAX_JOBS=8 parallelises CUDA compilation; still takes ~15-20 min.
+  if ! "$venv_dir/bin/python" -c "import mmcv" 2>/dev/null; then
+    log "Building mmcv from source (CUDA extensions, ~15-20 min with MAX_JOBS=8)"
+    run MAX_JOBS=8 "$pip" install mmcv --no-build-isolation
+  else
+    ok "mmcv already installed: $("$venv_dir/bin/python" -c 'import mmcv; print(mmcv.__version__)')"
+  fi
+
+  # Download model weights to $musetalk_dir/models/
+  log "Downloading MuseTalk model weights"
+  run "$venv_dir/bin/python" - <<PYEOF
+import os, sys
+os.environ['HF_HUB_DISABLE_XET'] = '1'
+os.chdir('$musetalk_dir')
+sys.path.insert(0, '$musetalk_dir')
+
+from huggingface_hub import hf_hub_download
+import urllib.request
+
+downloads = [
+    ('TMElyralab/MuseTalk', 'musetalkV15/musetalk.json', 'models'),
+    ('TMElyralab/MuseTalk', 'musetalkV15/unet.pth',      'models'),
+    ('stabilityai/sd-vae-ft-mse', 'config.json',                      'models/sd-vae'),
+    ('stabilityai/sd-vae-ft-mse', 'diffusion_pytorch_model.bin',      'models/sd-vae'),
+    ('openai/whisper-tiny', 'config.json',               'models/whisper'),
+    ('openai/whisper-tiny', 'pytorch_model.bin',         'models/whisper'),
+    ('openai/whisper-tiny', 'preprocessor_config.json',  'models/whisper'),
+    ('yzd-v/DWPose', 'dw-ll_ucoco_384.pth',              'models/dwpose'),
+]
+for repo, filename, local_dir in downloads:
+    os.makedirs(local_dir, exist_ok=True)
+    dest = os.path.join(local_dir, filename)
+    if os.path.exists(dest) and os.path.getsize(dest) > 1000:
+        print(f'SKIP {dest}')
+        continue
+    print(f'Downloading {repo}/{filename}...', flush=True)
+    hf_hub_download(repo_id=repo, filename=filename, local_dir=local_dir)
+    print(f'  OK ({os.path.getsize(dest):,} bytes)', flush=True)
+
+# face-parse-bisent from Google Drive + PyTorch CDN
+os.makedirs('models/face-parse-bisent', exist_ok=True)
+if not os.path.exists('models/face-parse-bisent/79999_iter.pth'):
+    import subprocess
+    subprocess.run(['$venv_dir/bin/python', '-m', 'gdown',
+                    'https://drive.google.com/uc?id=154JgKpzCPW82qINcVieuPH3fZ2e0P812',
+                    '-O', 'models/face-parse-bisent/79999_iter.pth'], check=True)
+if not os.path.exists('models/face-parse-bisent/resnet18-5c106cde.pth'):
+    url = 'https://download.pytorch.org/models/resnet18-5c106cde.pth'
+    print(f'Downloading resnet18 from {url}...', flush=True)
+    urllib.request.urlretrieve(url, 'models/face-parse-bisent/resnet18-5c106cde.pth')
+
+print('All MuseTalk weights ready.')
+PYEOF
+
+  ok "MuseTalk setup complete (venv: $venv_dir)"
 }
 
 # ── Step 7: .env file ────────────────────────────────────────────────────────
@@ -435,130 +488,17 @@ EOF
 
 # ── Step 8: start_services.sh ────────────────────────────────────────────────
 write_start_services() {
-  log "Writing scripts/start_services.sh"
+  log "Verifying scripts/start_services.sh"
   local start_script="$ROOT_DIR/scripts/start_services.sh"
 
+  # start_services.sh is maintained in git — just ensure it is executable.
   if [[ "$DRY_RUN" == "0" ]]; then
-    cat > "$start_script" <<STARTEOF
-#!/usr/bin/env bash
-# Start all Track D services for the video_me pipeline.
-# Run this after every pod restart.
-set -euo pipefail
-
-ROOT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"
-WORKSPACE="\${WORKSPACE:-$WORKSPACE}"
-LOG_DIR="\$WORKSPACE/logs"
-mkdir -p "\$LOG_DIR"
-
-log() { printf '\n\033[1;34m==> %s\033[0m\n' "\$*"; }
-ok()  { printf '\033[0;32m  ✓ %s\033[0m\n' "\$*"; }
-warn(){ printf '\033[0;33m  ! %s\033[0m\n' "\$*"; }
-
-# ── Ollama ────────────────────────────────────────────────────────────────────
-log "Starting Ollama (LLM + VLM critique, port 11434)"
-if pgrep -x ollama >/dev/null 2>&1; then
-  ok "Ollama already running"
-else
-  OLLAMA_MODELS="\$WORKSPACE/ollama" setsid -f ollama serve >"\$LOG_DIR/ollama.log" 2>&1 &
-  OLLAMA_MODELS="\$WORKSPACE/ollama" setsid -f ollama serve >"\$LOG_DIR/ollama.log" 2>&1 &
-  ok "Ollama started (log: \$LOG_DIR/ollama.log)"
-fi
-
-# ── AUTOMATIC1111 ─────────────────────────────────────────────────────────────
-log "Starting AUTOMATIC1111 Stable Diffusion (port 7860)"
-A1111_DIR="\$WORKSPACE/stable-diffusion-webui"
-if ! curl -sf http://localhost:7860/sdapi/v1/sd-models >/dev/null 2>&1; then
-  cd "\$A1111_DIR"
-  A1111_TAMING_REPO="\$A1111_DIR/repositories/taming-transformers"
-  A1111_SITE_PACKAGES=""
-  for candidate in "\$A1111_DIR"/venv/lib/python*/site-packages; do
-    if [[ -d "\$candidate" ]]; then
-      A1111_SITE_PACKAGES="\$candidate"
-      break
-    fi
-  done
-  if [[ -n "\$A1111_SITE_PACKAGES" && -d "\$A1111_TAMING_REPO" ]]; then
-    printf '%s\n' "\$A1111_TAMING_REPO" > "\$A1111_SITE_PACKAGES/taming_transformers_repo.pth"
-  fi
-  HF_HUB_ENABLE_HF_TRANSFER=0 STABLE_DIFFUSION_REPO="https://github.com/joypaul162/Stability-AI-stablediffusion.git" STABLE_DIFFUSION_COMMIT_HASH="f16630a927e00098b524d687640719e4eb469b76" setsid -f bash webui.sh \
-    -f \
-    --api \
-    --listen \
-    --port 7860 \
-    --nowebui \
-    --skip-torch-cuda-test \
-    >"\$LOG_DIR/a1111.log" 2>&1 &
-  ok "AUTOMATIC1111 starting (log: \$LOG_DIR/a1111.log) — takes ~60s to load"
-else
-  ok "AUTOMATIC1111 already responding"
-fi
-cd "\$ROOT_DIR"
-
-# ── Chatterbox TTS ────────────────────────────────────────────────────────────
-log "Starting Chatterbox TTS (port 8020)"
-if ! curl -sf http://localhost:8020/health >/dev/null 2>&1; then
-  cd "\$ROOT_DIR"
-  if [[ -f ".venv/bin/python" ]]; then UVICORN=".venv/bin/uvicorn"; else UVICORN="uvicorn"; fi
-  setsid -f "\$UVICORN" services.chatterbox_server:app \
-  setsid -f "\$UVICORN" services.chatterbox_server:app \
-    --host 0.0.0.0 --port 8020 >"\$LOG_DIR/chatterbox.log" 2>&1 &
-  ok "Chatterbox TTS starting (log: \$LOG_DIR/chatterbox.log)"
-else
-  ok "Chatterbox TTS already responding"
-fi
-
-# ── Wan 2.2 ───────────────────────────────────────────────────────────────────
-log "Starting Wan2.2 image-to-video (port 8030)"
-if ! curl -sf http://localhost:8030/health >/dev/null 2>&1; then
-  cd "\$ROOT_DIR"
-  if [[ -f ".venv/bin/python" ]]; then UVICORN=".venv/bin/uvicorn"; else UVICORN="uvicorn"; fi
-  WAN_DIR="\$WORKSPACE/Wan2.2" WAN_MODEL_DIR="\$WORKSPACE/Wan2.2-I2V-A14B" \
-  setsid -f "\$UVICORN" services.wan_server:app \
-  setsid -f "\$UVICORN" services.wan_server:app \
-    --host 0.0.0.0 --port 8030 >"\$LOG_DIR/wan.log" 2>&1 &
-  ok "Wan2.2 starting (log: \$LOG_DIR/wan.log)"
-else
-  ok "Wan2.2 already responding"
-fi
-
-# ── MuseTalk ──────────────────────────────────────────────────────────────────
-log "Starting MuseTalk lip-sync (port 8040)"
-if ! curl -sf http://localhost:8040/health >/dev/null 2>&1; then
-  cd "\$ROOT_DIR"
-  # Use the MuseTalk conda env if it exists (needed for Python 3.10 + CUDA 11.8)
-  if conda env list 2>/dev/null | grep -q "MuseTalk"; then
-    MUSETALK_PYTHON="\$(conda run -n MuseTalk which python)"
-    MUSETALK_UVICORN="\$(conda run -n MuseTalk which uvicorn)"
-  elif [[ -f ".venv/bin/uvicorn" ]]; then
-    MUSETALK_UVICORN=".venv/bin/uvicorn"
-  else
-    MUSETALK_UVICORN="uvicorn"
-  fi
-  MUSETALK_DIR="\$WORKSPACE/MuseTalk" \
-  setsid -f "\$MUSETALK_UVICORN" services.musetalk_server:app \
-  setsid -f "\$MUSETALK_UVICORN" services.musetalk_server:app \
-    --host 0.0.0.0 --port 8040 >"\$LOG_DIR/musetalk.log" 2>&1 &
-  ok "MuseTalk starting (log: \$LOG_DIR/musetalk.log)"
-else
-  ok "MuseTalk already responding"
-fi
-
-# ── Health check ──────────────────────────────────────────────────────────────
-printf '\nWaiting 20s for services to start...\n'
-sleep 20
-
-cd "\$ROOT_DIR"
-if [[ -f ".venv/bin/python" ]]; then
-  .venv/bin/python -m scripts.check_runtime_readiness --allow-missing-services
-else
-  python -m scripts.check_runtime_readiness --allow-missing-services
-fi
-STARTEOF
     chmod +x "$start_script"
-    ok "start_services.sh written and made executable"
-  else
-    ok "[dry run] would write scripts/start_services.sh"
+    ok "start_services.sh is executable: $start_script"
+    return
   fi
+
+  ok "[dry run] start_services.sh is maintained in git — would chmod +x $start_script"
 }
 
 # ── Step 9: Readiness check ──────────────────────────────────────────────────

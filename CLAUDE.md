@@ -11,22 +11,28 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 
 ## Current state (as of 2026-06-25)
 
-**Phase 2 code is complete. 313 tests pass. Track B is READY. Pipeline runs successfully through render + TTS; Wan2.2 model download in progress.**
+**Phase 2 code is complete. 313 tests pass. Track B is READY. All 5 Track D GPU services are running.**
 
 | Track / Phase | Status | Blocker |
 |---|---|---|
 | Phase 0 — Skeleton | ✅ COMPLETE | — |
-| Phase 1 — Full pipeline A1.0–A1.12 | ✅ COMPLETE (code) | Wan2.2-I2V-A14B model finishing download |
+| Phase 1 — Full pipeline A1.0–A1.12 | ✅ COMPLETE (code) | — |
 | Phase 2 — Critic loop A2.x | ✅ COMPLETE (code) | Real VLM service needed for real judgment |
 | Track B — LoRAs + voice files | ✅ READY | Real LoRAs trained (1000 steps, rank 32, SD 1.5); voice refs generated |
-| Track D — GPU services | ⚠️ IN PROGRESS | Ollama ✅ A1111 ✅ Chatterbox ✅ Wan ✅ (model downloaded, ~130GB) MuseTalk pending |
+| Track D — GPU services | ✅ ALL RUNNING | Ollama ✅ A1111 ✅ Chatterbox ✅ Wan ✅ MuseTalk ✅ |
 | Track E — Compliance sign-off | ❌ PENDING | Operator hasn't signed off |
 
 Track B LoRAs are real trained weights (37 MB each, in git via LFS). Voice reference files are
 gTTS bootstrap WAVs — acceptable for pipeline runs, replace with recorded child voices for
 brand-accurate results.
 
-Pipeline has been tested through fetch → transcribe → analyze → adapt → plan → render_character → synthesize_voice → generate_video (Wan). Full end-to-end run in progress (run 5).
+Pipeline has been tested through fetch → transcribe → analyze → adapt → plan → render_character → synthesize_voice → generate_video (Wan). lip_sync (MuseTalk) now ready.
+
+**After every pod restart, run:**
+```bash
+bash scripts/start_services.sh
+```
+This script auto-reinstalls Ollama (base Linux binary is wiped on restart), then starts all 5 services and verifies each health endpoint.
 
 ---
 
@@ -167,14 +173,24 @@ Each GPU service uses an **isolated venv that inherits system torch 2.8.0+cu128*
 | `/workspace/venv` | sd-scripts LoRA training | sd-scripts deps |
 | `/workspace/.venv_chatterbox` | Chatterbox TTS server (port 8020) | chatterbox-tts, torchaudio==2.8.0+cu128, resemble-perth |
 | `/workspace/.venv_wan` | Wan2.2 i2v server (port 8030) | decord, diffusers, transformers, accelerate, peft, librosa, moviepy, dashscope, rotary-embedding-torch, python-multipart |
+| `/workspace/.venv_musetalk` | MuseTalk lip-sync server (port 8040) | opencv, librosa, einops, diffusers, mmengine, mmpose==1.3.2, mmcv==2.2.0 (built from source), face-alignment |
 | AUTOMATIC1111 self-managed venv | SD rendering (port 7860) | leave untouched |
-| MuseTalk conda env (`MuseTalk`) | Lip-sync (port 8040) | leave untouched |
 
 **Chatterbox fix note**: `resemble-perth` requires `pkg_resources` from setuptools<81.
 Run `pip install "setuptools<81"` inside `.venv_chatterbox` if it fails on startup.
 Do NOT install `perth` (wrong package on PyPI); it must be `resemble-perth`.
 
-`start_services.sh` already uses the correct interpreter for each service. Never install
+**MuseTalk notes**:
+- mmcv has no Python 3.12 prebuilt wheels — must build from source (`MAX_JOBS=8 pip install mmcv --no-build-isolation`). Takes ~15-20 min on A100.
+- mmpose 1.3.2 required (1.1.0 requires mmcv ≤2.1.0; 1.3.2 accepts <3.0.0).
+- musetalk package must be on PYTHONPATH since inference lives in `scripts/` not repo root.
+- `start_services.sh` sets `PYTHONPATH=/workspace/MuseTalk` automatically.
+
+**Ollama is in base Linux** (`/usr/local/bin/ollama`) and is WIPED on RunPod pod restart.
+`start_services.sh` detects the missing binary and reinstalls via `curl | sh` before starting.
+Models at `/workspace/ollama/` persist on the network volume (qwen2.5:7b + llava:7b).
+
+`start_services.sh` uses the correct interpreter for each service. Never install
 heavy ML packages into the project `.venv` — keep it lightweight for fast CI.
 
 ---
