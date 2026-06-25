@@ -158,19 +158,19 @@ def test_make_line_ref() -> None:
 
 
 def test_estimate_duration_short_line() -> None:
-    # 2 words → 1.0s → clamped to 2.0
-    assert estimate_duration("Hi there") == 2.0
+    # 2 words → 1.0s → clamped to 5.0 (new floor)
+    assert estimate_duration("Hi there") == 5.0
 
 
 def test_estimate_duration_normal_line() -> None:
-    # 5 words → 2.5s
-    assert estimate_duration("One two three four five") == 2.5
+    # 5 words → 2.5s → clamped to 5.0 (new floor)
+    assert estimate_duration("One two three four five") == 5.0
 
 
 def test_estimate_duration_long_line() -> None:
-    # 20 words → 10.0s → clamped to 5.0
+    # 20 words → 10.0s → clamped to 8.0 (new ceiling)
     long = " ".join(["word"] * 20)
-    assert estimate_duration(long) == 5.0
+    assert estimate_duration(long) == 8.0
 
 
 def test_trim_characters_keeps_speaker_first() -> None:

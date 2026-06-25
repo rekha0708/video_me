@@ -233,7 +233,8 @@ async def test_run_passes_correct_params_to_api() -> None:
     call_kwargs = mock_client.chat.completions.create.call_args.kwargs
     assert call_kwargs["model"] == "llama3.1:8b"
     assert call_kwargs["temperature"] == 0.2
-    assert call_kwargs["response_format"] == {"type": "json_object"}
+    assert call_kwargs.get("extra_body", {}).get("think") is False
+    assert "response_format" not in call_kwargs
 
 
 async def test_run_propagates_api_error() -> None:

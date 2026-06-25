@@ -2,21 +2,23 @@
 """
 video_me pipeline runner — turn a source video into a Max & Zoe kids' short.
 
-Usage:
-    python run_pipeline.py <URL>
-    python run_pipeline.py <URL> --critique          # Phase 2: critique + regenerate loop
-    python run_pipeline.py <URL> --rights-cleared    # confirm you hold rights to the source
-    python run_pipeline.py <URL> --whisper-device cuda  # use GPU for transcription
+Basic usage:
+    python run_pipeline.py <URL|FILE>
+    python run_pipeline.py <URL> --rights-cleared --whisper-device cuda
+
+Phase control (run only one part of the pipeline):
+    python run_pipeline.py <URL> --phase plan          # LLM only — fetch+analyze+plan
+    python run_pipeline.py --resume-job <ID> --phase render    # GPU loop only
+    python run_pipeline.py --resume-job <ID> --phase assemble  # ffmpeg concat only
+    python run_pipeline.py --resume-job <ID> --only-shot s03   # one shot only
+
+Resume a failed/partial run:
+    python run_pipeline.py --resume-job <JOB_ID>       # skip already-done stages
+
+Test a single stage against existing files (no full pipeline needed):
+    python run_pipeline.py --resume-job <ID> --phase render --only-shot s01
 
 Supported sources:  YouTube, Instagram, TikTok, and any URL yt-dlp handles.
-
-Ideal source video length for a first trial:
-  60–180 seconds (1–3 minutes).
-  - Shorter than 60s: too little content for the LLM to build a rich adapted script.
-  - Longer than 3 min: each extra minute adds ~2 shots, each shot runs SD + TTS +
-    Wan video gen + lip sync — plan ~5–10 min GPU time per shot.
-  Sweet spot: a punchy 90-second educational clip (counting, colours, animals, etc.)
-  gives 4–6 shots and a full end-to-end run in under an hour.
 """
 
 import argparse
@@ -43,10 +45,38 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "url",
+        nargs="?",
         help=(
             "YouTube / Instagram / TikTok video URL, "
-            "OR a local file path (e.g. /workspace/downloads/video.mp4)"
+            "OR a local file path.  Optional when --resume-job is given."
         ),
+    )
+    p.add_argument(
+        "--resume-job",
+        metavar="JOB_ID",
+        default=None,
+        help=(
+            "Resume or continue an existing job by ID (e.g. 20260625-200336-1js). "
+            "Skips stages whose artifact JSON already exists on disk."
+        ),
+    )
+    p.add_argument(
+        "--phase",
+        choices=["plan", "render", "assemble", "all"],
+        default="all",
+        help=(
+            "Run only one phase: "
+            "'plan' = fetch+transcribe+analyze+adapt+plan_shots; "
+            "'render' = per-shot loop (render+voice+video+lipsync); "
+            "'assemble' = assemble_video+publish; "
+            "'all' = full pipeline (default)."
+        ),
+    )
+    p.add_argument(
+        "--only-shot",
+        metavar="SHOT_ID",
+        default=None,
+        help="In the render phase, process only this shot (e.g. s01, s03).",
     )
     p.add_argument(
         "--critique",
@@ -82,15 +112,26 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def print_banner(url: str, critique: bool, rights_cleared: bool) -> None:
-    mode = "Phase 2 (critique loop)" if critique else "Phase 1 (single pass)"
+def print_banner(url: str | None, critique: bool, rights_cleared: bool,
+                 resume_job: str | None, phase: str, only_shot: str | None) -> None:
+    if critique:
+        mode = "Phase 2 (critique loop)"
+    elif phase != "all":
+        mode = f"Phase 1 — {phase} only"
+    else:
+        mode = "Phase 1 (single pass)"
     rights = "CLEARED" if rights_cleared else "NOT CLEARED — job will be BLOCKED at rights check"
     print()
     print("=" * 64)
     print("  video_me pipeline")
     print("=" * 64)
-    print(f"  Source : {url}")
+    if resume_job:
+        print(f"  Resume : {resume_job}")
+    if url:
+        print(f"  Source : {url}")
     print(f"  Mode   : {mode}")
+    if only_shot:
+        print(f"  Shot   : {only_shot}")
     print(f"  Rights : {rights}")
     print("=" * 64)
     print()
@@ -109,6 +150,16 @@ def find_output(review_dir: Path) -> Path | None:
 async def main() -> int:
     args = parse_args()
 
+    # Validate: need either a URL or a resume-job
+    if not args.url and not args.resume_job:
+        print("error: provide a source URL/file, or --resume-job <JOB_ID>")
+        return 2
+
+    # For render/assemble phases we must have a job to resume
+    if args.phase in ("render", "assemble") and not args.resume_job:
+        print(f"error: --phase {args.phase} requires --resume-job <JOB_ID>")
+        return 2
+
     if not args.rights_cleared:
         print(
             "\n[WARNING] --rights-cleared not set.\n"
@@ -117,8 +168,8 @@ async def main() -> int:
         )
 
     # ── Config ────────────────────────────────────────────────────────────────
-    # Import here so heavy deps don't slow --help
     from core.config import load_app_config
+    from core.workflow import RunOptions
 
     config = load_app_config()
 
@@ -134,11 +185,18 @@ async def main() -> int:
 
     # Convert local file paths to file:// URI so fetch_media skips yt-dlp
     source = args.url
-    if os.path.exists(source):
+    if source and os.path.exists(source):
         source = Path(source).resolve().as_uri()
         logger.info("Local file detected — using file:// URI: %s", source)
 
-    print_banner(source, args.critique, args.rights_cleared)
+    options = RunOptions(
+        phase=args.phase,
+        resume=bool(args.resume_job),
+        only_shot=args.only_shot,
+    )
+
+    print_banner(source, args.critique, args.rights_cleared,
+                 args.resume_job, args.phase, args.only_shot)
 
     # ── Run ───────────────────────────────────────────────────────────────────
     start = time.perf_counter()
@@ -148,17 +206,21 @@ async def main() -> int:
             from core.workflow import run_with_critique
             logger.info("Starting Phase 2 critique pipeline ...")
             job = await run_with_critique(
-                source_url=source,
+                source_url=source or "",
                 rights_cleared=args.rights_cleared,
                 app_config=config,
             )
         else:
             from core.workflow import run_pipeline_job
-            logger.info("Starting Phase 1 pipeline ...")
+            phase_label = f"phase={args.phase}" if args.phase != "all" else "full pipeline"
+            resume_label = f" (resuming {args.resume_job})" if args.resume_job else ""
+            logger.info("Starting Phase 1 pipeline — %s%s ...", phase_label, resume_label)
             job = await run_pipeline_job(
-                source_url=source,
+                source_url=source or "",
                 rights_cleared=args.rights_cleared,
                 app_config=config,
+                options=options,
+                resume_job_id=args.resume_job,
             )
 
     except KeyboardInterrupt:

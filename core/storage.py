@@ -11,6 +11,7 @@ from core.models.job import Job, JobStatus, StageResult
 
 class ArtifactStore(Protocol):
     def put_json(self, job_id: str, stage_name: str, payload: dict[str, Any]) -> ArtifactRef: ...
+    def get_json(self, job_id: str, stage_name: str) -> dict[str, Any] | None: ...
 
 
 class JobRepository(Protocol):
@@ -29,6 +30,12 @@ class LocalArtifactStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         return ArtifactRef(uri=str(path), media_type="application/json")
+
+    def get_json(self, job_id: str, stage_name: str) -> dict[str, Any] | None:
+        path = self.root / job_id / f"{stage_name}.json"
+        if not path.exists():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
 
 
 class S3ArtifactStore:
@@ -78,6 +85,16 @@ class S3ArtifactStore:
             media_type="application/json",
             metadata={"endpoint_url": self.endpoint_url},
         )
+
+    def get_json(self, job_id: str, stage_name: str) -> dict[str, Any] | None:
+        key = f"{job_id}/{stage_name}.json"
+        try:
+            obj = self.client.get_object(Bucket=self.bucket, Key=key)
+            return json.loads(obj["Body"].read().decode("utf-8"))
+        except self._client_error as exc:
+            if exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
+                return None
+            raise
 
 
 class SQLiteJobStore:

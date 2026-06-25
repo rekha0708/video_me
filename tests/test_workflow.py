@@ -1,4 +1,5 @@
 """Tests for run_pipeline_job (A1.12) and its private helpers."""
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -749,7 +750,7 @@ async def test_run_shot_calls_adapters_in_sequence(tmp_path) -> None:
     config = _make_config(tmp_path)
     shot = _storyboard().shots[0]
 
-    await _run_shot(shot, _script(), config.cast, adapters)
+    await _run_shot(shot, _script(), config.cast, adapters, Path(tmp_path))
 
     assert call_order == ["render", "voice", "video", "lipsync"]
 
@@ -772,7 +773,7 @@ async def test_run_shot_returns_synced_clip_and_audio_track(tmp_path) -> None:
     config = _make_config(tmp_path)
     shot = _storyboard().shots[0]
 
-    synced, audio = await _run_shot(shot, _script(), config.cast, adapters)
+    synced, audio = await _run_shot(shot, _script(), config.cast, adapters, Path(tmp_path))
 
     assert synced is expected_synced
     assert audio is expected_audio
@@ -797,7 +798,7 @@ async def test_run_shot_passes_speaker_id_to_voice(tmp_path) -> None:
     config = _make_config(tmp_path)
     shot = _storyboard().shots[0]
 
-    await _run_shot(shot, _script(), config.cast, adapters)
+    await _run_shot(shot, _script(), config.cast, adapters, Path(tmp_path))
 
     voice_req = adapters.voice.run.call_args[0][0]
     assert voice_req.speaker_id == "max"
@@ -822,7 +823,7 @@ async def test_run_shot_passes_shot_id_to_lipsync(tmp_path) -> None:
     config = _make_config(tmp_path)
     shot = _storyboard().shots[0]
 
-    await _run_shot(shot, _script(), config.cast, adapters)
+    await _run_shot(shot, _script(), config.cast, adapters, Path(tmp_path))
 
     lipsync_req = adapters.lipsync.run.call_args[0][0]
     assert lipsync_req.shot_id == "s01"

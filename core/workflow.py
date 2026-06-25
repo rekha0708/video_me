@@ -2,6 +2,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from core.config import AppConfig, load_app_config
 from core.executor import StageError, check_rights, run_stage
@@ -34,6 +35,25 @@ from core.storage import (
     create_artifact_store,
     create_job_store,
 )
+
+Phase = Literal["plan", "render", "assemble", "all"]
+
+
+@dataclass
+class RunOptions:
+    """Controls which stages run and whether completed stages are skipped.
+
+    phase:
+      "plan"     — fetch → transcribe → analyze → adapt → plan_shots, then stop.
+      "render"   — shot loop only (render + voice + video + lip_sync for each shot).
+      "assemble" — assemble_video → publish only.
+      "all"      — full pipeline (default).
+    resume:      skip stages whose artifact JSON already exists on disk.
+    only_shot:   in the shot loop, process only this shot ID (e.g. "s01").
+    """
+    phase: Phase = "all"
+    resume: bool = False
+    only_shot: str | None = None
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +236,40 @@ def _make_job_context(
     )
 
 
+def _restore_job_context(job_id: str, config: AppConfig) -> _JobContext:
+    """Reconstruct a context for a previously started job (for resume/phase runs).
+
+    Loads the job record from the store and points the work_dir at the existing
+    job directory.  Raises ValueError if the job cannot be found.
+    """
+    settings = config.settings
+    artifact_store = create_artifact_store(settings)
+    job_store = create_job_store(settings)
+
+    job = job_store.get_job(job_id)
+    if job is None:
+        raise ValueError(
+            f"Job '{job_id}' not found in the job store. "
+            "Check the job ID and make sure the same data_dir is configured."
+        )
+
+    job.status = JobStatus.RUNNING
+    job_store.save_job(job)
+    log_event(logger, "job_resumed", job_id=job.job_id)
+
+    work_dir = settings.data_dir / "jobs" / job.job_id
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    return _JobContext(
+        config=config,
+        artifact_store=artifact_store,
+        job_store=job_store,
+        job=job,
+        work_dir=work_dir,
+        adapters=_make_adapters(config, work_dir),
+    )
+
+
 def _resolve_line(ref: str, script: Script):
     """Parse a dialogue_line_ref and return the Line it points to.
 
@@ -232,12 +286,16 @@ async def _run_shot(
     script: Script,
     cast: Cast,
     adapters: _Adapters,
+    work_dir: Path,
+    options: RunOptions | None = None,
 ) -> tuple[VideoClip, AudioTrack]:
     """Run all four per-shot stages for one shot.
 
     Sequence: render_character → synthesize_voice → generate_video → lip_sync.
     Returns (synced VideoClip, AudioTrack) so the caller can collect both.
+    When options.resume is True, stages whose output files already exist are skipped.
     """
+    opts = options or RunOptions()
     member_map = {m.id: m for m in cast.members}
 
     # Speaker is always characters_on_screen[0] (enforced by plan_shots trim_characters).
@@ -258,36 +316,65 @@ async def _run_shot(
         shot_id=shot.shot_id, speaker=speaker_id, text_chars=len(line_text),
     )
 
-    # 1. render_character — still frame of the speaker in this setting
-    render_result = await adapters.render.run(
-        RenderCharacterRequest(
-            member=speaker,
-            setting=shot.setting,
-            expression=expression,
+    # ── Resume shortcuts ──────────────────────────────────────────────────────
+    # If synced.mp4 already exists the whole shot is done — return both artifacts.
+    synced_path = work_dir / "video" / shot.shot_id / "synced.mp4"
+    if opts.resume and synced_path.exists():
+        logger.info("Skipping shot %s (synced.mp4 exists)", shot.shot_id)
+        clip_path = work_dir / "video" / shot.shot_id / "clip.mp4"
+        audio_files = sorted((work_dir / "audio" / speaker_id).glob("*.wav"))
+        audio_uri = str(audio_files[0]) if audio_files else str(synced_path)
+        return (
+            VideoClip(uri=str(synced_path), duration_sec=shot.duration_sec),
+            AudioTrack(uri=audio_uri, duration_sec=shot.duration_sec),
         )
-    )
 
-    # 2. synthesize_voice — TTS for the dialogue line
-    audio_track = await adapters.voice.run(
-        VoiceRequest(
-            text=line_text,
-            voice_profile_ref=speaker.voice_profile_ref,
-            speaker_id=speaker_id,
-            expression=expression,
+    # ── 1. render_character ───────────────────────────────────────────────────
+    render_png = work_dir / "renders" / speaker_id / "render_00.png"
+    if opts.resume and render_png.exists():
+        logger.info("Skipping render_character for %s (render_00.png exists)", shot.shot_id)
+        from core.models.capabilities import ImageSet
+        render_result = ImageSet(images=[str(render_png)])
+    else:
+        render_result = await adapters.render.run(
+            RenderCharacterRequest(
+                member=speaker,
+                setting=shot.setting,
+                expression=expression,
+            )
         )
-    )
 
-    # 3. generate_video — animate the still frame
-    clip = await adapters.video.run(
-        VideoRequest(
-            image_uri=render_result.images[0],
-            action=shot.action,
-            duration_sec=shot.duration_sec,
-            shot_id=shot.shot_id,
+    # ── 2. synthesize_voice ───────────────────────────────────────────────────
+    audio_files = sorted((work_dir / "audio" / speaker_id).glob("*.wav"))
+    if opts.resume and audio_files:
+        logger.info("Skipping synthesize_voice for %s (audio exists)", shot.shot_id)
+        audio_track = AudioTrack(uri=str(audio_files[0]), duration_sec=shot.duration_sec)
+    else:
+        audio_track = await adapters.voice.run(
+            VoiceRequest(
+                text=line_text,
+                voice_profile_ref=speaker.voice_profile_ref,
+                speaker_id=speaker_id,
+                expression=expression,
+            )
         )
-    )
 
-    # 4. lip_sync — align mouth to dialogue audio
+    # ── 3. generate_video ─────────────────────────────────────────────────────
+    clip_path = work_dir / "video" / shot.shot_id / "clip.mp4"
+    if opts.resume and clip_path.exists():
+        logger.info("Skipping generate_video for %s (clip.mp4 exists)", shot.shot_id)
+        clip = VideoClip(uri=str(clip_path), duration_sec=shot.duration_sec)
+    else:
+        clip = await adapters.video.run(
+            VideoRequest(
+                image_uri=render_result.images[0],
+                action=shot.action,
+                duration_sec=shot.duration_sec,
+                shot_id=shot.shot_id,
+            )
+        )
+
+    # ── 4. lip_sync ───────────────────────────────────────────────────────────
     synced = await adapters.lipsync.run(
         LipSyncRequest(
             video_uri=clip.uri,
@@ -347,72 +434,162 @@ async def _concat_audio(
     )
 
 
-async def _run_to_assembled_video(ctx: _JobContext) -> tuple[Script, FinalVideo]:
-    """Run Phase 1 stages through assembled candidate video, but do not publish."""
+def _load_artifact(
+    job_id: str,
+    stage: str,
+    model_cls: type,
+    artifact_store: ArtifactStore,
+) -> object | None:
+    """Load a persisted stage artifact and deserialize it to model_cls. Returns None if absent."""
+    data = artifact_store.get_json(job_id, stage)
+    if data is None:
+        return None
+    try:
+        return model_cls.model_validate(data)
+    except Exception as exc:
+        logger.warning("Could not deserialize artifact '%s' (%s): %s — will re-run stage", stage, model_cls.__name__, exc)
+        return None
+
+
+async def _run_to_assembled_video(
+    ctx: _JobContext,
+    options: RunOptions | None = None,
+) -> tuple[Script, FinalVideo]:
+    """Run Phase 1 stages through assembled candidate video, but do not publish.
+
+    When options.resume is True, stages whose artifact JSON already exists are
+    loaded from disk and skipped.  options.phase controls which stage groups run:
+      "plan"     — stop after plan_shots (returns early; FinalVideo will be None)
+      "render"   — skip to per-shot loop (requires plan artifacts in artifact_store)
+      "assemble" — skip to assemble_video (requires shot artifacts on disk)
+      "all"      — full pipeline (default)
+    """
+    opts = options or RunOptions()
     config = ctx.config
     job = ctx.job
     adapters = ctx.adapters
     artifact_store = ctx.artifact_store
     job_store = ctx.job_store
 
-    # 1. fetch_media
-    fetch_result = await run_stage(
-        "fetch_media", adapters.fetch_media,
-        FetchMediaRequest(source_url=job.source_url),
-        job, artifact_store, job_store,
+    # ── Lazy import of model classes for artifact deserialization ─────────────
+    from core.models.capabilities import (
+        FetchMediaResult, TranscribeResult, ContentMetadata,
     )
 
-    # 2. transcribe
-    transcribe_result = await run_stage(
-        "transcribe", adapters.transcribe,
-        TranscribeRequest(audio_uri=fetch_result.audio_uri),
-        job, artifact_store, job_store,
-    )
+    # ── Helper: run a stage or load its cached artifact ───────────────────────
+    async def _stage(name, capability, request, result_cls):
+        if opts.resume:
+            cached = _load_artifact(job.job_id, name, result_cls, artifact_store)
+            if cached is not None:
+                logger.info("Resuming: skipping stage '%s' (artifact exists)", name)
+                return cached
+        return await run_stage(name, capability, request, job, artifact_store, job_store)
 
-    # 3. analyze_content
-    metadata = await run_stage(
-        "analyze_content", adapters.analyze,
-        AnalyzeRequest(
-            transcript=transcribe_result,
-            channel_profile=config.channel_profile,
-        ),
-        job, artifact_store, job_store,
-    )
+    # ── Plan phase ────────────────────────────────────────────────────────────
+    skip_plan = opts.phase == "render" or opts.phase == "assemble"
 
-    # 4. rights gate (not a capability — runs synchronously)
-    check_rights(job)
+    if not skip_plan:
+        # 1. fetch_media
+        fetch_result = await _stage(
+            "fetch_media", adapters.fetch_media,
+            FetchMediaRequest(source_url=job.source_url),
+            FetchMediaResult,
+        )
 
-    # 5. adapt_script
-    script: Script = await run_stage(
-        "adapt_script", adapters.adapt,
-        AdaptScriptRequest(
-            metadata=metadata,
-            cast=config.cast,
-            channel_profile=config.channel_profile,
-        ),
-        job, artifact_store, job_store,
-    )
+        # 2. transcribe
+        transcribe_result = await _stage(
+            "transcribe", adapters.transcribe,
+            TranscribeRequest(audio_uri=fetch_result.audio_uri),
+            TranscribeResult,
+        )
 
-    # 6. plan_shots
-    storyboard: Storyboard = await run_stage(
-        "plan_shots", adapters.plan,
-        PlanShotsRequest(script=script, cast=config.cast),
-        job, artifact_store, job_store,
-    )
+        # 3. analyze_content
+        metadata = await _stage(
+            "analyze_content", adapters.analyze,
+            AnalyzeRequest(
+                transcript=transcribe_result,
+                channel_profile=config.channel_profile,
+            ),
+            ContentMetadata,
+        )
 
-    # Release LLM from VRAM before the GPU-heavy shot loop so Wan has full memory.
-    _unload_ollama_model(config.settings.llm_base_url, config.settings.llm_model)
+        # 4. rights gate
+        check_rights(job)
 
-    # 7. per-shot loop
-    synced_clips: list[VideoClip] = []
-    audio_tracks: list[AudioTrack] = []
-    for shot in storyboard.shots:
-        synced, audio = await _run_shot(shot, script, config.cast, adapters)
-        synced_clips.append(synced)
-        audio_tracks.append(audio)
+        # 5. adapt_script
+        script: Script = await _stage(
+            "adapt_script", adapters.adapt,
+            AdaptScriptRequest(
+                metadata=metadata,
+                cast=config.cast,
+                channel_profile=config.channel_profile,
+            ),
+            Script,
+        )
+
+        # 6. plan_shots
+        storyboard: Storyboard = await _stage(
+            "plan_shots", adapters.plan,
+            PlanShotsRequest(script=script, cast=config.cast),
+            Storyboard,
+        )
+
+        if opts.phase == "plan":
+            logger.info("Phase 'plan' complete — stopping before render loop.")
+            job.status = JobStatus.COMPLETED
+            job_store.save_job(job)
+            return script, None  # type: ignore[return-value]
+
+    else:
+        # Skip plan stages — load artifacts that the render/assemble phases need.
+        script_data = artifact_store.get_json(job.job_id, "adapt_script")
+        storyboard_data = artifact_store.get_json(job.job_id, "plan_shots")
+        if script_data is None or storyboard_data is None:
+            raise RuntimeError(
+                f"Phase '{opts.phase}' requires completed plan artifacts for job "
+                f"'{job.job_id}'.  Run --phase plan first."
+            )
+        script = Script.model_validate(script_data)
+        storyboard = Storyboard.model_validate(storyboard_data)
+        logger.info("Loaded plan artifacts for job %s (script + storyboard)", job.job_id)
+
+    # ── Render phase ──────────────────────────────────────────────────────────
+    if opts.phase == "assemble":
+        # Skip shot loop — reconstruct clip/audio lists from existing files.
+        synced_clips, audio_tracks = _collect_existing_shot_artifacts(
+            storyboard, script, config.cast, ctx.work_dir
+        )
+    else:
+        # Release LLM from VRAM before the GPU-heavy shot loop.
+        _unload_ollama_model(config.settings.llm_base_url, config.settings.llm_model)
+
+        # 7. per-shot loop
+        synced_clips = []
+        audio_tracks = []
+        shots_to_run = (
+            [s for s in storyboard.shots if s.shot_id == opts.only_shot]
+            if opts.only_shot
+            else storyboard.shots
+        )
+        if opts.only_shot and not shots_to_run:
+            raise ValueError(f"Shot '{opts.only_shot}' not found in storyboard.")
+
+        for shot in shots_to_run:
+            synced, audio = await _run_shot(
+                shot, script, config.cast, adapters, ctx.work_dir, opts
+            )
+            synced_clips.append(synced)
+            audio_tracks.append(audio)
+
+        if opts.phase == "render":
+            logger.info("Phase 'render' complete — stopping before assemble.")
+            job.status = JobStatus.COMPLETED
+            job_store.save_job(job)
+            return script, None  # type: ignore[return-value]
 
     combined_audio = await _concat_audio(audio_tracks, ctx.work_dir, adapters.ffmpeg_bin)
 
+    # ── Assemble phase ────────────────────────────────────────────────────────
     # 8. assemble_video
     final_video = await run_stage(
         "assemble_video", adapters.assemble,
@@ -428,6 +605,34 @@ async def _run_to_assembled_video(ctx: _JobContext) -> tuple[Script, FinalVideo]
     )
 
     return script, final_video
+
+
+def _collect_existing_shot_artifacts(
+    storyboard: Storyboard,
+    script: Script,
+    cast: Cast,
+    work_dir: Path,
+) -> tuple[list[VideoClip], list[AudioTrack]]:
+    """Reconstruct clip/audio lists from files written by a previous render phase.
+
+    Raises RuntimeError for any shot whose synced.mp4 is missing.
+    """
+    member_map = {m.id: m for m in cast.members}
+    clips: list[VideoClip] = []
+    audios: list[AudioTrack] = []
+    for shot in storyboard.shots:
+        synced_path = work_dir / "video" / shot.shot_id / "synced.mp4"
+        if not synced_path.exists():
+            raise RuntimeError(
+                f"Phase 'assemble' requires synced.mp4 for all shots, "
+                f"but '{synced_path}' is missing. Run --phase render first."
+            )
+        speaker_id = shot.characters_on_screen[0]
+        audio_files = sorted((work_dir / "audio" / speaker_id).glob("*.wav"))
+        audio_uri = str(audio_files[0]) if audio_files else str(synced_path)
+        clips.append(VideoClip(uri=str(synced_path), duration_sec=shot.duration_sec))
+        audios.append(AudioTrack(uri=audio_uri, duration_sec=shot.duration_sec))
+    return clips, audios
 
 
 async def _publish_candidate(
@@ -485,6 +690,8 @@ async def run_pipeline_job(
     source_url: str,
     rights_cleared: bool = False,
     app_config: AppConfig | None = None,
+    options: RunOptions | None = None,
+    resume_job_id: str | None = None,
 ) -> Job:
     """
     Full Phase 1 pipeline: URL → review-folder MP4 + metadata sidecar.
@@ -508,11 +715,21 @@ async def run_pipeline_job(
         app_config:     Override the default YAML-loaded config (useful in tests).
     """
     config = app_config or load_app_config()
-    ctx = _make_job_context(source_url, rights_cleared, config)
+    opts = options or RunOptions()
+    if opts.resume and not resume_job_id:
+        raise ValueError("resume=True requires resume_job_id to be set.")
+    ctx = (
+        _restore_job_context(resume_job_id, config)
+        if resume_job_id
+        else _make_job_context(source_url, rights_cleared, config)
+    )
     job = ctx.job
 
     try:
-        script, final_video = await _run_to_assembled_video(ctx)
+        script, final_video = await _run_to_assembled_video(ctx, opts)
+        if final_video is None:
+            # phase="plan" or phase="render" — no video to publish, already marked complete
+            return job
         await _publish_candidate(ctx, script, final_video)
 
         job.status = JobStatus.COMPLETED
