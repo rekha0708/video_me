@@ -132,6 +132,8 @@ class DiffusionRenderAdapter(RenderCharacter):
             lora=str(lora_path),
             placeholder_lora=placeholder_lora,
             setting=req.setting,
+            prompt=prompt,
+            negative_prompt=self._negative_prompt,
         )
 
         payload = {

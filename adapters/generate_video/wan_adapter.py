@@ -95,6 +95,7 @@ class WanAdapter(GenerateVideo):
             shot_id=req.shot_id,
             image=str(image_path),
             duration_sec=req.duration_sec,
+            prompt=prompt,
         )
 
         mp4_bytes = await self._call_wan(image_path, prompt, req.duration_sec)

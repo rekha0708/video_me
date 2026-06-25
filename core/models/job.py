@@ -1,11 +1,17 @@
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any
-from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
 from core.models.common import ArtifactRef
+
+
+def _make_job_id() -> str:
+    # e.g. 20260625-143022-a3f  — readable + collision-safe for concurrent jobs
+    import random, string
+    suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=3))
+    return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + f"-{suffix}"
 
 
 class JobStatus(StrEnum):
@@ -27,7 +33,7 @@ class StageResult(BaseModel):
 
 
 class Job(BaseModel):
-    job_id: str = Field(default_factory=lambda: str(uuid4()))
+    job_id: str = Field(default_factory=_make_job_id)
     source_url: str
     channel_profile_ref: str
     cast_ref: str
