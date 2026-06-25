@@ -50,6 +50,7 @@ def _mock_httpx(
     mock_get_resp.raise_for_status = MagicMock()
 
     mock_post_resp = MagicMock()
+    mock_post_resp.status_code = 200
     mock_post_resp.raise_for_status = MagicMock()
     mock_post_resp.content = mp4_bytes
 

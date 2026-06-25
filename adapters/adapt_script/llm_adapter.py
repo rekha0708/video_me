@@ -75,6 +75,7 @@ Return JSON with exactly this structure:
 
 def _strip_markdown_fence(text: str) -> str:
     text = text.strip()
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
     match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
     return match.group(1).strip() if match else text
 
@@ -122,7 +123,7 @@ class LlmAdaptScriptAdapter(AdaptScript):
         base_url: str = "http://localhost:11434/v1",
         api_key: str = "ollama",
         temperature: float = 0.4,
-        max_tokens: int = 2048,
+        max_tokens: int = 16384,
     ) -> None:
         self._model = model
         self._base_url = base_url
@@ -177,7 +178,7 @@ class LlmAdaptScriptAdapter(AdaptScript):
             messages=messages,
             temperature=self._temperature,
             max_tokens=self._max_tokens,
-            response_format={"type": "json_object"},
+            extra_body={"think": False},
         )
 
         raw = response.choices[0].message.content or ""
@@ -226,10 +227,15 @@ class LlmAdaptScriptAdapter(AdaptScript):
 
         try:
             data = json.loads(cleaned)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                f"LLM returned invalid JSON: {exc}\nRaw (first 500 chars): {raw[:500]}"
-            ) from exc
+        except json.JSONDecodeError:
+            from json_repair import repair_json
+            repaired = repair_json(cleaned)
+            try:
+                data = json.loads(repaired)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"LLM returned invalid JSON: {exc}\nRaw (first 500 chars): {raw[:500]}"
+                ) from exc
 
         scenes = data.get("scenes", [])
 

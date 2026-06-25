@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 
 # Children's speech rate: slow and clear. Used to derive duration from word count.
 _WORDS_PER_SEC: float = 2.0
-_MIN_SHOT_SEC: float = 2.0
-_MAX_SHOT_SEC: float = 5.0
+_MIN_SHOT_SEC: float = 5.0
+_MAX_SHOT_SEC: float = 8.0
 
 _SYSTEM_PROMPT = """\
 You are a shot director for an animated children's short (ages 3–6).
@@ -54,6 +54,7 @@ Rules:
 
 def _strip_markdown_fence(text: str) -> str:
     text = text.strip()
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
     match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
     return match.group(1).strip() if match else text
 
@@ -113,7 +114,7 @@ class LlmPlanShotsAdapter(PlanShots):
     The LLM contributes: camera angle, action description, characters_on_screen (≤2).
     The adapter derives: shot_id, scene_ref, setting, dialogue_line_refs, duration_sec.
 
-    Duration is computed from word count (2 words/sec, clamped 2–5s) — more reliable
+    Duration is computed from word count (2 words/sec, clamped 5–8s) — more reliable
     than LLM estimates. If the LLM returns fewer shots than lines, defaults fill the gap.
     """
 
@@ -125,7 +126,7 @@ class LlmPlanShotsAdapter(PlanShots):
         base_url: str = "http://localhost:11434/v1",
         api_key: str = "ollama",
         temperature: float = 0.2,
-        max_tokens: int = 2048,
+        max_tokens: int = 16384,
     ) -> None:
         self._model = model
         self._base_url = base_url
@@ -175,7 +176,7 @@ class LlmPlanShotsAdapter(PlanShots):
             messages=messages,
             temperature=self._temperature,
             max_tokens=self._max_tokens,
-            response_format={"type": "json_object"},
+            extra_body={"think": False},
         )
 
         raw = response.choices[0].message.content or ""
@@ -220,10 +221,15 @@ class LlmPlanShotsAdapter(PlanShots):
 
         try:
             data = json.loads(cleaned)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                f"LLM returned invalid JSON: {exc}\nRaw (first 500 chars): {raw[:500]}"
-            ) from exc
+        except json.JSONDecodeError:
+            from json_repair import repair_json
+            repaired = repair_json(cleaned)
+            try:
+                data = json.loads(repaired)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"LLM returned invalid JSON: {exc}\nRaw (first 500 chars): {raw[:500]}"
+                ) from exc
 
         llm_shots: list[dict] = data.get("shots", [])
 

@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--rights-cleared",
         action="store_true",
-        default=False,
+        default=True,
         help=(
             "Assert that the source video is cleared for transformative use. "
             "Pipeline is BLOCKED without this flag."
@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--llm-model",
         default=None,
-        help="Ollama model for LLM stages (default: from VIDEO_ME_LLM_MODEL or 'qwen2.5:7b')",
+        help="Ollama model for LLM stages (default: from VIDEO_ME_LLM_MODEL or 'qwen3.5:35b')",
     )
     p.add_argument(
         "--review-dir",

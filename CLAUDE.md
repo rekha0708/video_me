@@ -11,7 +11,15 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 
 ## Current state (as of 2026-06-25)
 
-**Phase 2 code is complete. 313 tests pass. Track B is READY. All 5 Track D GPU services are running.**
+**Phase 2 code is complete. 313 tests pass ✅. Track B is READY. All 5 Track D GPU services are running. Pipeline running end-to-end through generate_video; MuseTalk fixes applied and first full run in progress.**
+
+- **Fix applied**: `test_generate_video.py` now properly sets `status_code = 200` on mock responses (was missing, causing TypeError on comparison)
+- **yt-dlp installed system-wide** at `/usr/local/bin/yt-dlp` (was missing from PATH — previously only in project `.venv`)
+- **Chatterbox startup**: loads PerthNet model (~60s). The `wait_for` timeout in `start_services.sh` was tight; consider increasing Chatterbox's wait window if pods restart frequently.
+- **LLM upgraded to qwen3.6:35b** (MoE 35B). Thinking mode disabled via `extra_body={"think": False}` + removed `response_format`. `max_tokens=16384`. `json_repair` fallback for malformed JSON.
+- **VRAM unload**: `core/workflow.py` explicitly evicts qwen3.6:35b before the shot loop so Wan has full VRAM.
+- **MuseTalk fixed**: mmcv rebuilt from source at 2.1.0; all 9 `torch.load` calls patched with `weights_only=False` for PyTorch 2.8 compatibility.
+- **Shot duration**: 5–8s (was 2–5s); 2 words/sec, floor 5s, ceiling 8s.
 
 | Track / Phase | Status | Blocker |
 |---|---|---|
@@ -19,14 +27,15 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 | Phase 1 — Full pipeline A1.0–A1.12 | ✅ COMPLETE (code) | — |
 | Phase 2 — Critic loop A2.x | ✅ COMPLETE (code) | Real VLM service needed for real judgment |
 | Track B — LoRAs + voice files | ✅ READY | Real LoRAs trained (1000 steps, rank 32, SD 1.5); voice refs generated |
-| Track D — GPU services | ✅ ALL RUNNING | Ollama ✅ A1111 ✅ Chatterbox ✅ Wan ✅ MuseTalk ✅ |
+| Track D — GPU services | ⚠️ Manual start required | Ollama ✅, A1111 ✅, Chatterbox ✅ (60s load time), Wan ✅, MuseTalk ✅ |
 | Track E — Compliance sign-off | ❌ PENDING | Operator hasn't signed off |
 
 Track B LoRAs are real trained weights (37 MB each, in git via LFS). Voice reference files are
 gTTS bootstrap WAVs — acceptable for pipeline runs, replace with recorded child voices for
 brand-accurate results.
 
-Pipeline has been tested through fetch → transcribe → analyze → adapt → plan → render_character → synthesize_voice → generate_video (Wan). lip_sync (MuseTalk) now ready.
+Pipeline runs through all LLM stages (analyze → adapt → plan) without issue. MuseTalk is patched
+and services confirmed healthy. First complete end-to-end run (including lip_sync) in progress.
 
 **After every pod restart, run:**
 ```bash
@@ -117,7 +126,7 @@ The stage runner is `core/executor.py:run_stage()`. The Phase 1 DAG is
 | `scripts/check_runtime_readiness.py` | runtime dependency/service/asset readiness check |
 | `scripts/setup_gpu.sh` | one-command GPU-machine setup + validation |
 | `scripts/setup_gpu.py` / `setup.py gpu` | lower-level GPU-machine setup helper |
-| `tests/` | 313 tests across 17 test files; no external services needed |
+| `tests/` | 313 tests across 17 test files; no external services needed (all passing as of 2026-06-25) |
 | `BUILD_PROGRESS.md` | Full implementation journal + decision log |
 | `Agent.md` | Lead Designer agent charter |
 
@@ -181,8 +190,9 @@ Run `pip install "setuptools<81"` inside `.venv_chatterbox` if it fails on start
 Do NOT install `perth` (wrong package on PyPI); it must be `resemble-perth`.
 
 **MuseTalk notes**:
-- mmcv has no Python 3.12 prebuilt wheels — must build from source (`MAX_JOBS=8 pip install mmcv --no-build-isolation`). Takes ~15-20 min on A100.
+- mmcv **must be built from source at v2.1.0** (not 2.2.0): `MAX_JOBS=8 pip install mmcv==2.1.0 --no-build-isolation` (~20 min). mmdet 3.3.0 requires `mmcv<2.2.0`.
 - mmpose 1.3.2 required (1.1.0 requires mmcv ≤2.1.0; 1.3.2 accepts <3.0.0).
+- **PyTorch 2.8 `torch.load` fix**: all 9 checkpoint load calls patched with `weights_only=False` in mmengine/runner/checkpoint.py and 4 MuseTalk source files.
 - musetalk package must be on PYTHONPATH since inference lives in `scripts/` not repo root.
 - `start_services.sh` sets `PYTHONPATH=/workspace/MuseTalk` automatically.
 
@@ -224,7 +234,7 @@ Local/mock placeholder check without services:
 bash scripts/setup_gpu.sh --code-test --skip-services
 ```
 
-LLM model needed: `qwen3:14b`; critique defaults to `llava:7b`. Phase 2 samples local video
+LLM model needed: `qwen3.6:35b` (MoE 35B, 29–30 GB VRAM); critique defaults to `llava:7b`. Rollback: `VIDEO_ME_LLM_MODEL=qwen3:14b`. Phase 2 samples local video
 frames in the adapter and sends them as multimodal `image_url` data URLs. This keeps the MVP
 inspectable because sampled frames are saved under the job work directory and persisted on
 `CritiqueResult.sampled_frame_uris`.

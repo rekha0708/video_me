@@ -700,3 +700,72 @@ bash scripts/start_services.sh
 Nothing needs to be reinstalled after a restart (only Ollama binary). All venvs, models, and weights are on `/workspace`.
 
 **What triggers a full `setup_gpu.sh` re-run:** renting a fresh pod with no network volume attached.
+
+---
+
+## LLM Upgrade + MuseTalk Fixes — 2026-06-25
+
+### LLM: qwen3:14b → qwen3.6:35b
+
+Upgraded default LLM from `qwen3:14b` to `qwen3.6:35b` for significantly better script quality.
+
+- Model pulled via Ollama API, stored at `/workspace/ollama/` (persists on network volume)
+- `core/config.py`: `llm_model = "qwen3.6:35b"`
+- qwen3.6:35b is a 35B MoE model using 29–30 GB VRAM; qwen3:14b kept for rollback
+
+**qwen3.6 thinking mode fix (all 3 LLM adapters):**
+
+| Change | Reason |
+|---|---|
+| Added `extra_body={"think": False}` | qwen3.6 emits `<think>…</think>` blocks; Ollama splits them into a separate reasoning token budget that competes with `max_tokens` |
+| Removed `response_format={"type": "json_object"}` | With MoE models, this causes thinking tokens to consume the content budget even with `think: False`, leaving `message.content` empty |
+| `max_tokens` 1024 → 16384 | Full adapt_script response (4 scenes × 14 lines) needs ~7000 tokens |
+| Added `_strip_markdown_fence` with `<think>…</think>` removal | Belt-and-suspenders: strips residual think tags before JSON parse |
+| Added `json_repair` fallback in `_parse_response` | Cast expression strings like `"aha!"` contain inner quotes; model outputs them verbatim causing invalid JSON. `pip install json-repair` in `.venv`. |
+
+Affected files: `adapters/analyze_content/llm_adapter.py`, `adapters/adapt_script/llm_adapter.py`, `adapters/plan_shots/llm_adapter.py`.
+
+### MuseTalk (lip_sync) — all blocking issues resolved
+
+**Issue 1: mmcv version conflict**
+
+| Detail | Value |
+|---|---|
+| Root cause | `mmdet 3.3.0` requires `mmcv>=2.0.0rc4,<2.2.0` but mmcv 2.2.0 was installed |
+| Fix | Rebuilt mmcv from source at v2.1.0 in `.venv_musetalk`: `MAX_JOBS=8 pip install mmcv==2.1.0 --no-build-isolation` (~20 min) |
+
+**Issue 2: PyTorch 2.8 `weights_only=True` default**
+
+PyTorch 2.8 changed `torch.load` default to `weights_only=True`. DWPose, face-parse-bisent, and other MuseTalk checkpoints are legacy-format (contain numpy objects) and fail with this default.
+
+Patched `weights_only=False` into:
+
+| File | Lines patched |
+|---|---|
+| `.venv_musetalk/lib/python3.12/site-packages/mmengine/runner/checkpoint.py` | 4 `torch.load` calls (lines 347, 415, 438, 507) |
+| `MuseTalk/musetalk/utils/face_parsing/__init__.py` | 2 `torch.load` calls |
+| `MuseTalk/musetalk/utils/face_parsing/resnet.py` | 1 `torch.load` call |
+| `MuseTalk/musetalk/utils/face_detection/detection/sfd/sfd_detector.py` | 1 `torch.load` call |
+| `MuseTalk/musetalk/models/unet.py` | 1 `torch.load` call |
+
+### VRAM management: qwen3.6:35b + Wan co-existence
+
+**Problem:** qwen3.6:35b (29 GB) + Wan2.2 (40 GB) = 69 GB, leaving only 10 GB free on the A100 80GB. If the LLM is still loaded when Wan tries to initialize, OOM.
+
+**Fix:** Added `_unload_ollama_model()` call in `core/workflow.py` between `plan_shots` and the per-shot loop. Sends `keep_alive=0` to Ollama API to evict the model from VRAM before Wan loads. Non-fatal if Ollama is unreachable.
+
+```python
+# Between plan_shots and the shot loop in _run_to_assembled_video():
+_unload_ollama_model(config.settings.llm_base_url, config.settings.llm_model)
+```
+
+**Root cause of run 15 OOM:** a `keep_alive=30m` had been set via API to keep the model warm across the shot loop (where LLM is not used). Reverted to default 5-min keep_alive. The natural gap between `plan_shots` completing and Wan first inferring (~7 sec render + voice + 20 min Wan) means the model expires on its own; the explicit unload call is belt-and-suspenders.
+
+### Shot duration: 3s → 5–8s
+
+`adapters/plan_shots/llm_adapter.py`:
+- `_MIN_SHOT_SEC`: 2.0 → **5.0**
+- `_MAX_SHOT_SEC`: 5.0 → **8.0**
+- `_WORDS_PER_SEC`: 2.0 (unchanged)
+
+At 2 words/sec, a 10-word line = 5s (new floor). Wan trade-off: 5s shots × 14 shots ≈ 70 min vs 3s shots ≈ 45 min.

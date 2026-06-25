@@ -300,6 +300,20 @@ async def _run_shot(
     return synced, audio_track
 
 
+def _unload_ollama_model(base_url: str, model: str) -> None:
+    """Tell Ollama to evict the model from VRAM (keep_alive=0) before GPU-heavy stages."""
+    import urllib.request, json as _json
+    ollama_base = base_url.replace("/v1", "").rstrip("/")
+    try:
+        data = _json.dumps({"model": model, "keep_alive": 0}).encode()
+        req = urllib.request.Request(f"{ollama_base}/api/generate", data=data,
+                                     headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=10)
+        logger.info("Unloaded %s from VRAM before shot loop", model)
+    except Exception as exc:
+        logger.warning("Could not unload Ollama model (non-fatal): %s", exc)
+
+
 async def _concat_audio(
     tracks: list[AudioTrack],
     work_dir: Path,
@@ -385,6 +399,9 @@ async def _run_to_assembled_video(ctx: _JobContext) -> tuple[Script, FinalVideo]
         PlanShotsRequest(script=script, cast=config.cast),
         job, artifact_store, job_store,
     )
+
+    # Release LLM from VRAM before the GPU-heavy shot loop so Wan has full memory.
+    _unload_ollama_model(config.settings.llm_base_url, config.settings.llm_model)
 
     # 7. per-shot loop
     synced_clips: list[VideoClip] = []

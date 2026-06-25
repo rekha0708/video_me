@@ -50,8 +50,10 @@ Return JSON with exactly this structure (fill every field; use null where genuin
 
 
 def _strip_markdown_fence(text: str) -> str:
-    """Remove ```json ... ``` fences that some models add despite instructions."""
+    """Remove ```json fences and <think>...</think> blocks that models may prepend."""
     text = text.strip()
+    # Strip qwen3 thinking blocks that leak into content despite think=False
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
     match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
     return match.group(1).strip() if match else text
 
@@ -80,7 +82,7 @@ class LlmAnalyzeAdapter(AnalyzeContent):
         base_url: str = "http://localhost:11434/v1",
         api_key: str = "ollama",
         temperature: float = 0.1,
-        max_tokens: int = 1024,
+        max_tokens: int = 16384,
     ) -> None:
         self._model = model
         self._base_url = base_url
@@ -128,7 +130,7 @@ class LlmAnalyzeAdapter(AnalyzeContent):
             messages=messages,
             temperature=self._temperature,
             max_tokens=self._max_tokens,
-            response_format={"type": "json_object"},
+            extra_body={"think": False},
         )
 
         raw = response.choices[0].message.content or ""
@@ -189,10 +191,15 @@ class LlmAnalyzeAdapter(AnalyzeContent):
 
         try:
             data = json.loads(cleaned)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                f"LLM returned invalid JSON: {exc}\nRaw (first 500 chars): {raw[:500]}"
-            ) from exc
+        except json.JSONDecodeError:
+            from json_repair import repair_json
+            repaired = repair_json(cleaned)
+            try:
+                data = json.loads(repaired)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"LLM returned invalid JSON: {exc}\nRaw (first 500 chars): {raw[:500]}"
+                ) from exc
 
         # Derive these fields from the transcript — more reliable than the LLM's guess.
         data["language"] = req.transcript.language

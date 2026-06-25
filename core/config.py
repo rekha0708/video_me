@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     lora_dir: Path = Path("loras")
     voice_dir: Path = Path("voices")
     review_dir: Path = Path("review")
-    llm_model: str = "qwen3:14b"
+    llm_model: str = "qwen3.6:35b"
     llm_base_url: str = "http://localhost:11434/v1"
     llm_api_key: str = "ollama"
     critique_model: str = "llava:7b"
@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     wan_base_url: str = "http://localhost:8030"
     lipsync_base_url: str = "http://localhost:8040"
     whisper_model_size: str = "medium"
-    whisper_device: str = "cpu"
+    whisper_device: str = "cuda"
     whisper_compute_type: str = "int8"
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"
