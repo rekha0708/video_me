@@ -543,33 +543,33 @@ Two code fixes also applied:
 | `services/wan_server.py` | Removed `--offload_model True` (unnecessary on A100 80GB; adds ~3-4× latency moving layers CPU↔GPU); subprocess timeout raised from 600s → 1800s |
 | `adapters/generate_video/wan_adapter.py` | HTTP client timeout raised from 300s → 1900s; added `logger.error` on 4xx/5xx to log response body (previously 500s showed no detail) |
 
-### Pipeline end-to-end test (2026-06-25)
+### Pipeline end-to-end test run 1 (2026-06-25) — FAILED at lip_sync
 
-Test video: "Everybody's Free (To Wear Sunscreen)" — https://www.youtube.com/watch?v=sTJ7AzBIJoI
-(5-min spoken-word piece; 81 transcription segments; topic: life advice / sunscreen)
+**Source:** `/workspace/downloads/tips_for_applying_sunscreen_to_children.mp4` (local file, 2:24)
+**Job ID:** `76cda49f-632a-4213-a5b8-df36a7c8de69`
+**LLM used:** qwen2.5:7b (run before upgrade to qwen3:14b)
 
-Stages confirmed working:
-- ✅ `fetch_media` — yt-dlp + Node.js runtime
-- ✅ `transcribe` — faster-whisper CUDA, 81 segments detected
-- ✅ `analyze_content` — qwen2.5:7b, topic + concept extracted
-- ✅ `adapt_script` — 4 scenes, 8–10 lines
-- ✅ `plan_shots` — 8–10 shots planned
-- ✅ `render_character` — A1111 SD API, real LoRAs loaded (no placeholder)
-- ✅ `synthesize_voice` — Chatterbox TTS, 2–3s clips per shot
-- ✅ `generate_video` — Wan2.2-I2V-A14B, HTTP 200, 1.6 MB MP4 in 753s (4.5 min load + ~8 min inference)
-- ⏳ `lip_sync` — not yet reached (MuseTalk pending)
-- ⏳ `assemble_video` — not yet reached
-- ⏳ `publish` — not yet reached
+| Stage | Status | Notes |
+|---|---|---|
+| `fetch_media` | ✅ | Local file copy, 2:24 video |
+| `transcribe` | ✅ | faster-whisper CUDA, 43 segments, language=en |
+| `analyze_content` | ✅ | topic="Sunscreen Application", age 3-6 |
+| `adapt_script` | ✅ | 4 scenes, 12 lines |
+| `plan_shots` | ✅ | 12 shots planned |
+| `render_character` s01 | ✅ | A1111, Max LoRA, "In their backyard" |
+| `synthesize_voice` s01 | ✅ | Chatterbox, 2.8s clip |
+| `generate_video` s01 | ✅ | Wan2.2, 19 min 55s, clip saved |
+| `lip_sync` s01 | ❌ | **MuseTalk 500** — first real inference call, root cause TBD |
+| `assemble_video` | ⏳ | Not reached |
+| `publish` | ⏳ | Not reached |
+
+**Next:** debug MuseTalk 500 on `/lipsync` endpoint (check `musetalk.log` for traceback).
 
 **Wan timing profile (single shot, cold start):**
-- Model load to VRAM: ~4.5 min (68.9 GB loaded; T5 11GB + two ~27GB DiT models)
-- High-noise DiT inference: ~1.5 min at 100% A100
-- Transition / low-noise model load: ~2 min
-- Low-noise DiT inference: ~2.5 min at 100% A100
-- VAE decode + video write: ~2 min
-- **Total per shot: ~12-13 min cold. Architectural note:** subprocess is spawned per request,
-  so the model is reloaded from disk each time. For a 9-shot pipeline this adds ~1.5–2 hrs of
-  overhead. Phase 3 or operator config decision: keep the model in-process for multi-shot runs.
+- Model load to VRAM: ~4.5 min (68.9 GB; T5 11GB + two ~27GB DiT models)
+- Inference + VAE decode: ~15 min
+- **Total per shot: ~19-20 min cold.** Subprocess spawned per request means full reload each shot.
+  12 shots × 20 min = ~4 hrs. Phase 3 decision: keep model resident between shots.
 
 ### New developer tools added
 
