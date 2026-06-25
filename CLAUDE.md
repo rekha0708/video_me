@@ -11,20 +11,22 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 
 ## Current state (as of 2026-06-25)
 
-**Phase 2 code is complete. 313 tests pass. Track B is READY. Track D services are starting up.**
+**Phase 2 code is complete. 313 tests pass. Track B is READY. Pipeline runs successfully through render + TTS; Wan2.2 model download in progress.**
 
 | Track / Phase | Status | Blocker |
 |---|---|---|
 | Phase 0 — Skeleton | ✅ COMPLETE | — |
-| Phase 1 — Full pipeline A1.0–A1.12 | ✅ COMPLETE (code) | Track D services must be running |
+| Phase 1 — Full pipeline A1.0–A1.12 | ✅ COMPLETE (code) | Wan2.2-I2V-A14B model finishing download |
 | Phase 2 — Critic loop A2.x | ✅ COMPLETE (code) | Real VLM service needed for real judgment |
 | Track B — LoRAs + voice files | ✅ READY | Real LoRAs trained (1000 steps, rank 32, SD 1.5); voice refs generated |
-| Track D — GPU services | ⚠️ STARTING | Ollama/A1111/Wan/MuseTalk up; Chatterbox TTS venv being set up |
+| Track D — GPU services | ⚠️ IN PROGRESS | Ollama ✅ A1111 ✅ Chatterbox ✅ Wan 🔄 (model downloading ~25GB) MuseTalk pending |
 | Track E — Compliance sign-off | ❌ PENDING | Operator hasn't signed off |
 
 Track B LoRAs are real trained weights (37 MB each, in git via LFS). Voice reference files are
 gTTS bootstrap WAVs — acceptable for pipeline runs, replace with recorded child voices for
-brand-accurate results. All services except Chatterbox TTS are healthy.
+brand-accurate results.
+
+Pipeline has been tested through fetch → transcribe → analyze → adapt → plan → render_character → synthesize_voice. Wan2.2-I2V-A14B is the next blocker (model download in progress).
 
 ---
 
@@ -159,13 +161,18 @@ the SD prompt. Keep it false for real runs; strict readiness fails placeholder L
 Each GPU service uses an **isolated venv that inherits system torch 2.8.0+cu128** via
 `python3 -m venv --system-site-packages`. This avoids cross-service dependency conflicts.
 
-| Venv | Purpose |
-|---|---|
-| `/workspace/video_me/.venv` | Pipeline orchestration + tests only (no heavy ML) |
-| `/workspace/venv` | sd-scripts LoRA training |
-| `/workspace/.venv_chatterbox` | Chatterbox TTS server |
-| AUTOMATIC1111 self-managed venv | SD rendering (leave untouched) |
-| MuseTalk conda env (`MuseTalk`) | Lip-sync (leave untouched) |
+| Venv | Purpose | Key extra packages |
+|---|---|---|
+| `/workspace/video_me/.venv` | Pipeline orchestration + tests (no heavy ML) | httpx, faster-whisper, pydantic-settings |
+| `/workspace/venv` | sd-scripts LoRA training | sd-scripts deps |
+| `/workspace/.venv_chatterbox` | Chatterbox TTS server (port 8020) | chatterbox-tts, torchaudio==2.8.0+cu128, resemble-perth |
+| `/workspace/.venv_wan` | Wan2.2 i2v server (port 8030) | decord, diffusers, transformers, accelerate, peft, librosa, moviepy, dashscope, rotary-embedding-torch, python-multipart |
+| AUTOMATIC1111 self-managed venv | SD rendering (port 7860) | leave untouched |
+| MuseTalk conda env (`MuseTalk`) | Lip-sync (port 8040) | leave untouched |
+
+**Chatterbox fix note**: `resemble-perth` requires `pkg_resources` from setuptools<81.
+Run `pip install "setuptools<81"` inside `.venv_chatterbox` if it fails on startup.
+Do NOT install `perth` (wrong package on PyPI); it must be `resemble-perth`.
 
 `start_services.sh` already uses the correct interpreter for each service. Never install
 heavy ML packages into the project `.venv` — keep it lightweight for fast CI.
