@@ -37,7 +37,13 @@ if ! curl -sf http://localhost:7860/sdapi/v1/sd-models >/dev/null 2>&1; then
   if [[ -n "$A1111_SITE_PACKAGES" && -d "$A1111_TAMING_REPO" ]]; then
     printf '%s\n' "$A1111_TAMING_REPO" > "$A1111_SITE_PACKAGES/taming_transformers_repo.pth"
   fi
-  HF_HUB_ENABLE_HF_TRANSFER=0 STABLE_DIFFUSION_REPO="https://github.com/joypaul162/Stability-AI-stablediffusion.git" STABLE_DIFFUSION_COMMIT_HASH="f16630a927e00098b524d687640719e4eb469b76" setsid -f bash webui.sh \
+  # Use --skip-install and direct python launch to avoid git-fetch failures
+  # (Stability-AI/stablediffusion repo was deleted upstream; git fetch hangs startup).
+  # Pre-checkout the expected commit hash so git_clone() returns early.
+  (cd "$A1111_DIR/repositories/stable-diffusion-stability-ai" && \
+    git checkout cf1d67a6fd5ea1aa600c4df58e5b47da45f6bdbf 2>/dev/null || true)
+  nohup "$A1111_DIR/venv/bin/python" "$A1111_DIR/launch.py" \
+    --skip-install \
     -f \
     --api \
     --listen \
