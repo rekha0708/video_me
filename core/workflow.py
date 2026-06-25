@@ -318,7 +318,7 @@ async def _run_shot(
 
     # ── Resume shortcuts ──────────────────────────────────────────────────────
     # If synced.mp4 already exists the whole shot is done — return both artifacts.
-    synced_path = work_dir / "video" / shot.shot_id / "synced.mp4"
+    synced_path = work_dir / "synced" / shot.shot_id / "synced.mp4"
     if opts.resume and synced_path.exists():
         logger.info("Skipping shot %s (synced.mp4 exists)", shot.shot_id)
         clip_path = work_dir / "video" / shot.shot_id / "clip.mp4"
@@ -334,7 +334,7 @@ async def _run_shot(
     if opts.resume and render_png.exists():
         logger.info("Skipping render_character for %s (render_00.png exists)", shot.shot_id)
         from core.models.capabilities import ImageSet
-        render_result = ImageSet(images=[str(render_png)])
+        render_result = ImageSet(member_id=speaker_id, images=[str(render_png)])
     else:
         render_result = await adapters.render.run(
             RenderCharacterRequest(
@@ -621,7 +621,7 @@ def _collect_existing_shot_artifacts(
     clips: list[VideoClip] = []
     audios: list[AudioTrack] = []
     for shot in storyboard.shots:
-        synced_path = work_dir / "video" / shot.shot_id / "synced.mp4"
+        synced_path = work_dir / "synced" / shot.shot_id / "synced.mp4"
         if not synced_path.exists():
             raise RuntimeError(
                 f"Phase 'assemble' requires synced.mp4 for all shots, "
