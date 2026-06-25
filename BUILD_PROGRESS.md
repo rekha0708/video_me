@@ -473,3 +473,81 @@ Notes:
 - `python -m scripts.check_track_b` reports **Track B: READY**.
 
 **Track B is complete as of 2026-06-25.**
+
+---
+
+## Track D — GPU Services Live — 2026-06-25
+
+All five Track D services are now running on the GPU machine.
+
+### Services status
+
+| Service | Port | Venv | Status |
+|---|---|---|---|
+| Ollama (qwen2.5:7b) | 11434 | system | ✅ Running |
+| AUTOMATIC1111 | 7860 | self-managed | ✅ Running |
+| Chatterbox TTS | 8020 | `/workspace/.venv_chatterbox` | ✅ Running |
+| Wan2.2-I2V-A14B | 8030 | `/workspace/.venv_wan` | ✅ Running (model downloaded) |
+| MuseTalk | 8040 | conda `MuseTalk` | ⚠️ Pending |
+
+### Venv isolation strategy (finalised)
+
+Each GPU service uses `python3 -m venv --system-site-packages` so it inherits system
+torch 2.8.0+cu128 without reinstalling it. Only service-specific packages are added.
+
+| Venv | Key extra packages |
+|---|---|
+| `/workspace/.venv_chatterbox` | `chatterbox-tts`, `torchaudio==2.8.0+cu128`, `resemble-perth` |
+| `/workspace/.venv_wan` | `decord`, `diffusers`, `transformers`, `accelerate`, `peft`, `librosa`, `moviepy`, `dashscope`, `rotary-embedding-torch`, `python-multipart` |
+
+### Dependency fixes required to reach this state
+
+| Issue | Root cause | Fix |
+|---|---|---|
+| chatterbox import crash (`ncclCommResume`) | pip torch 2.12.1 vs system NCCL | Created `.venv_chatterbox` with `--system-site-packages` |
+| `resemble-perth` NoneType error | `pkg_resources` removed in setuptools≥81 | `pip install "setuptools<81"` inside `.venv_chatterbox` |
+| Wan 500: `No module named 'decord'` | `wan/__init__.py` imports `decord` at load time | Created `.venv_wan`, installed `decord` |
+| Wan 500: form data error | `python-multipart` missing | `pip install python-multipart` in `.venv_wan` |
+| Wan 500: `No module named 'diffusers'` | Full dep chain not installed | Installed all Wan2.2 deps in `.venv_wan` |
+| Wan 500: model weights missing | `Wan2.2-I2V-A14B/` dir existed but was empty | Downloaded via `HF_HUB_DISABLE_XET=1` + urllib streaming (~130 GB) |
+| yt-dlp JS runtime error | yt-dlp 2026.06.09 requires Node.js | `apt install nodejs` + `--js-runtimes node` flag |
+| Pipeline `.venv` bloated (17 GB) | `chatterbox-tts` accidentally installed there | Uninstalled chatterbox + all ML deps; venv back to 2.8 GB |
+| analyze_content health check fails | `openai` removed during venv cleanup | `pip install openai` — needed for OpenAI-compat Ollama calls |
+
+### Wan2.2-I2V-A14B model download notes
+
+- Total size: ~130 GB (`high_noise_model` 54 GB + `low_noise_model` 54 GB + T5 encoder + VAE)
+- HuggingFace xet protocol hits MooseFS burst-write quota → use `HF_HUB_DISABLE_XET=1` or
+  direct `urllib.request` streaming with HTTP Range resume to work around it
+- `aria2c --file-allocation=none` works but requires fresh CDN URLs on each retry
+- Download command that works: streaming Python script appending in chunks with `Range: bytes=N-`
+
+### Pipeline end-to-end test (2026-06-25)
+
+Test video: "Everybody's Free (To Wear Sunscreen)" — https://www.youtube.com/watch?v=sTJ7AzBIJoI
+(5-min spoken-word piece; 81 transcription segments; topic: life advice / sunscreen)
+
+Stages confirmed working:
+- ✅ `fetch_media` — yt-dlp + Node.js runtime
+- ✅ `transcribe` — faster-whisper CUDA, 81 segments detected
+- ✅ `analyze_content` — qwen2.5:7b, topic + concept extracted
+- ✅ `adapt_script` — 4 scenes, 8–10 lines
+- ✅ `plan_shots` — 8–10 shots planned
+- ✅ `render_character` — A1111 SD API, real LoRAs loaded (no placeholder)
+- ✅ `synthesize_voice` — Chatterbox TTS, 2–3s clips per shot
+- 🔄 `generate_video` — Wan2.2-I2V-A14B (model now downloaded, pipeline run 5 in progress)
+- ⏳ `lip_sync` — not yet reached
+- ⏳ `assemble_video` — not yet reached
+- ⏳ `publish` — not yet reached
+
+### New developer tools added
+
+- `run_pipeline.py` — CLI to run the full pipeline from a URL or local file path
+- `download_video.py` — standalone yt-dlp wrapper with cookie/auth support; download
+  first, then pass the local `.mp4` to `run_pipeline.py`
+
+Two-step workflow:
+```bash
+python download_video.py <url> --output-dir /workspace/downloads/
+python run_pipeline.py /workspace/downloads/video.mp4 --rights-cleared --whisper-device cuda
+```

@@ -19,14 +19,14 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 | Phase 1 — Full pipeline A1.0–A1.12 | ✅ COMPLETE (code) | Wan2.2-I2V-A14B model finishing download |
 | Phase 2 — Critic loop A2.x | ✅ COMPLETE (code) | Real VLM service needed for real judgment |
 | Track B — LoRAs + voice files | ✅ READY | Real LoRAs trained (1000 steps, rank 32, SD 1.5); voice refs generated |
-| Track D — GPU services | ⚠️ IN PROGRESS | Ollama ✅ A1111 ✅ Chatterbox ✅ Wan 🔄 (model downloading ~25GB) MuseTalk pending |
+| Track D — GPU services | ⚠️ IN PROGRESS | Ollama ✅ A1111 ✅ Chatterbox ✅ Wan ✅ (model downloaded, ~130GB) MuseTalk pending |
 | Track E — Compliance sign-off | ❌ PENDING | Operator hasn't signed off |
 
 Track B LoRAs are real trained weights (37 MB each, in git via LFS). Voice reference files are
 gTTS bootstrap WAVs — acceptable for pipeline runs, replace with recorded child voices for
 brand-accurate results.
 
-Pipeline has been tested through fetch → transcribe → analyze → adapt → plan → render_character → synthesize_voice. Wan2.2-I2V-A14B is the next blocker (model download in progress).
+Pipeline has been tested through fetch → transcribe → analyze → adapt → plan → render_character → synthesize_voice → generate_video (Wan). Full end-to-end run in progress (run 5).
 
 ---
 
