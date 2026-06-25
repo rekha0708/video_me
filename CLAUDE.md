@@ -9,21 +9,22 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 
 ---
 
-## Current state (as of 2026-06-20)
+## Current state (as of 2026-06-25)
 
-**Phase 2 code is complete. 313 tests pass. Real end-to-end output is blocked on real Track B LoRAs + Track D services.**
+**Phase 2 code is complete. 313 tests pass. Track B is READY. Track D services are starting up.**
 
 | Track / Phase | Status | Blocker |
 |---|---|---|
 | Phase 0 — Skeleton | ✅ COMPLETE | — |
-| Phase 1 — Full pipeline A1.0–A1.12 | ✅ COMPLETE (code) | Track B + Track D files/services needed to run |
+| Phase 1 — Full pipeline A1.0–A1.12 | ✅ COMPLETE (code) | Track D services must be running |
 | Phase 2 — Critic loop A2.x | ✅ COMPLETE (code) | Real VLM service needed for real judgment |
-| Track B — LoRAs + voice files | ⚠️ READY_FOR_CODE_TESTS | placeholder LoRAs; provisional voices |
-| Track D — GPU services | ❌ NOT RUNNING | Budget decision #10 pending; no GPU provisioned |
+| Track B — LoRAs + voice files | ✅ READY | Real LoRAs trained (1000 steps, rank 32, SD 1.5); voice refs generated |
+| Track D — GPU services | ⚠️ STARTING | Ollama/A1111/Wan/MuseTalk up; Chatterbox TTS venv being set up |
 | Track E — Compliance sign-off | ❌ PENDING | Operator hasn't signed off |
 
-Track B file-gate checks pass locally for code tests, but the LoRA files are tiny placeholders and
-will not load in AUTOMATIC1111. All model/service code paths are tested with mocks.
+Track B LoRAs are real trained weights (37 MB each, in git via LFS). Voice reference files are
+gTTS bootstrap WAVs — acceptable for pipeline runs, replace with recorded child voices for
+brand-accurate results. All services except Chatterbox TTS are healthy.
 
 ---
 
@@ -142,8 +143,7 @@ Quick check:
 ```bash
 python -m scripts.check_track_b
 ```
-Expected local code-test status: `Track B: READY_FOR_CODE_TESTS`. Real rendering still requires
-trained LoRAs replacing the placeholder files.
+Current status: `Track B: READY` (real trained LoRAs + bootstrap voice refs in place).
 
 Temporary placeholder-LoRA render smoke tests are opt-in:
 ```bash
@@ -151,6 +151,24 @@ export VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA=true
 ```
 When this is true, explicit `TEST-ONLY placeholder` LoRA files are accepted and omitted from
 the SD prompt. Keep it false for real runs; strict readiness fails placeholder LoRAs.
+
+---
+
+## Venv strategy (as of 2026-06-25)
+
+Each GPU service uses an **isolated venv that inherits system torch 2.8.0+cu128** via
+`python3 -m venv --system-site-packages`. This avoids cross-service dependency conflicts.
+
+| Venv | Purpose |
+|---|---|
+| `/workspace/video_me/.venv` | Pipeline orchestration + tests only (no heavy ML) |
+| `/workspace/venv` | sd-scripts LoRA training |
+| `/workspace/.venv_chatterbox` | Chatterbox TTS server |
+| AUTOMATIC1111 self-managed venv | SD rendering (leave untouched) |
+| MuseTalk conda env (`MuseTalk`) | Lip-sync (leave untouched) |
+
+`start_services.sh` already uses the correct interpreter for each service. Never install
+heavy ML packages into the project `.venv` — keep it lightweight for fast CI.
 
 ---
 

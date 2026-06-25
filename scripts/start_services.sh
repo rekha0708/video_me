@@ -55,7 +55,14 @@ cd "$ROOT_DIR"
 log "Starting Chatterbox TTS (port 8020)"
 if ! curl -sf http://localhost:8020/health >/dev/null 2>&1; then
   cd "$ROOT_DIR"
-  if [[ -f ".venv/bin/python" ]]; then UVICORN=".venv/bin/uvicorn"; else UVICORN="uvicorn"; fi
+  # Use the dedicated chatterbox venv (inherits system CUDA/torch; avoids dep conflicts)
+  if [[ -f "$WORKSPACE/.venv_chatterbox/bin/uvicorn" ]]; then
+    UVICORN="$WORKSPACE/.venv_chatterbox/bin/uvicorn"
+  elif [[ -f ".venv/bin/uvicorn" ]]; then
+    UVICORN=".venv/bin/uvicorn"
+  else
+    UVICORN="uvicorn"
+  fi
   setsid -f "$UVICORN" services.chatterbox_server:app \
     --host 0.0.0.0 --port 8020 >"$LOG_DIR/chatterbox.log" 2>&1 &
   ok "Chatterbox TTS starting (log: $LOG_DIR/chatterbox.log)"

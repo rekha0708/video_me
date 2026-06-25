@@ -459,14 +459,17 @@ Training details:
 
 Notes:
 
-- The trained `.safetensors` files are intentionally ignored by git; keep them on the GPU
-  workspace or move them to the future asset store.
-- Venv workaround: use the project `.venv` for normal pipeline commands, but use
-  `/workspace/venv` for local sd-scripts LoRA training. The project `.venv` currently has a
-  Torch/CUDA mismatch for training; the successful run used `/workspace/venv` with
-  Torch 2.8.0+cu128 and sd-scripts requirements installed from
-  `/workspace/sd-scripts/requirements.txt`.
-- `python -m scripts.check_track_b` now reports LoRA checks as OK, but Track B remains
-  incomplete because `voices/kids_duo/max.wav` and `voices/kids_duo/zoe.wav` are missing.
+- The final LoRA `.safetensors` files are now tracked in git via Git LFS. Intermediate
+  checkpoints (`*-step*.safetensors`) and the smoke-test file remain gitignored.
+- Venv strategy (decided 2026-06-25): each GPU service gets an isolated venv that inherits
+  system torch 2.8.0+cu128 via `python3 -m venv --system-site-packages`. This avoids
+  cross-service dep conflicts.
+  - `/workspace/venv` — sd-scripts LoRA training
+  - `/workspace/.venv_chatterbox` — Chatterbox TTS server
+  - `/workspace/video_me/.venv` — pipeline orchestration code only (no heavy ML deps)
+- `voices/kids_duo/max.wav` and `voices/kids_duo/zoe.wav` were generated on 2026-06-25
+  using gTTS as bootstrap reference voices. These are plain English voices; replace with
+  child-voice recordings for brand-accurate results.
+- `python -m scripts.check_track_b` reports **Track B: READY**.
 
-Next Track B action: create the two reference voice WAVs, then rerun `python -m scripts.check_track_b`.
+**Track B is complete as of 2026-06-25.**
