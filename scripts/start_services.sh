@@ -74,7 +74,14 @@ fi
 log "Starting Wan2.2 image-to-video (port 8030)"
 if ! curl -sf http://localhost:8030/health >/dev/null 2>&1; then
   cd "$ROOT_DIR"
-  if [[ -f ".venv/bin/python" ]]; then UVICORN=".venv/bin/uvicorn"; else UVICORN="uvicorn"; fi
+  # Use dedicated Wan venv (inherits system CUDA/torch; has decord + imageio)
+  if [[ -f "$WORKSPACE/.venv_wan/bin/uvicorn" ]]; then
+    UVICORN="$WORKSPACE/.venv_wan/bin/uvicorn"
+  elif [[ -f ".venv/bin/uvicorn" ]]; then
+    UVICORN=".venv/bin/uvicorn"
+  else
+    UVICORN="uvicorn"
+  fi
   WAN_DIR="$WORKSPACE/Wan2.2" WAN_MODEL_DIR="$WORKSPACE/Wan2.2-I2V-A14B" \
   setsid -f "$UVICORN" services.wan_server:app \
     --host 0.0.0.0 --port 8030 >"$LOG_DIR/wan.log" 2>&1 &
