@@ -71,8 +71,9 @@ async def generate(
     if not WAN_DIR.exists() or not WAN_MODEL_DIR.exists():
         raise HTTPException(503, detail="Wan2.2 not set up — check WAN_DIR and WAN_MODEL_DIR")
 
-    # Wan generates frames in multiples of 8; compute total frame count
-    num_frames = max(8, round(duration_sec * fps / 8) * 8)
+    # Wan requires frame_num = 4n+1 (e.g. 5, 9, 13, 17, 21, ...)
+    n = max(1, round(duration_sec * fps / 4))
+    num_frames = 4 * n + 1
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir_path = Path(tmpdir)
@@ -88,8 +89,6 @@ async def generate(
             "--task", "i2v-A14B",
             "--size", _DEFAULT_SIZE,
             "--ckpt_dir", str(WAN_MODEL_DIR),
-            "--offload_model", "True",
-            "--convert_model_dtype",
             "--image", str(img_path),
             "--prompt", prompt,
             "--frame_num", str(num_frames),
@@ -102,7 +101,7 @@ async def generate(
             capture_output=True,
             text=True,
             cwd=str(WAN_DIR),
-            timeout=600,
+            timeout=1800,
         )
 
         if result.returncode != 0:

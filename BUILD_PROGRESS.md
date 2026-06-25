@@ -520,7 +520,28 @@ torch 2.8.0+cu128 without reinstalling it. Only service-specific packages are ad
 - HuggingFace xet protocol hits MooseFS burst-write quota → use `HF_HUB_DISABLE_XET=1` or
   direct `urllib.request` streaming with HTTP Range resume to work around it
 - `aria2c --file-allocation=none` works but requires fresh CDN URLs on each retry
-- Download command that works: streaming Python script appending in chunks with `Range: bytes=N-`
+- **WARNING: Range-based resume downloads corrupt files** — extra bytes get appended when resuming,
+  making zip/safetensors headers point to wrong offsets. Always download fresh without resume.
+- Download command that works: `HF_HUB_DISABLE_XET=1 python scripts/redownload_t5.py` (streaming
+  urllib, no resume, temp-file → rename-on-success pattern)
+
+### Wan generate_video — fixes applied 2026-06-25
+
+Three root causes of the Wan 500 errors, all fixed:
+
+| Issue | Root cause | Fix |
+|---|---|---|
+| Wan 500: `PytorchStreamReader failed reading zip archive` | `models_t5_umt5-xxl-enc-bf16.pth` corrupted by resume download (file was 3.5 MB larger than expected 11,361,920,418 bytes; central dir OK but local file headers wrong) | Deleted and re-downloaded fresh via `scripts/redownload_t5.py`; validated with zipfile.ZipFile read test |
+| Wan 500: safetensors size mismatch | `low_noise_model/00004` and `low_noise_model/00005` each 16,384 bytes too large (same resume-append corruption); detected by comparing header-declared `data_offsets` end to actual file size | Deleted and re-downloaded both shards fresh |
+| Wan 500: `assert FLASH_ATTN_2_AVAILABLE` | `flash-attn` not installed in `.venv_wan`; Wan2.2 has no SDPA fallback | `pip install flash-attn --no-build-isolation` in `.venv_wan` (compiled from source, took ~5 min; installed 2.8.3.post1) |
+
+Two code fixes also applied:
+
+| File | Fix |
+|---|---|
+| `services/wan_server.py` | `frame_num` formula changed from `round(dur*fps/8)*8` (multiples of 8) to `4*max(1,round(dur*fps/4))+1` (4n+1 as generate.py requires) |
+| `services/wan_server.py` | Removed `--offload_model True` (unnecessary on A100 80GB; adds ~3-4× latency moving layers CPU↔GPU); subprocess timeout raised from 600s → 1800s |
+| `adapters/generate_video/wan_adapter.py` | HTTP client timeout raised from 300s → 1900s; added `logger.error` on 4xx/5xx to log response body (previously 500s showed no detail) |
 
 ### Pipeline end-to-end test (2026-06-25)
 
@@ -535,10 +556,20 @@ Stages confirmed working:
 - ✅ `plan_shots` — 8–10 shots planned
 - ✅ `render_character` — A1111 SD API, real LoRAs loaded (no placeholder)
 - ✅ `synthesize_voice` — Chatterbox TTS, 2–3s clips per shot
-- 🔄 `generate_video` — Wan2.2-I2V-A14B (model now downloaded, pipeline run 5 in progress)
-- ⏳ `lip_sync` — not yet reached
+- ✅ `generate_video` — Wan2.2-I2V-A14B, HTTP 200, 1.6 MB MP4 in 753s (4.5 min load + ~8 min inference)
+- ⏳ `lip_sync` — not yet reached (MuseTalk pending)
 - ⏳ `assemble_video` — not yet reached
 - ⏳ `publish` — not yet reached
+
+**Wan timing profile (single shot, cold start):**
+- Model load to VRAM: ~4.5 min (68.9 GB loaded; T5 11GB + two ~27GB DiT models)
+- High-noise DiT inference: ~1.5 min at 100% A100
+- Transition / low-noise model load: ~2 min
+- Low-noise DiT inference: ~2.5 min at 100% A100
+- VAE decode + video write: ~2 min
+- **Total per shot: ~12-13 min cold. Architectural note:** subprocess is spawned per request,
+  so the model is reloaded from disk each time. For a 9-shot pipeline this adds ~1.5–2 hrs of
+  overhead. Phase 3 or operator config decision: keep the model in-process for multi-shot runs.
 
 ### New developer tools added
 

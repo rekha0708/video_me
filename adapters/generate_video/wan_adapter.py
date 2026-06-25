@@ -126,7 +126,7 @@ class WanAdapter(GenerateVideo):
         """POST to the Wan service; return raw MP4 bytes."""
         import httpx
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        async with httpx.AsyncClient(timeout=1900.0) as client:
             with image_path.open("rb") as img_file:
                 resp = await client.post(
                     f"{self._base_url}/generate",
@@ -136,6 +136,12 @@ class WanAdapter(GenerateVideo):
                         "fps": str(self._fps),
                     },
                     files={"image": (image_path.name, img_file, "image/png")},
+                )
+            if resp.status_code >= 400:
+                logger.error(
+                    "Wan service error %s: %s",
+                    resp.status_code,
+                    resp.text[:1000],
                 )
             resp.raise_for_status()
         return resp.content
