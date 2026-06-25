@@ -49,6 +49,33 @@ class YtDlpAdapter(FetchMedia):
     async def run(self, req: FetchMediaRequest) -> FetchMediaResult:
         self.work_dir.mkdir(parents=True, exist_ok=True)
 
+        # Local file path passed as file:// URI — skip yt-dlp entirely
+        if req.source_url.startswith("file://"):
+            local_path = Path(req.source_url[7:])
+            if not local_path.exists():
+                raise FileNotFoundError(f"Local video file not found: {local_path}")
+            video_path = self.work_dir / "video.mp4"
+            import shutil as _shutil
+            _shutil.copy2(local_path, video_path)
+            audio_path = await self._extract_audio(video_path)
+            log_event(logger, "fetch_media_local_file", path=str(local_path))
+            proc = await asyncio.create_subprocess_exec(
+                "ffprobe", "-v", "quiet", "-print_format", "json", "-show_format",
+                str(video_path),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            duration_sec = 0.0
+            if proc.returncode == 0:
+                import json as _json
+                duration_sec = float(_json.loads(stdout).get("format", {}).get("duration", 0))
+            return FetchMediaResult(
+                video_uri=str(video_path),
+                audio_uri=str(audio_path),
+                duration_sec=duration_sec,
+                source_url=req.source_url,
+            )
+
         log_event(
             logger,
             "fetch_media_tos_note",

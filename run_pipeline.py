@@ -22,6 +22,7 @@ Ideal source video length for a first trial:
 import argparse
 import asyncio
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -40,7 +41,13 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    p.add_argument("url", help="YouTube / Instagram / TikTok video URL")
+    p.add_argument(
+        "url",
+        help=(
+            "YouTube / Instagram / TikTok video URL, "
+            "OR a local file path (e.g. /workspace/downloads/video.mp4)"
+        ),
+    )
     p.add_argument(
         "--critique",
         action="store_true",
@@ -125,7 +132,13 @@ async def main() -> int:
     if args.review_dir:
         config.settings.review_dir = args.review_dir
 
-    print_banner(args.url, args.critique, args.rights_cleared)
+    # Convert local file paths to file:// URI so fetch_media skips yt-dlp
+    source = args.url
+    if os.path.exists(source):
+        source = Path(source).resolve().as_uri()
+        logger.info("Local file detected — using file:// URI: %s", source)
+
+    print_banner(source, args.critique, args.rights_cleared)
 
     # ── Run ───────────────────────────────────────────────────────────────────
     start = time.perf_counter()
@@ -135,7 +148,7 @@ async def main() -> int:
             from core.workflow import run_with_critique
             logger.info("Starting Phase 2 critique pipeline ...")
             job = await run_with_critique(
-                source_url=args.url,
+                source_url=source,
                 rights_cleared=args.rights_cleared,
                 app_config=config,
             )
@@ -143,7 +156,7 @@ async def main() -> int:
             from core.workflow import run_pipeline_job
             logger.info("Starting Phase 1 pipeline ...")
             job = await run_pipeline_job(
-                source_url=args.url,
+                source_url=source,
                 rights_cleared=args.rights_cleared,
                 app_config=config,
             )
