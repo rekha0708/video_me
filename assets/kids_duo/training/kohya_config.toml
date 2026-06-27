@@ -2,15 +2,20 @@
 # Requires: kohya_ss installed and AUTOMATIC1111 running with the base model loaded
 #
 # Usage:
-#   accelerate launch train_network.py --config_file assets/kids_duo/training/kohya_config.toml
-#
-# Run twice — once for Max, once for Zoe (change [dataset.general] paths and output_name each time)
+#   accelerate launch train_network.py --config_file assets/kids_duo/training/kohya_config.toml <-- older model
+#   accelerate launch flux_train_network.py --config_file assets/kids_duo/training/kohya_config.toml. <-- new model
+# Run this for every character and model (change [dataset.general] paths and output_name each time)
+
+#use this for lower model machine
+#[model_arguments]
+#pretrained_model_name_or_path = "models/Stable-diffusion/v1-5-pruned-emaonly.safetensors"
 
 [model_arguments]
-pretrained_model_name_or_path = "models/Stable-diffusion/v1-5-pruned-emaonly.safetensors"
-# Use whatever cartoon-friendly base you have. Good options:
-#   - toonyou, cartoonStyle, CuteCartoonAF (civitai)
-#   - v1-5 works too but a cartoon-specialized base gives cleaner results
+pretrained_model_name_or_path = "models/Flux/flux1-dev.safetensors"
+clip_l = "models/Flux/clip_l.safetensors"
+t5xxl = "models/Flux/t5xxl_fp16.safetensors"
+ae = "models/Flux/ae.safetensors"
+
 
 [output_arguments]
 output_dir           = "loras/"
@@ -19,23 +24,25 @@ save_model_as        = "safetensors"
 save_every_n_epochs  = 5
 
 [training_arguments]
-max_train_epochs     = 20
-train_batch_size     = 1
+max_train_epochs     = 25
+train_batch_size     = 16
 gradient_accumulation_steps = 1
 learning_rate        = 1e-4
 unet_lr              = 1e-4
 text_encoder_lr      = 5e-5
 lr_scheduler         = "cosine_with_restarts"
 lr_warmup_steps      = 50
-optimizer_type       = "AdamW8bit"
-mixed_precision      = "fp16"
+optimizer_type       = "AdamW" # use AdamW8bit for lower vram cards
+mixed_precision      = "bf16" # H200 tensors natively favor Bfloat16. It has a wider dynamic range than FP16, preventing underflow/overflow artifacts during high-end training.
+save_precision       = "bf16"
 seed                 = 42
-clip_skip            = 2
-xformers             = true
-gradient_checkpointing = true
+#clip_skip            = 2 # not used bu flux
+#xformers            = true # Xformers is outdated for datacenter hardware.
+flash_attn           = true # FlashAttention-2 is drastically faster on Hopper architectures.
+#gradient_checkpointing = true # Disabling this stops the GPU from discarding cache. It will use more VRAM but will speed up training by roughly 30%.
 
 [network_arguments]
-network_module = "networks.lora"
+network_module = "networks.lora_flux" # "networks.lora"
 network_dim    = 32      # 32-64 is a good range for character LoRAs
 network_alpha  = 16      # half of network_dim is standard
 
@@ -43,31 +50,34 @@ network_alpha  = 16      # half of network_dim is standard
 cache_latents = true
 
 [[dataset.general]]
-resolution       = 768
-batch_size       = 1
+resolution       = 1024
+min_bucket_reso  = 768
+max_bucket_reso  = 2048
+batch_size       = 16 # can be set to 16 also
 keep_tokens      = 1
 
 [[dataset.general.subsets]]
 # MAX — point at your generated + curated images folder
-image_dir        = "assets/kids_duo/training/images/max"
+image_dir         = "assets/kids_duo/training/images/max"
 caption_extension = ".txt"
-num_repeats      = 15    # with 20 images: 20 × 15 = 300 steps/epoch → ~6000 total
+num_repeats       = 60    # with 20 images: 20 × 30 = 600 steps/epoch → ~6000 total
 
 # ── For Zoe run: comment above, uncomment below ──
 # [[dataset.general.subsets]]
 # image_dir        = "assets/kids_duo/training/images/zoe"
 # caption_extension = ".txt"
-# num_repeats      = 15
+# num_repeats      = 60
 
 [sample_prompt_arguments]
-sample_every_n_epochs = 5
-sample_sampler        = "dpm_2m"
+sample_every_n_epochs   = 5
+sample_sampler          =  "euler" # "dpm_2m"
+sample_scheduler        = "normal"
 
 [[sample_prompts]]
 # Quick sanity check during training — swap trigger for Zoe run
 prompt = "kids_duo_max, 5-year-old cartoon boy, blue and white striped t-shirt, pointing finger up, teaching expression, soft cartoon illustration, clean white background"
-negative_prompt = "blurry, deformed, photorealistic, 3d render, watermark"
-width  = 768
-height = 768
-steps  = 28
-scale  = 7.0
+# negative_prompt = "blurry, deformed, photorealistic, 3d render, watermark" # not needed for Flux
+width  = 1024
+height = 1024
+steps  = 20
+scale  = 3.5
