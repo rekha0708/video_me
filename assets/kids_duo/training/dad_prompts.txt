@@ -1,0 +1,73 @@
+# Dad — LoRA Training Image Generation Prompts
+# Supporting character for kids_duo cast (Max and Zoe's father)
+#
+# CHARACTER DESIGN:
+# - Age: Mid-30s adult man, friendly and playful presence
+# - Face: Square friendly face, light olive skin tone, warm hazel eyes
+# - Hair: Short neat dark brown hair with slight wave, trimmed beard
+# - Outfit: Casual modern dad - navy blue henley shirt, khaki pants, brown casual shoes
+# - Expression: Encouraging, playful, warm grin
+# - Style: Realistic proportions (adult vs. child proportions), soft friendly illustration style
+#
+# SHARED POSITIVE SUFFIX (append to every prompt):
+#   soft cartoon illustration, 2D flat shading, children's educational character design,
+#   clean white background, bright cheerful colors, crisp clean line art, high quality,
+#   family-friendly, warm lighting
+#
+# SHARED NEGATIVE PROMPT:
+#   blurry, low quality, deformed, ugly, photorealistic, 3d render, watermark, text,
+#   extra fingers, missing limbs, bad anatomy, different outfit, facial hair style change,
+#   harsh lighting, dark colors, child proportions, inappropriate clothing
+#
+# SETTINGS: Guidance Scale 7  |  Steps 25  |  Dimensions 768×768
+# Generate 1 image per prompt, save as: dad_001.png through dad_020.png
+# ──────────────────────────────────────────────────────────────────────
+
+# POSES & ANGLES — full body
+
+[001] full body front view, kids_duo_dad, mid-30s cartoon adult man, square friendly face, light olive skin tone, warm hazel eyes, short neat dark brown hair with slight wave, trimmed beard, navy blue henley shirt, khaki pants, brown casual shoes, warm encouraging grin, arms relaxed at sides, adult proportions (taller than children, broader shoulders, mature face)
+
+[002] full body 3/4 view, kids_duo_dad, mid-30s cartoon adult man, square friendly face, light olive skin tone, warm hazel eyes, short dark hair, trimmed beard, navy blue henley shirt, khaki pants, brown shoes, standing with hands in pockets, friendly casual stance, warm smile
+
+[003] full body side profile view, kids_duo_dad, mid-30s cartoon adult man, light olive skin tone, short dark hair visible, trimmed beard profile, navy blue henley shirt, khaki pants, brown shoes, adult proportions, standing naturally
+
+[004] full body front view, kids_duo_dad, mid-30s cartoon adult man, light olive skin tone, short dark hair, trimmed beard, navy henley, khaki pants, kneeling down on one knee to child height, one arm extended in welcoming gesture, playful encouraging smile
+
+[005] full body front view, kids_duo_dad, mid-30s cartoon adult man, light olive skin tone, short dark hair, trimmed beard, navy henley, khaki pants, hands on hips in playful superhero pose, big proud grin, standing tall
+
+[006] full body front view, kids_duo_dad, mid-30s cartoon adult man, light olive skin tone, short dark hair, trimmed beard, navy henley, khaki pants, sitting cross-legged on ground, hands resting on knees, attentive listening expression, warm patient smile
+
+[007] full body front view, kids_duo_dad, mid-30s cartoon adult man, light olive skin tone, short dark hair, trimmed beard, navy henley, khaki pants, bending forward with arms spread wide in playful airplane pose, fun playful expression
+
+# EXPRESSIONS — waist up
+
+[008] waist up front view, kids_duo_dad, mid-30s cartoon adult man, square friendly face, light olive skin tone, warm hazel eyes with laugh lines, short neat dark brown hair, trimmed beard, navy blue henley shirt, warm encouraging grin, arms crossed comfortably, friendly approachable expression
+
+[009] waist up front view, kids_duo_dad, mid-30s cartoon adult man, square friendly face, light olive skin tone, warm hazel eyes, short dark hair, trimmed beard, navy henley, giving enthusiastic thumbs up with one hand, big proud smile, eyes bright with encouragement
+
+[010] waist up 3/4 view, kids_duo_dad, mid-30s cartoon adult man, square friendly face, light olive skin tone, warm hazel eyes, short dark hair, trimmed beard, navy henley, thoughtful expression, one hand stroking beard, slight contemplative smile
+
+[011] waist up front view, kids_duo_dad, mid-30s cartoon adult man, square friendly face, light olive skin tone, warm hazel eyes, short dark hair, trimmed beard, navy henley, hands cupped together as if holding something small, curious interested expression, leaning slightly forward
+
+[012] waist up front view, kids_duo_dad, mid-30s cartoon adult man, square friendly face, light olive skin tone, warm hazel eyes, short dark hair, trimmed beard, navy henley, both hands raised in playful silly shrug gesture, fun playful grin, eyebrows raised
+
+[013] waist up front view, kids_duo_dad, mid-30s cartoon adult man, square friendly face, light olive skin tone, warm hazel eyes, short dark hair, trimmed beard, navy henley, one finger raised in gentle teaching gesture, warm patient explaining smile
+
+[014] waist up 3/4 view, kids_duo_dad, mid-30s cartoon adult man, square friendly face, light olive skin tone, warm hazel eyes, short dark hair, trimmed beard, navy henley, waving hello with friendly smile, welcoming expression, hand raised
+
+[015] waist up front view, kids_duo_dad, mid-30s cartoon adult man, square friendly face, light olive skin tone, warm hazel eyes, short dark hair, trimmed beard, navy henley, clapping hands together in front, proud excited expression, big encouraging grin
+
+# CLOSE-UP FACES — for expression diversity
+
+[016] close-up face portrait, kids_duo_dad, mid-30s cartoon adult man, square friendly face, light olive skin tone, warm hazel eyes with laugh lines, short neat dark brown hair, trimmed beard, warm encouraging grin, looking directly forward, soft cartoon shading, mature adult face
+
+[017] close-up face portrait, kids_duo_dad, mid-30s cartoon adult man, square friendly face, light olive skin tone, warm hazel eyes, short dark hair, trimmed beard, big proud smile, eyes crinkled with joy, eyebrows raised with excitement
+
+[018] close-up face portrait, kids_duo_dad, mid-30s cartoon adult man, square friendly face, light olive skin tone, warm hazel eyes, short dark hair, trimmed beard, playful silly expression, tongue slightly out, one eye winking, fun dad energy
+
+[019] close-up face portrait, kids_duo_dad, mid-30s cartoon adult man, square friendly face, light olive skin tone, warm hazel eyes, short dark hair, trimmed beard, gentle patient expression, slight head tilt, attentive listening face, warm caring smile
+
+# ACTION SHOT
+
+[020] waist up front view, kids_duo_dad, mid-30s cartoon adult man, light olive skin tone, short dark hair, trimmed beard, navy henley, both arms spread wide in big welcoming hug gesture, big warm genuine smile, eyes full of love and encouragement
+

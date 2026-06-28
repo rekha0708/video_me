@@ -1,0 +1,73 @@
+# Mom — LoRA Training Image Generation Prompts
+# Supporting character for kids_duo cast (Max and Zoe's mother)
+#
+# CHARACTER DESIGN:
+# - Age: Mid-30s adult woman, warm and nurturing presence
+# - Face: Gentle oval face, warm medium-brown skin tone, kind brown eyes
+# - Hair: Long dark brown hair in a neat low ponytail with side-swept bangs
+# - Outfit: Casual modern mom - soft lavender cardigan over white blouse, blue jeans, comfortable flats
+# - Expression: Patient, encouraging, warm smile
+# - Style: Realistic proportions (adult vs. child proportions), soft friendly illustration style
+#
+# SHARED POSITIVE SUFFIX (append to every prompt):
+#   soft cartoon illustration, 2D flat shading, children's educational character design,
+#   clean white background, bright cheerful colors, crisp clean line art, high quality,
+#   family-friendly, warm lighting
+#
+# SHARED NEGATIVE PROMPT:
+#   blurry, low quality, deformed, ugly, photorealistic, 3d render, watermark, text,
+#   extra fingers, missing limbs, bad anatomy, different outfit, different hair style,
+#   harsh lighting, dark colors, child proportions, inappropriate clothing
+#
+# SETTINGS: Guidance Scale 7  |  Steps 25  |  Dimensions 768×768
+# Generate 1 image per prompt, save as: mom_001.png through mom_020.png
+# ──────────────────────────────────────────────────────────────────────
+
+# POSES & ANGLES — full body
+
+[001] full body front view, kids_duo_mom, mid-30s cartoon adult woman, gentle oval face, warm medium-brown skin tone, kind brown eyes, long dark brown hair in neat low ponytail with side-swept bangs, soft lavender cardigan over white blouse, blue jeans, comfortable gray flats, warm nurturing smile, arms relaxed at sides, adult proportions (taller than children, mature face)
+
+[002] full body 3/4 view, kids_duo_mom, mid-30s cartoon adult woman, gentle oval face, warm medium-brown skin tone, kind brown eyes, long dark brown hair in neat low ponytail, soft lavender cardigan, white blouse, blue jeans, gray flats, standing with slight gentle lean, patient expression
+
+[003] full body side profile view, kids_duo_mom, mid-30s cartoon adult woman, warm medium-brown skin tone, long dark brown hair ponytail visible, soft lavender cardigan, white blouse, blue jeans, gray flats, adult proportions, standing naturally
+
+[004] full body front view, kids_duo_mom, mid-30s cartoon adult woman, warm medium-brown skin tone, long dark brown ponytail, lavender cardigan, white blouse, jeans, kneeling down to child height, arms slightly open in welcoming gesture, encouraging gentle smile
+
+[005] full body front view, kids_duo_mom, mid-30s cartoon adult woman, warm medium-brown skin tone, long ponytail, lavender cardigan, white blouse, jeans, hands clasped together in front, proud delighted expression, eyes sparkling with joy
+
+[006] full body front view, kids_duo_mom, mid-30s cartoon adult woman, warm medium-brown skin tone, long ponytail, lavender cardigan, jeans, sitting cross-legged on ground, hands in lap, attentive listening pose, patient warm smile
+
+[007] full body front view, kids_duo_mom, mid-30s cartoon adult woman, warm medium-brown skin tone, long ponytail, lavender cardigan, jeans, bending slightly forward with hands on knees, looking down with gentle caring expression
+
+# EXPRESSIONS — waist up
+
+[008] waist up front view, kids_duo_mom, mid-30s cartoon adult woman, gentle oval face, warm medium-brown skin tone, kind brown eyes with gentle crow's feet, long dark brown hair in ponytail with side-swept bangs, soft lavender cardigan over white blouse, warm nurturing smile, hands together in front, patient expression
+
+[009] waist up front view, kids_duo_mom, mid-30s cartoon adult woman, gentle oval face, warm medium-brown skin tone, kind brown eyes, long ponytail, lavender cardigan, white blouse, proud encouraging smile, one hand raised in gentle clapping gesture, eyes bright with approval
+
+[010] waist up 3/4 view, kids_duo_mom, mid-30s cartoon adult woman, gentle oval face, warm medium-brown skin tone, kind brown eyes, long ponytail, lavender cardigan, white blouse, gentle thoughtful expression, one hand touching chin, listening attentively
+
+[011] waist up front view, kids_duo_mom, mid-30s cartoon adult woman, gentle oval face, warm medium-brown skin tone, kind brown eyes, long ponytail, lavender cardigan, white blouse, holding a children's book open, warm reading smile, eyes looking down at book
+
+[012] waist up front view, kids_duo_mom, mid-30s cartoon adult woman, gentle oval face, warm medium-brown skin tone, kind brown eyes, long ponytail, lavender cardigan, white blouse, hands positioned as if explaining something gently, calm teaching expression
+
+[013] waist up front view, kids_duo_mom, mid-30s cartoon adult woman, gentle oval face, warm medium-brown skin tone, kind brown eyes, long ponytail, lavender cardigan, white blouse, one finger raised in gentle explaining gesture, patient warm smile
+
+[014] waist up 3/4 view, kids_duo_mom, mid-30s cartoon adult woman, gentle oval face, warm medium-brown skin tone, kind brown eyes, long ponytail, lavender cardigan, white blouse, waving hello with gentle smile, welcoming expression
+
+[015] waist up front view, kids_duo_mom, mid-30s cartoon adult woman, gentle oval face, warm medium-brown skin tone, kind brown eyes, long ponytail, lavender cardigan, white blouse, both hands over heart, touched emotional expression, gentle proud smile
+
+# CLOSE-UP FACES — for expression diversity
+
+[016] close-up face portrait, kids_duo_mom, mid-30s cartoon adult woman, gentle oval face, warm medium-brown skin tone, kind brown eyes with gentle crow's feet, long dark brown hair with side-swept bangs, warm nurturing smile, looking directly forward, soft cartoon shading, mature adult face
+
+[017] close-up face portrait, kids_duo_mom, mid-30s cartoon adult woman, gentle oval face, warm medium-brown skin tone, kind brown eyes, long dark hair with bangs, proud delighted expression, eyes bright with joy, big warm smile
+
+[018] close-up face portrait, kids_duo_mom, mid-30s cartoon adult woman, gentle oval face, warm medium-brown skin tone, kind brown eyes, long dark hair with bangs, gentle concerned expression, eyebrows slightly drawn together with care, soft caring smile
+
+[019] close-up face portrait, kids_duo_mom, mid-30s cartoon adult woman, gentle oval face, warm medium-brown skin tone, kind brown eyes, long dark hair with bangs, patient listening expression, slight head tilt, attentive calm face
+
+# ACTION SHOT
+
+[020] waist up front view, kids_duo_mom, mid-30s cartoon adult woman, warm medium-brown skin tone, long ponytail, lavender cardigan, white blouse, offering hands forward in gentle encouraging gesture as if inviting a child to try something, warm supportive smile, eyes full of encouragement
+
