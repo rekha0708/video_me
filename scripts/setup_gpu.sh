@@ -231,6 +231,11 @@ install_python_deps() {
   fi
 
   run "$PYTHON_BIN" -m pip install -e ".[$extras]"
+
+  # hf_transfer enables fast multi-part HF downloads.
+  # Must be installed in the same Python that runs hf CLI and training scripts.
+  # HF_HUB_ENABLE_HF_TRANSFER=1 (set in .env) will error if this is missing.
+  run pip3 install hf_transfer || warn "hf_transfer install failed — set HF_HUB_ENABLE_HF_TRANSFER=0 to skip"
 }
 
 # ── Step 4: Ollama ───────────────────────────────────────────────────────────
@@ -268,7 +273,7 @@ setup_ollama() {
   fi
 }
 
-# ── Step 5: ComfyUI (Flux.1-dev + LTX-Video 2.3) ────────────────────────────
+# ── Step 5: ComfyUI (Flux 2.0 Dev + LTX-Video 2.3) ──────────────────────────
 setup_comfyui() {
   log "Setting up ComfyUI (Flux 2.0 Dev image gen + LTX-2.3 22B video gen, port 8188)"
 
@@ -281,16 +286,13 @@ setup_comfyui() {
     run git -C "$comfyui_dir" pull --ff-only || warn "git pull failed — continuing with existing checkout"
   fi
 
-  # ComfyUI requirements (uses system torch via --system-site-packages not needed;
-  # ComfyUI manages its own deps under the standard venv or base Python).
   run pip3 install -r "$comfyui_dir/requirements.txt" || \
       warn "Some ComfyUI deps may have failed — check $comfyui_dir/requirements.txt"
 
-  # Custom node managers and node packages for Flux + LTX
+  # Custom nodes for Flux + LTX
   local custom_nodes="$comfyui_dir/custom_nodes"
   if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$custom_nodes"; fi
 
-  # ComfyUI-Manager (optional but useful for installing Flux/LTX nodes via UI)
   if [[ ! -d "$custom_nodes/ComfyUI-Manager" ]]; then
     run git clone https://github.com/ltdrdata/ComfyUI-Manager.git \
         "$custom_nodes/ComfyUI-Manager"
@@ -298,7 +300,6 @@ setup_comfyui() {
     ok "ComfyUI-Manager already installed"
   fi
 
-  # LTX-Video custom nodes (required for LTX-2.3 video generation)
   if [[ ! -d "$custom_nodes/ComfyUI-LTXVideo" ]]; then
     run git clone https://github.com/Lightricks/ComfyUI-LTXVideo.git \
         "$custom_nodes/ComfyUI-LTXVideo"
@@ -312,47 +313,71 @@ setup_comfyui() {
   # Model directories
   local models_dir="$comfyui_dir/models"
   if [[ "$DRY_RUN" == "0" ]]; then
-    mkdir -p "$models_dir/checkpoints" "$models_dir/loras" \
-             "$models_dir/vae" "$models_dir/clip" "$models_dir/unet"
+    mkdir -p "$models_dir/diffusion_models" "$models_dir/checkpoints" \
+             "$models_dir/loras" "$models_dir/text_encoders"
   fi
 
-  # Download Flux 2.0 Dev model (~58 GB, 32B params, most capable)
-  # Requires HF token (gated model — agree to license at huggingface.co/black-forest-labs/FLUX.2-dev)
-  local flux_model="$models_dir/diffusion_models/flux.2-dev.safetensors"
+  # ── Flux 2.0 Dev DiT (~61 GB) ────────────────────────────────────────────
+  # Flux 2.0 is a fundamentally different architecture from Flux 1.x:
+  #   - 8 double blocks + 48 single blocks (vs 19+38 in Flux 1.x)
+  #   - No bias tensors in attention projections
+  #   - Global modulation streams (not per-block)
+  #   - Mistral 3 text encoder (not T5+CLIP) — used for LoRA training
+  # Requires HF token + accepting license at huggingface.co/black-forest-labs/FLUX.2-dev
+  local flux_model="$models_dir/diffusion_models/flux2-dev.safetensors"
   if [[ ! -f "$flux_model" ]]; then
     if [[ -n "$HF_TOKEN" ]]; then
-      log "Downloading Flux 2.0 Dev (~58 GB, 32B params) — this will take a while"
-      run huggingface-cli download black-forest-labs/FLUX.2-dev \
-          flux.2-dev.safetensors --local-dir "$models_dir/diffusion_models" \
-          --token "$HF_TOKEN"
-      ok "Flux 2.0 Dev downloaded to $flux_model"
+      log "Downloading Flux 2.0 Dev DiT (~61 GB) — this will take a while"
+      run hf download black-forest-labs/FLUX.2-dev \
+          flux2-dev.safetensors \
+          --local-dir "$models_dir/diffusion_models"
+      ok "Flux 2.0 Dev DiT downloaded to $flux_model"
     else
-      warn "Flux 2.0 Dev not downloaded — set HF_TOKEN and re-run, or download manually."
-      warn "  1. Go to https://huggingface.co/black-forest-labs/FLUX.2-dev and agree to license"
-      warn "  2. Get token from https://huggingface.co/settings/tokens"
-      warn "  3. Run: huggingface-cli download black-forest-labs/FLUX.2-dev flux.2-dev.safetensors \\"
-      warn "         --local-dir $models_dir/diffusion_models --token YOUR_HF_TOKEN"
+      warn "Flux 2.0 Dev not downloaded — HF_TOKEN required."
+      warn "  1. Accept license at https://huggingface.co/black-forest-labs/FLUX.2-dev"
+      warn "  2. Set HF_TOKEN and re-run, or:"
+      warn "     HF_TOKEN=hf_... hf download black-forest-labs/FLUX.2-dev flux2-dev.safetensors \\"
+      warn "       --local-dir $models_dir/diffusion_models"
     fi
   else
-    ok "Flux 2.0 Dev already at $flux_model"
+    ok "Flux 2.0 Dev DiT already at $flux_model"
   fi
 
-  # Download T5 text encoder (required for Flux 2.0, shared with Flux 1.x)
+  # ── Flux 2.0 VAE / AE (~335 MB) ──────────────────────────────────────────
+  # Bundled in the FLUX.2-dev repo alongside the DiT. Stored in diffusion_models/
+  # (not vae/) so both DiT and AE are co-located for training scripts.
+  local ae_model="$models_dir/diffusion_models/ae.safetensors"
+  if [[ ! -f "$ae_model" ]]; then
+    if [[ -n "$HF_TOKEN" ]]; then
+      log "Downloading Flux 2.0 VAE/AE (~335 MB)"
+      run hf download black-forest-labs/FLUX.2-dev \
+          ae.safetensors \
+          --local-dir "$models_dir/diffusion_models"
+      ok "Flux 2.0 AE downloaded to $ae_model"
+    else
+      warn "Flux 2.0 AE not downloaded — needs same HF_TOKEN as DiT above"
+    fi
+  else
+    ok "Flux 2.0 AE already at $ae_model"
+  fi
+
+  # ── Text encoders for ComfyUI inference (T5 fp8 + CLIP-L) ────────────────
+  # ComfyUI uses T5+CLIP for inference conditioning (same as Flux 1.x path).
+  # These are NOT used for LoRA training — training uses Mistral 3 (see musubi-tuner setup).
   local t5_model="$models_dir/text_encoders/t5xxl_fp8_e4m3fn.safetensors"
   if [[ ! -f "$t5_model" ]]; then
-    log "Downloading T5 XXL text encoder FP8 (~4.5 GB)"
+    log "Downloading T5 XXL FP8 text encoder for ComfyUI inference (~4.5 GB)"
     if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$models_dir/text_encoders"; fi
     run curl -fL "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors" \
         -o "$t5_model"
     ok "T5 XXL FP8 downloaded to $t5_model"
   else
-    ok "T5 XXL already at $t5_model"
+    ok "T5 XXL FP8 already at $t5_model"
   fi
 
-  # Download CLIP-L text encoder (required for Flux 2.0)
   local clip_model="$models_dir/text_encoders/clip_l.safetensors"
   if [[ ! -f "$clip_model" ]]; then
-    log "Downloading CLIP-L text encoder (~1 GB)"
+    log "Downloading CLIP-L text encoder for ComfyUI inference (~1 GB)"
     run curl -fL "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors" \
         -o "$clip_model"
     ok "CLIP-L downloaded to $clip_model"
@@ -360,25 +385,13 @@ setup_comfyui() {
     ok "CLIP-L already at $clip_model"
   fi
 
-  # Download VAE (required for Flux 2.0)
-  local vae_model="$models_dir/vae/ae.safetensors"
-  if [[ ! -f "$vae_model" ]]; then
-    log "Downloading Flux VAE (~335 MB)"
-    if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$models_dir/vae"; fi
-    run curl -fL "https://huggingface.co/black-forest-labs/FLUX.1-schnell/resolve/main/ae.safetensors" \
-        -o "$vae_model"
-    ok "Flux VAE downloaded to $vae_model"
-  else
-    ok "Flux VAE already at $vae_model"
-  fi
-
-  # Download LTX-2.3 22B distilled v1.1 model (~42 GB, most capable + practical)
-  # 8-step distilled model: fastest inference, CFG=1, excellent quality
+  # ── LTX-2.3 22B distilled v1.1 (~42 GB) ─────────────────────────────────
   local ltx_model="$models_dir/checkpoints/ltx-2.3-22b-distilled-1.1.safetensors"
   if [[ ! -f "$ltx_model" ]]; then
     log "Downloading LTX-2.3 22B distilled v1.1 (~42 GB) — this will take a while"
-    run huggingface-cli download Lightricks/LTX-2.3 \
-        ltx-2.3-22b-distilled-1.1.safetensors --local-dir "$models_dir/checkpoints" \
+    run hf download Lightricks/LTX-2.3 \
+        ltx-2.3-22b-distilled-1.1.safetensors \
+        --local-dir "$models_dir/checkpoints" \
         ${HF_TOKEN:+--token "$HF_TOKEN"}
     ok "LTX-2.3 22B distilled v1.1 downloaded to $ltx_model"
   else
@@ -396,6 +409,77 @@ setup_comfyui() {
   fi
 
   ok "ComfyUI setup complete (dir: $comfyui_dir)"
+}
+
+# ── Step 5b: musubi-tuner (Flux 2.0 LoRA training) ───────────────────────────
+setup_musubi_tuner() {
+  log "Setting up musubi-tuner (Flux 2.0 LoRA training)"
+  # musubi-tuner is kohya's training framework with native Flux 2.0 support.
+  # sd-scripts cannot train Flux 2.0 — different architecture (8 double/48 single
+  # blocks, no bias tensors, Mistral 3 text encoder instead of T5+CLIP).
+
+  local musubi_dir="$WORKSPACE/musubi-tuner"
+  local text_enc_dir="$WORKSPACE/FLUX2-text-encoder"
+
+  # Clone / update musubi-tuner
+  if [[ ! -d "$musubi_dir" ]]; then
+    run git clone https://github.com/kohya-ss/musubi-tuner.git "$musubi_dir"
+  else
+    ok "musubi-tuner already cloned at $musubi_dir"
+    run git -C "$musubi_dir" pull --ff-only || warn "git pull failed — continuing"
+  fi
+
+  # Install training dependencies into system Python (same env that runs training)
+  run pip3 install accelerate hf_transfer flash-attn --no-build-isolation || \
+      warn "flash-attn build failed — training will be slower without it"
+  run pip3 install -e "$musubi_dir" || warn "musubi-tuner install failed"
+
+  # Configure accelerate for single-GPU bf16
+  if [[ "$DRY_RUN" == "0" ]]; then
+    accelerate config default --mixed_precision bf16 2>/dev/null || true
+  fi
+
+  # ── Mistral 3 text encoder (~45 GB, 10 shards) ───────────────────────────
+  # Used only for LoRA training (musubi-tuner). ComfyUI inference uses T5+CLIP.
+  # Stored at $WORKSPACE/FLUX2-text-encoder/text_encoder/ and tokenizer/.
+  local te_shard="$text_enc_dir/text_encoder/model-00001-of-00010.safetensors"
+  if [[ ! -f "$te_shard" ]]; then
+    if [[ -n "$HF_TOKEN" ]]; then
+      log "Downloading Mistral 3 text encoder for Flux 2.0 training (~45 GB, 10 shards)"
+      if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$text_enc_dir"; fi
+      run env HF_HUB_ENABLE_HF_TRANSFER=0 HF_TOKEN="$HF_TOKEN" \
+          hf download black-forest-labs/FLUX.2-dev \
+          --include "text_encoder/*" "tokenizer/*" \
+          --local-dir "$text_enc_dir"
+      ok "Mistral 3 text encoder downloaded to $text_enc_dir"
+    else
+      warn "Mistral 3 text encoder not downloaded — HF_TOKEN required."
+      warn "  Run: HF_TOKEN=hf_... hf download black-forest-labs/FLUX.2-dev \\"
+      warn "         --include 'text_encoder/*' 'tokenizer/*' --local-dir $text_enc_dir"
+    fi
+  else
+    ok "Mistral 3 text encoder already at $text_enc_dir"
+  fi
+
+  ok "musubi-tuner setup complete"
+  ok "LoRA training commands (run from $ROOT_DIR):"
+  ok "  # Pre-cache (once per dataset, fast):"
+  ok "  python $musubi_dir/src/musubi_tuner/flux_2_cache_latents.py \\"
+  ok "    --dataset_config assets/kids_duo/training/musubi_dataset_max.toml \\"
+  ok "    --vae $WORKSPACE/ComfyUI/models/diffusion_models/ae.safetensors --model_version dev"
+  ok "  python $musubi_dir/src/musubi_tuner/flux_2_cache_text_encoder_outputs.py \\"
+  ok "    --dataset_config assets/kids_duo/training/musubi_dataset_max.toml \\"
+  ok "    --text_encoder $te_shard --batch_size 4 --model_version dev"
+  ok "  # Train Max LoRA:"
+  ok "  accelerate launch $musubi_dir/src/musubi_tuner/flux_2_train_network.py \\"
+  ok "    --model_version dev --dit $WORKSPACE/ComfyUI/models/diffusion_models/flux2-dev.safetensors \\"
+  ok "    --vae $WORKSPACE/ComfyUI/models/diffusion_models/ae.safetensors \\"
+  ok "    --text_encoder $te_shard \\"
+  ok "    --dataset_config assets/kids_duo/training/musubi_dataset_max.toml \\"
+  ok "    --flash_attn --mixed_precision bf16 --fp8_base --fp8_scaled \\"
+  ok "    --network_module networks.lora_flux_2 --network_dim 32 --network_alpha 16 \\"
+  ok "    --max_train_epochs 25 --save_every_n_epochs 5 --seed 42 \\"
+  ok "    --output_dir loras/ --output_name kids_duo_max"
 }
 
 # ── Step 5b: AUTOMATIC1111 (fallback — opt-in only) ──────────────────────────
@@ -443,13 +527,15 @@ setup_a1111() {
   fi
 }
 
-# ── Step 6a: Fish Audio S2 TTS ───────────────────────────────────────────────
+# ── Step 6a: Fish Audio S2 Pro TTS ───────────────────────────────────────────
 setup_fish_s2() {
-  log "Setting up Fish Audio S2 TTS (port 8025, EN + HI + 80 languages)"
-  # Fish Audio S2 runs as a self-hosted HTTP server with voice cloning.
-  # Requires a dedicated venv with system-site-packages for torch 2.8.0+cu128.
+  log "Setting up Fish Audio S2 Pro TTS (port 8025, EN + HI + 80 languages)"
+  # Fish S2 Pro (fishaudio/s2-pro) is the public voice-cloning checkpoint.
+  # Runs as a FastAPI wrapper (services/fish_s2_server.py) around fish-speech's
+  # ModelManager. Dedicated venv with --system-site-packages to inherit system torch.
   local fish_dir="$WORKSPACE/fish-speech"
   local venv_dir="$WORKSPACE/.venv_fish_s2"
+  local ckpt_dir="$fish_dir/checkpoints/s2-pro"
 
   if [[ ! -d "$fish_dir" ]]; then
     run git clone https://github.com/fishaudio/fish-speech.git "$fish_dir"
@@ -468,9 +554,27 @@ setup_fish_s2() {
   local pip="$venv_dir/bin/pip"
   run "$pip" install --upgrade pip
   run "$pip" install -r "$fish_dir/requirements.txt" || warn "Some Fish S2 deps may have failed"
-  run "$pip" install fastapi uvicorn python-multipart
+  # Extra deps required by fish-speech 2.0 not included in requirements.txt
+  run "$pip" install fastapi uvicorn python-multipart \
+      natsort lightning hydra-core opencc-python-reimplemented "pydantic==2.9.2"
 
-  ok "Fish Audio S2 installed (venv: $venv_dir)"
+  # Download Fish S2 Pro model weights (~20 GB)
+  if [[ ! -d "$ckpt_dir" ]]; then
+    if [[ -n "$HF_TOKEN" ]]; then
+      log "Downloading Fish S2 Pro weights (~20 GB)"
+      if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$fish_dir/checkpoints"; fi
+      run env HF_HUB_ENABLE_HF_TRANSFER=0 HF_TOKEN="$HF_TOKEN" \
+          hf download fishaudio/s2-pro --local-dir "$ckpt_dir"
+      ok "Fish S2 Pro downloaded to $ckpt_dir"
+    else
+      warn "Fish S2 Pro not downloaded — HF_TOKEN required."
+      warn "  Run: HF_TOKEN=hf_... hf download fishaudio/s2-pro --local-dir $ckpt_dir"
+    fi
+  else
+    ok "Fish S2 Pro already at $ckpt_dir"
+  fi
+
+  ok "Fish Audio S2 Pro installed (venv: $venv_dir, checkpoint: $ckpt_dir)"
 }
 
 # ── Step 6a-fallback: Chatterbox TTS (optional, EN-only fallback) ────────────
@@ -508,11 +612,8 @@ setup_wan() {
 
   if [[ ! -d "$wan_model_dir" ]]; then
     log "Downloading Wan2.2-I2V-A14B model (~30 GB) — this will take a while"
-    local hf_header=""
-    if [[ -n "$HF_TOKEN" ]]; then hf_header="--token $HF_TOKEN"; fi
-    # shellcheck disable=SC2086
-    run huggingface-cli download Wan-AI/Wan2.2-I2V-A14B \
-        --local-dir "$wan_model_dir" $hf_header
+    run env HF_HUB_ENABLE_HF_TRANSFER=0 ${HF_TOKEN:+HF_TOKEN="$HF_TOKEN"} \
+        hf download Wan-AI/Wan2.2-I2V-A14B --local-dir "$wan_model_dir"
     ok "Wan2.2-I2V-A14B downloaded to $wan_model_dir"
   else
     ok "Wan2.2 model already at $wan_model_dir"
@@ -646,7 +747,7 @@ VIDEO_ME_LLM_BASE_URL=http://localhost:11434/v1
 VIDEO_ME_CRITIQUE_MODEL=qwen3.6:35b
 VIDEO_ME_CRITIQUE_BASE_URL=http://localhost:11434/v1
 
-# Render: ComfyUI + Flux.1-dev (default) | a1111 (fallback)
+# Render: ComfyUI + Flux 2.0 Dev (default) | a1111 (fallback)
 VIDEO_ME_RENDER_ADAPTER=comfyui_flux
 VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188
 
@@ -733,6 +834,9 @@ fi
 # Default stack
 if [[ "$SKIP_COMFYUI" == "0" ]]; then
   setup_comfyui
+  # musubi-tuner is the LoRA training framework for Flux 2.0.
+  # Installed alongside ComfyUI since it shares the same DiT + AE weights.
+  setup_musubi_tuner
 fi
 
 if [[ "$SKIP_FISH_S2" == "0" ]]; then
