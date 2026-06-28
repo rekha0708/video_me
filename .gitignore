@@ -1,5 +1,5 @@
 .DS_Store
-.env
+# .env  # DANGEROUS: Uncommented to allow committing .env (NOT RECOMMENDED)
 .venv/
 __pycache__/
 *.py[cod]

@@ -6,15 +6,15 @@ interchangeable adapter behind a typed capability ABC.
 
 ## Status
 
-**Phase 2 code-complete — 313 tests passing.**  
-Stack upgraded to ComfyUI + Flux.1-dev (image) + LTX-Video 2.3 (video, native lip-sync).  
+**Phase 2 code-complete — 313 tests passing.**
+Stack upgraded to ComfyUI + Flux 2.0 Dev (image, 32B) + LTX-2.3 22B distilled (video, native lip-sync).
 See `BUILD_PROGRESS.md` for the full implementation journal and next steps.
 
 ```
 Phase 0  Skeleton + storage          ✅ COMPLETE
 Phase 1  Full pipeline A1.0–A1.12   ✅ COMPLETE (code)
 Phase 2  Critic loop A2.x            ✅ COMPLETE (code) — VLM service needed for real judgment
-Track B  LoRAs + voice files         ⚠️ PARTIAL — SD1.5 LoRAs trained; Flux LoRAs need retraining
+Track B  LoRAs + voice files         ⚠️ PARTIAL — SD1.5 LoRAs trained; Flux 2.0 LoRAs need retraining
 Track D  GPU services                ⚠️ ComfyUI + Fish Audio S2 + Ollama needed
 ```
 
@@ -86,8 +86,8 @@ backends need the same preprocessing.
 
 ```
 loras/
-  kids_duo_max.safetensors   ← Flux LoRA for Max
-  kids_duo_zoe.safetensors   ← Flux LoRA for Zoe
+  kids_duo_max.safetensors   ← Flux 2.0 LoRA for Max
+  kids_duo_zoe.safetensors   ← Flux 2.0 LoRA for Zoe
 
 voices/
   kids_duo/
@@ -97,7 +97,7 @@ voices/
 
 Run `python -m scripts.check_track_b` to verify placement.
 
-### Training Flux LoRAs (one-time, per character)
+### Training Flux 2.0 LoRAs (one-time, per character)
 
 ```bash
 # Step 1 — import raw reference photos into the training dataset
@@ -105,19 +105,39 @@ python -m scripts.upload_reference_images --character max ~/photos/max/*.jpg
 python -m scripts.upload_reference_images --character zoe ~/photos/zoe/*.jpg
 # Aim for 20+ images per character. Captions are written automatically.
 
-# Step 2 — train (requires kohya_ss + Flux model weights in models/Flux/)
+# Step 2 — train (requires kohya_ss + Flux 2.0 model weights in models/Flux/)
 accelerate launch flux_train_network.py \
   --config_file assets/kids_duo/training/kohya_config.toml
 # Change output_name to kids_duo_zoe for Zoe's run.
-# Output: loras/kids_duo_max.safetensors (~37 MB, Flux format)
+# Output: loras/kids_duo_max.safetensors (~37 MB, Flux 2.0 format)
 ```
 
-> **Note:** existing SD 1.5 LoRAs from the June 2026 training run will not work with Flux.
-> Retrain using the steps above. The kohya config already targets `flux1-dev.safetensors`.
+> **Note:** existing SD 1.5 and Flux 1.x LoRAs will not work with Flux 2.0.
+> Retrain using the steps above. The kohya config targets `flux.2-dev.safetensors`.
 
 ## GPU setup and readiness
 
-Install runtime dependencies on a GPU machine:
+### Step 1: Configure environment variables
+
+```bash
+# Copy the template
+cp .env.example .env
+
+# Edit .env and add your HuggingFace token
+nano .env  # Find HF_TOKEN= and add your token
+
+# Load environment variables
+source .env
+```
+
+**Get your HuggingFace token:**
+1. Accept Flux 2.0 license: https://huggingface.co/black-forest-labs/FLUX.2-dev
+2. Create token: https://huggingface.co/settings/tokens (Read-only, with gated repo access)
+3. Add to `.env` file
+
+See `ENV_SETUP_GUIDE.md` for detailed instructions.
+
+### Step 2: Install runtime dependencies on a GPU machine
 
 ```bash
 bash scripts/setup_gpu.sh
@@ -162,7 +182,7 @@ and `scripts.check_runtime_readiness`.
 | Service | Port | Purpose | Required? |
 |---|---|---|---|
 | Ollama | 11434 | LLM (analyze, adapt, plan) + VLM critique | ✅ Always |
-| ComfyUI | 8188 | Flux image gen + LTX-Video 2.3 video gen | ✅ Default |
+| ComfyUI | 8188 | Flux 2.0 Dev image gen + LTX-2.3 22B video gen | ✅ Default |
 | Fish Audio S2 | 8025 | Voice synthesis (EN + HI) | ✅ Default |
 | Chatterbox TTS | 8020 | Voice synthesis (EN only, fallback) | ⚠️ Only if `TTS_ADAPTER=chatterbox` |
 | AUTOMATIC1111 | 7860 | SD 1.5 image gen | ⚠️ Only if `RENDER_ADAPTER=a1111` |
@@ -244,10 +264,10 @@ VIDEO_ME_APPROVAL_TIMEOUT_HOURS=24
 
 | Stage | Adapter | Service |
 |---|---|---|
-| render_character ×N | `ComfyUIFluxAdapter` | ComfyUI + Flux.1-dev + LoRA · port 8188 · N=3 candidates |
+| render_character ×N | `ComfyUIFluxAdapter` | ComfyUI + Flux 2.0 Dev + LoRA · port 8188 · N=3 candidates |
 | critique_images | `VlmImageCritiqueAdapter` | Ollama qwen3.6:35b · port 11434 · self-learning |
 | approve_images | `ImageApprovalAdapter` | Web UI · localhost:8765 (shared) · grid with per-shot override |
-| generate_video | `LtxAdapter` | LTX-Video 2.3 via ComfyUI · port 8188 · native lip-sync |
+| generate_video | `LtxAdapter` | LTX-2.3 22B via ComfyUI · port 8188 · native lip-sync |
 | lip_sync | **skipped** | LTX handles it in the same diffusion pass |
 | synthesize_voice | `FishS2TtsAdapter` | Fish Audio S2 · port 8025 · EN + HI |
 | All LLM + VLM stages | `LlmAdapter` / `VlmCritiqueAdapter` | Ollama qwen3.6:35b · port 11434 (single model, natively multimodal) |
@@ -288,7 +308,7 @@ VIDEO_ME_VIDEO_ADAPTER=ltx             # or: wan
 VIDEO_ME_TTS_ADAPTER=fish_s2           # or: chatterbox
 
 # Service URLs
-VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188   # ComfyUI (Flux image + LTX video)
+VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188   # ComfyUI (Flux 2.0 image + LTX-2.3 video)
 VIDEO_ME_FISH_S2_BASE_URL=http://localhost:8025   # Fish Audio S2 (EN + HI TTS)
 VIDEO_ME_TTS_BASE_URL=http://localhost:8020        # Chatterbox TTS (fallback)
 VIDEO_ME_SD_BASE_URL=http://localhost:7860         # A1111 (fallback only)

@@ -1,9 +1,6 @@
 # Max — LoRA Training Image Generation Prompts
 # Generate these in Leonardo.ai → Image Generation tab.
 #
-# RECOMMENDED MODEL: Leonardo Anime XL  (or DreamShaper v7 as fallback)
-# Enable "Alchemy" for higher quality output.
-#
 # SHARED POSITIVE SUFFIX (append to every prompt):
 #   soft cartoon illustration, 2D flat shading, children's educational character design,
 #   clean white background, bright cheerful colors, crisp clean line art, high quality

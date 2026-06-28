@@ -1,0 +1,88 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "input_character.png"
+    },
+    "_meta": {"title": "__IMAGE__"}
+  },
+  "2": {
+    "class_type": "LTXVModelLoader",
+    "inputs": {
+      "model": "ltx-2.3-22b-distilled-1.1.safetensors"
+    },
+    "_meta": {"title": "Load LTX Model"}
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "A character performing an action in a scene",
+      "clip": ["2", 1]
+    },
+    "_meta": {"title": "__PROMPT__"}
+  },
+  "4": {
+    "class_type": "LoadAudio",
+    "inputs": {
+      "audio": "dialogue.wav"
+    },
+    "_meta": {"title": "__AUDIO__"}
+  },
+  "5": {
+    "class_type": "LTXVConditioning",
+    "inputs": {
+      "length": 121,
+      "width": 1024,
+      "height": 576,
+      "positive": ["3", 0],
+      "negative": ["3", 0],
+      "image": ["1", 0],
+      "audio": ["4", 0]
+    },
+    "_meta": {"title": "__FRAMES__"}
+  },
+  "6": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 54321
+    },
+    "_meta": {"title": "__SEED__"}
+  },
+  "7": {
+    "class_type": "LTXVScheduler",
+    "inputs": {
+      "steps": 8,
+      "denoise": 1.0
+    },
+    "_meta": {"title": "__STEPS__"}
+  },
+  "8": {
+    "class_type": "LTXVSampler",
+    "inputs": {
+      "model": ["2", 0],
+      "conditioning": ["5", 0],
+      "noise": ["6", 0],
+      "sigmas": ["7", 0]
+    },
+    "_meta": {"title": "LTX Sampler"}
+  },
+  "9": {
+    "class_type": "LTXVVAEDecode",
+    "inputs": {
+      "samples": ["8", 0],
+      "vae": ["2", 2]
+    },
+    "_meta": {"title": "VAE Decode"}
+  },
+  "10": {
+    "class_type": "VHSVideoCombine",
+    "inputs": {
+      "frame_rate": 24,
+      "images": ["9", 0],
+      "audio": ["4", 0],
+      "filename_prefix": "video_me_ltx",
+      "format": "video/h264-mp4"
+    },
+    "_meta": {"title": "Save Video"}
+  }
+}

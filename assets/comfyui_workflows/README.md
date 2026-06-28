@@ -5,7 +5,7 @@ and substitute placeholder node titles at runtime.
 
 ## flux_lora_txt2img.json — render_character (ComfyUIFluxAdapter)
 
-Export your Flux txt2img + LoRA workflow from ComfyUI (Settings → Save as API format).
+Export your Flux 2.0 Dev txt2img + LoRA workflow from ComfyUI (Settings → Save as API format).
 The adapter looks for nodes whose `_meta.title` matches these sentinels:
 
 | Sentinel title  | Node type                  | Field substituted      |
@@ -23,12 +23,13 @@ If this file is absent the adapter falls back to a minimal hard-coded workflow (
 
 ## ltx_i2v.json — generate_video (LtxAdapter)
 
-Export your LTX-Video 2.3 image-to-video workflow from ComfyUI in API format.
+Export your LTX-2.3 22B distilled image-to-video workflow from ComfyUI in API format.
 Sentinel titles:
 
 | Sentinel title | Node type              | Field substituted |
 |----------------|------------------------|-------------------|
 | `__IMAGE__`    | LoadImage              | `image`           |
+| `__AUDIO__`    | LoadAudio              | `audio`           |
 | `__PROMPT__`   | CLIPTextEncode         | `text`            |
 | `__FRAMES__`   | LTXVConditioning       | `length`          |
 | `__STEPS__`    | LTXVScheduler          | `steps`           |

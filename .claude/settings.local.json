@@ -17,7 +17,24 @@
       "Read(//usr/**)",
       "Bash(ldconfig -p)",
       "Bash(nm -D /workspace/video_me/.venv/lib/python3.12/site-packages/nvidia/nccl/lib/libnccl.so.2)",
-      "Bash(nm -D /usr/local/lib/python3.12/dist-packages/nvidia/nccl/lib/libnccl.so.2)"
+      "Bash(nm -D /usr/local/lib/python3.12/dist-packages/nvidia/nccl/lib/libnccl.so.2)",
+      "WebFetch(domain:docs.comfy.org)",
+      "WebSearch",
+      "WebFetch(domain:wan27.org)",
+      "Bash(python -m pytest tests/test_workflow.py tests/test_render_character.py tests/test_generate_video.py -q)",
+      "Bash(pip3 install *)",
+      "mcp__visualize__read_me",
+      "mcp__visualize__show_widget",
+      "Bash(sed -i '' 's|http://localhost:8767|http://localhost:8765|g' /Users/vryadav/git/video_me/README.md)",
+      "Bash(sed -i '' /VIDEO_ME_IMAGE_APPROVAL_PORT=8766/d /Users/vryadav/git/video_me/README.md)",
+      "Bash(sed -i '' 's|localhost:8766 · grid|localhost:8765 \\(shared\\) · grid|g' /Users/vryadav/git/video_me/README.md)",
+      "Bash(sed -i '' 's|localhost:8766|localhost:8765 \\(shared port\\)|g' /Users/vryadav/git/video_me/CLAUDE.md)",
+      "Bash(sed -i '' 's|localhost:8766|localhost:8765 \\(shared\\)|g' /Users/vryadav/git/video_me/assets/pipeline_flow.html)",
+      "Bash(sed -i '' /IMAGE_APPROVAL_PORT/d /Users/vryadav/git/video_me/assets/pipeline_flow.html)",
+      "Bash(sed -i '' 's/~30 GB + ~14 GB + ~44 GB \\(LTX\\) = ~88 GB peak/~30 GB \\(qwen3.6:35b\\) + ~64 GB \\(qwen2.5-vl:32b\\) + ~44 GB \\(LTX\\) = ~138 GB peak/g' /Users/vryadav/git/video_me/CLAUDE.md)",
+      "Bash(python -m pytest -q --tb=short)",
+      "Bash(/Users/vryadav/git/video_me/.venv/bin/python3 -m pytest tests/test_assemble_video.py -q --tb=no)",
+      "Bash(python -m pytest tests/test_runtime_readiness.py -q)"
     ]
   }
 }

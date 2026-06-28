@@ -11,22 +11,22 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 
 ## Current state (as of 2026-06-27)
 
-**Stack upgraded to ComfyUI + Flux.1-dev (image) + LTX-Video 2.3 (video, native lip-sync). Plan critique loop + human approval gate added. 313 tests pass ✅.**
+**Stack upgraded to ComfyUI + Flux 2.0 Dev (image) + LTX-2.3 22B distilled (video, native lip-sync). Plan critique loop + human approval gate added. 313 tests pass ✅.**
 
 - **LLM**: qwen3.6:35b (MoE 35B). Thinking mode disabled via `extra_body={"think": False}` + no `response_format`. `max_tokens=16384`. `json_repair` fallback. Used for all LLM stages including plan critique.
-- **Image generation**: ComfyUI + Flux.1-dev + Flux LoRA (replaces A1111 + SD 1.5). Adapter: `ComfyUIFluxAdapter` (port 8188).
-- **Video generation**: LTX-Video 2.3 via ComfyUI (replaces Wan 2.7 resident server). Native lip-sync in one diffusion pass — MuseTalk stage skipped. Adapter: `LtxAdapter` (port 8188). ~1 min/shot (was ~21 min with Wan).
+- **Image generation**: ComfyUI + Flux 2.0 Dev (32B, Nov 2025) + Flux LoRA (replaces A1111 + SD 1.5). Adapter: `ComfyUIFluxAdapter` (port 8188). Most capable open-weight image model.
+- **Video generation**: LTX-2.3 22B distilled v1.1 via ComfyUI (replaces Wan 2.7 resident server). Native audio-video sync in one diffusion pass — MuseTalk stage skipped. Adapter: `LtxAdapter` (port 8188). 8-step distilled: ~1 min/shot (was ~21 min with Wan).
 - **Plan critique loop**: after `plan_shots`, `LlmPlanCritiqueAdapter` scores 5 dimensions (character_fit, scene_achievability, pacing, kids_safety, visual_clarity). All must be ≥ 0.75 to pass. Up to 3 re-plan iterations with specific fix notes injected.
 - **Human approval gate (storyboard)**: after critique passes, web UI at `http://localhost:8765` shows shot table + score bars. Approve → render. Reject + notes → one more re-plan cycle. 2nd rejection → job FAILED. CI bypass: `VIDEO_ME_AUTO_APPROVE_PLAN=true`.
 - **Image candidate generation**: render_character generates N images per shot (default 3). `VlmImageCritiqueAdapter` (qwen3.6:35b, natively multimodal) scores all candidates on 5 dimensions and picks the best. Self-learning: each pick + human override is appended to `assets/kids_duo/critique_feedback.jsonl`; last 5 entries are injected as few-shot context on the next run.
 - **Human approval gate (images)**: after all shots are rendered and critiqued, web UI at `http://localhost:8765 (shared port)` shows a grid of winner images. Operator can override any pick, then clicks Approve. Overrides are written back to the feedback log. CI bypass: `VIDEO_ME_AUTO_APPROVE_IMAGES=true`.
-- **Single VLM for everything**: qwen3.6:35b (MoE 35B, natively multimodal via early-fusion training, MMMU 81.7) handles ALL stages — text LLM + image critique + video frame critique. Drops qwen2.5-vl:32b entirely. VRAM: ~30 GB (qwen3.6:35b) + ~44 GB (LTX) + ~20 GB (Fish S2) = ~94 GB peak on G200 (143 GB). 49 GB headroom.
+- **Single VLM for everything**: qwen3.6:35b (MoE 35B, natively multimodal via early-fusion training, MMMU 81.7) handles ALL stages — text LLM + image critique + video frame critique. Drops qwen2.5-vl:32b entirely. VRAM: ~30 GB (qwen3.6:35b) + ~44 GB (LTX-2.3) + ~20 GB (Flux 2.0) + ~20 GB (Fish S2) = ~114 GB peak on G200 (143 GB). 29 GB headroom.
 - **TTS**: Fish Audio S2 (`FishS2TtsAdapter`, port 8025). Supports English and Hindi (80+ languages, voice cloning from reference WAV). Replaces Chatterbox TTS. Fallback: `VIDEO_ME_TTS_ADAPTER=chatterbox`.
 - **Language selection**: `VIDEO_ME_TARGET_LANGUAGE=en|hi|both`. "both" runs the full pipeline twice (shared images, separate dialogue/audio). Script dialogue is translated by the LLM when language ≠ "en".
 - **Shot duration**: 5–8s (2 words/sec, floor 5s, ceiling 8s).
 - **Resume**: `--resume-job JOB_ID` skips completed stages/shots. LTX completion marker: `clip.mp4`; Wan fallback: `synced.mp4`.
 - **Fallback adapters**: `VIDEO_ME_RENDER_ADAPTER=a1111` → A1111 + SD 1.5. `VIDEO_ME_VIDEO_ADAPTER=wan` → Wan 2.2 + MuseTalk. `VIDEO_ME_TTS_ADAPTER=chatterbox` → Chatterbox TTS.
-- **Track B LoRAs**: existing SD 1.5 weights won't work with Flux — retrain with `flux_train_network.py` (kohya_ss config already updated).
+- **Track B LoRAs**: existing SD 1.5 weights won't work with Flux 2.0 — retrain with `flux_train_network.py` (kohya_ss config already updated).
 
 | Track / Phase | Status | Blocker |
 |---|---|---|
@@ -128,11 +128,11 @@ The stage runner is `core/executor.py:run_stage()`. The Phase 1 DAG is
 | `adapters/analyze_content/llm_adapter.py` | Ollama/OpenAI-compat LLM |
 | `adapters/adapt_script/llm_adapter.py` | Ollama/OpenAI-compat LLM + guardrail injection |
 | `adapters/plan_shots/llm_adapter.py` | Ollama/OpenAI-compat LLM + shot structure derivation |
-| `adapters/render_character/comfyui_flux_adapter.py` | ComfyUI + Flux.1-dev + LoRA (default) |
+| `adapters/render_character/comfyui_flux_adapter.py` | ComfyUI + Flux 2.0 Dev + LoRA (default) |
 | `adapters/render_character/diffusion_adapter.py` | AUTOMATIC1111 SD API (fallback) |
 | `adapters/synthesize_voice/fish_s2_adapter.py` | Fish Audio S2 HTTP API (EN + HI, default) |
 | `adapters/synthesize_voice/tts_adapter.py` | Chatterbox TTS HTTP API (EN only, fallback) |
-| `adapters/generate_video/ltx_adapter.py` | LTX-Video 2.3 via ComfyUI (default, native lip-sync) |
+| `adapters/generate_video/ltx_adapter.py` | LTX-2.3 22B via ComfyUI (default, native lip-sync) |
 | `adapters/generate_video/wan_adapter.py` | Wan 2.2 HTTP API (fallback) |
 | `adapters/lip_sync/lip_sync_adapter.py` | MuseTalk HTTP API (skipped when VIDEO_ADAPTER=ltx) |
 | `adapters/critique/plan_critique_adapter.py` | LLM plan critique — 5 dimensions, pass/revise |
@@ -240,7 +240,7 @@ All five services must be healthy before `run_pipeline_job()` is called. The exe
 | Service | Default URL | Purpose | Required? |
 |---|---|---|---|
 | Ollama | `http://localhost:11434` | LLM (analyze, adapt, plan, critique_plan) + VLM critique | ✅ Always |
-| ComfyUI | `http://localhost:8188` | Flux.1-dev image gen + LTX-Video 2.3 video gen | ✅ Default |
+| ComfyUI | `http://localhost:8188` | Flux 2.0 Dev image gen + LTX-2.3 22B video gen | ✅ Default |
 | Fish Audio S2 | `http://localhost:8025` | TTS (EN + HI) for synthesize_voice | ✅ Default |
 | Chatterbox TTS | `http://localhost:8020` | TTS (EN only, fallback) | ⚠️ `TTS_ADAPTER=chatterbox` only |
 | AUTOMATIC1111 | `http://localhost:7860` | SD 1.5 render_character fallback | ⚠️ `RENDER_ADAPTER=a1111` only |

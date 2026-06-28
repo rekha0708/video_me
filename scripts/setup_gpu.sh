@@ -39,7 +39,7 @@ Full GPU-machine setup for video_me on RunPod (or any Ubuntu+CUDA box):
   2. Install system packages  (ffmpeg, yt-dlp, curl, git)
   3. Create Python venv + install runtime extras
   4. Install Ollama + pull qwen3.6:35b (LLM + VLM for all stages)
-  5. Clone + set up ComfyUI (Flux.1-dev image gen + LTX-Video 2.3 video gen)
+  5. Clone + set up ComfyUI (Flux 2.0 Dev image gen + LTX-2.3 22B video gen)
   6. Clone + set up Fish Audio S2 TTS (EN + HI, port 8025)
   7. Write .env with GPU-correct settings
   8. Run runtime readiness check
@@ -270,7 +270,7 @@ setup_ollama() {
 
 # ── Step 5: ComfyUI (Flux.1-dev + LTX-Video 2.3) ────────────────────────────
 setup_comfyui() {
-  log "Setting up ComfyUI (Flux.1-dev image gen + LTX-Video 2.3 video gen, port 8188)"
+  log "Setting up ComfyUI (Flux 2.0 Dev image gen + LTX-2.3 22B video gen, port 8188)"
 
   local comfyui_dir="$WORKSPACE/ComfyUI"
 
@@ -298,6 +298,17 @@ setup_comfyui() {
     ok "ComfyUI-Manager already installed"
   fi
 
+  # LTX-Video custom nodes (required for LTX-2.3 video generation)
+  if [[ ! -d "$custom_nodes/ComfyUI-LTXVideo" ]]; then
+    run git clone https://github.com/Lightricks/ComfyUI-LTXVideo.git \
+        "$custom_nodes/ComfyUI-LTXVideo"
+    run pip3 install -r "$custom_nodes/ComfyUI-LTXVideo/requirements.txt" || \
+        warn "Some LTX node deps may have failed"
+    ok "LTX-Video custom nodes installed"
+  else
+    ok "LTX-Video custom nodes already installed"
+  fi
+
   # Model directories
   local models_dir="$comfyui_dir/models"
   if [[ "$DRY_RUN" == "0" ]]; then
@@ -305,34 +316,73 @@ setup_comfyui() {
              "$models_dir/vae" "$models_dir/clip" "$models_dir/unet"
   fi
 
-  # Download Flux.1-dev model (~24 GB) — requires HF token (gated model)
-  local flux_model="$models_dir/unet/flux1-dev.safetensors"
+  # Download Flux 2.0 Dev model (~58 GB, 32B params, most capable)
+  # Requires HF token (gated model — agree to license at huggingface.co/black-forest-labs/FLUX.2-dev)
+  local flux_model="$models_dir/diffusion_models/flux.2-dev.safetensors"
   if [[ ! -f "$flux_model" ]]; then
     if [[ -n "$HF_TOKEN" ]]; then
-      log "Downloading Flux.1-dev model (~24 GB)"
-      run huggingface-cli download black-forest-labs/FLUX.1-dev \
-          flux1-dev.safetensors --local-dir "$models_dir/unet" \
+      log "Downloading Flux 2.0 Dev (~58 GB, 32B params) — this will take a while"
+      run huggingface-cli download black-forest-labs/FLUX.2-dev \
+          flux.2-dev.safetensors --local-dir "$models_dir/diffusion_models" \
           --token "$HF_TOKEN"
-      ok "Flux.1-dev downloaded to $flux_model"
+      ok "Flux 2.0 Dev downloaded to $flux_model"
     else
-      warn "Flux.1-dev not downloaded — set HF_TOKEN and re-run, or download manually."
-      warn "  huggingface-cli download black-forest-labs/FLUX.1-dev flux1-dev.safetensors \\"
-      warn "      --local-dir $models_dir/unet --token YOUR_HF_TOKEN"
+      warn "Flux 2.0 Dev not downloaded — set HF_TOKEN and re-run, or download manually."
+      warn "  1. Go to https://huggingface.co/black-forest-labs/FLUX.2-dev and agree to license"
+      warn "  2. Get token from https://huggingface.co/settings/tokens"
+      warn "  3. Run: huggingface-cli download black-forest-labs/FLUX.2-dev flux.2-dev.safetensors \\"
+      warn "         --local-dir $models_dir/diffusion_models --token YOUR_HF_TOKEN"
     fi
   else
-    ok "Flux.1-dev already at $flux_model"
+    ok "Flux 2.0 Dev already at $flux_model"
   fi
 
-  # Download LTX-Video 2.3 model (~12 GB)
-  local ltx_model="$models_dir/checkpoints/ltx-video-2b-v0.9.5.safetensors"
-  if [[ ! -f "$ltx_model" ]]; then
-    log "Downloading LTX-Video 2.3 model (~12 GB)"
-    run huggingface-cli download Lightricks/LTX-Video \
-        ltx-video-2b-v0.9.5.safetensors --local-dir "$models_dir/checkpoints" \
-        ${HF_TOKEN:+--token "$HF_TOKEN"}
-    ok "LTX-Video 2.3 downloaded to $ltx_model"
+  # Download T5 text encoder (required for Flux 2.0, shared with Flux 1.x)
+  local t5_model="$models_dir/text_encoders/t5xxl_fp8_e4m3fn.safetensors"
+  if [[ ! -f "$t5_model" ]]; then
+    log "Downloading T5 XXL text encoder FP8 (~4.5 GB)"
+    if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$models_dir/text_encoders"; fi
+    run curl -fL "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors" \
+        -o "$t5_model"
+    ok "T5 XXL FP8 downloaded to $t5_model"
   else
-    ok "LTX-Video 2.3 already at $ltx_model"
+    ok "T5 XXL already at $t5_model"
+  fi
+
+  # Download CLIP-L text encoder (required for Flux 2.0)
+  local clip_model="$models_dir/text_encoders/clip_l.safetensors"
+  if [[ ! -f "$clip_model" ]]; then
+    log "Downloading CLIP-L text encoder (~1 GB)"
+    run curl -fL "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors" \
+        -o "$clip_model"
+    ok "CLIP-L downloaded to $clip_model"
+  else
+    ok "CLIP-L already at $clip_model"
+  fi
+
+  # Download VAE (required for Flux 2.0)
+  local vae_model="$models_dir/vae/ae.safetensors"
+  if [[ ! -f "$vae_model" ]]; then
+    log "Downloading Flux VAE (~335 MB)"
+    if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$models_dir/vae"; fi
+    run curl -fL "https://huggingface.co/black-forest-labs/FLUX.1-schnell/resolve/main/ae.safetensors" \
+        -o "$vae_model"
+    ok "Flux VAE downloaded to $vae_model"
+  else
+    ok "Flux VAE already at $vae_model"
+  fi
+
+  # Download LTX-2.3 22B distilled v1.1 model (~42 GB, most capable + practical)
+  # 8-step distilled model: fastest inference, CFG=1, excellent quality
+  local ltx_model="$models_dir/checkpoints/ltx-2.3-22b-distilled-1.1.safetensors"
+  if [[ ! -f "$ltx_model" ]]; then
+    log "Downloading LTX-2.3 22B distilled v1.1 (~42 GB) — this will take a while"
+    run huggingface-cli download Lightricks/LTX-2.3 \
+        ltx-2.3-22b-distilled-1.1.safetensors --local-dir "$models_dir/checkpoints" \
+        ${HF_TOKEN:+--token "$HF_TOKEN"}
+    ok "LTX-2.3 22B distilled v1.1 downloaded to $ltx_model"
+  else
+    ok "LTX-2.3 already at $ltx_model"
   fi
 
   # Symlink project LoRA dir into ComfyUI's loras folder

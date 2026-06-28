@@ -4,7 +4,7 @@
 #
 # Required services (default stack):
 #   Ollama        (port 11434) — qwen3.6:35b for all LLM + VLM stages
-#   ComfyUI       (port 8188)  — Flux.1-dev image gen + LTX-Video 2.3 video gen
+#   ComfyUI       (port 8188)  — Flux 2.0 Dev image gen + LTX-2.3 22B video gen
 #   Fish Audio S2 (port 8025)  — TTS, EN + HI + 80 languages
 #
 # Fallback services (started only if their dir exists):
@@ -62,8 +62,8 @@ else
 fi
 
 # ── ComfyUI ───────────────────────────────────────────────────────────────────
-# ComfyUI serves both Flux.1-dev image gen and LTX-Video 2.3 video gen (port 8188).
-log "ComfyUI (Flux.1-dev + LTX-Video 2.3, port 8188)"
+# ComfyUI serves both Flux 2.0 Dev image gen and LTX-2.3 22B video gen (port 8188).
+log "ComfyUI (Flux 2.0 Dev + LTX-2.3 22B, port 8188)"
 COMFYUI_DIR="$WORKSPACE/ComfyUI"
 if [[ ! -d "$COMFYUI_DIR" ]]; then
   warn "ComfyUI not found at $COMFYUI_DIR — run setup_gpu.sh first or install manually"
