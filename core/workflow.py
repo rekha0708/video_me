@@ -222,8 +222,8 @@ def _make_adapters(config: AppConfig, work_dir: Path) -> _Adapters:
         image_approval=ImageApprovalAdapter(
             work_dir=work_dir,
             feedback_log_path=Path(s.feedback_log_dir) / "critique_feedback.jsonl",
-            port=s.image_approval_port,
-            timeout_hours=s.image_approval_timeout_hours,
+            port=s.approval_port,            # same port — gates run sequentially
+            timeout_hours=s.approval_timeout_hours,
             auto_approve=s.auto_approve_images,
         ),
         render=_make_render_adapter(s, work_dir),

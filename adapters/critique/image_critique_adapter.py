@@ -112,7 +112,7 @@ class VlmImageCritiqueAdapter(CritiqueImages):
 
     def __init__(
         self,
-        model: str = "qwen2.5-vl:7b",
+        model: str = "qwen2.5-vl:32b",
         base_url: str = "http://localhost:11434/v1",
         api_key: str = "ollama",
         feedback_log_dir: Path = Path("assets/kids_duo"),

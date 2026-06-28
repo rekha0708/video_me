@@ -184,15 +184,14 @@ The full DAG is in `core/workflow.py:run_pipeline_job()`.
 
 ### Image candidate selection (self-learning)
 
-After the storyboard is approved, the pipeline generates **N candidate images per shot** (default 3) and runs them through a VLM critique (`qwen2.5-vl:7b`) that scores each on character consistency, prompt adherence, kids-appropriateness, composition, and expressiveness. The winner is pre-selected automatically.
+After the storyboard is approved, the pipeline generates **N candidate images per shot** (default 3) and runs them through a VLM critique (`qwen2.5-vl:32b`) that scores each on character consistency, prompt adherence, kids-appropriateness, composition, and expressiveness. The winner is pre-selected automatically.
 
-A second web UI at `http://localhost:8767` shows a **grid of all shots' winner images** — the operator can confirm or override any pick before video generation starts. Every override is written back to `assets/kids_duo/critique_feedback.jsonl` so the VLM learns your preferences over time (last 5 entries are injected as few-shot context on the next run).
+A second web UI at `http://localhost:8765` shows a **grid of all shots' winner images** — the operator can confirm or override any pick before video generation starts. Every override is written back to `assets/kids_duo/critique_feedback.jsonl` so the VLM learns your preferences over time (last 5 entries are injected as few-shot context on the next run).
 
 ```bash
 VIDEO_ME_IMAGE_CANDIDATES=3              # images generated per shot
-VIDEO_ME_IMAGE_CRITIQUE_MODEL=qwen2.5-vl:7b
+VIDEO_ME_IMAGE_CRITIQUE_MODEL=qwen2.5-vl:32b
 VIDEO_ME_AUTO_APPROVE_IMAGES=true        # CI bypass
-VIDEO_ME_IMAGE_APPROVAL_PORT=8766
 ```
 
 ### Plan critique + approval gate
@@ -226,13 +225,13 @@ VIDEO_ME_APPROVAL_TIMEOUT_HOURS=24
 | Stage | Adapter | Service |
 |---|---|---|
 | render_character ×N | `ComfyUIFluxAdapter` | ComfyUI + Flux.1-dev + LoRA · port 8188 · N=3 candidates |
-| critique_images | `VlmImageCritiqueAdapter` | Ollama qwen2.5-vl:7b · port 11434 · self-learning |
-| approve_images | `ImageApprovalAdapter` | Web UI · localhost:8766 · grid with per-shot override |
+| critique_images | `VlmImageCritiqueAdapter` | Ollama qwen2.5-vl:32b · port 11434 · self-learning |
+| approve_images | `ImageApprovalAdapter` | Web UI · localhost:8765 (shared) · grid with per-shot override |
 | generate_video | `LtxAdapter` | LTX-Video 2.3 via ComfyUI · port 8188 · native lip-sync |
 | lip_sync | **skipped** | LTX handles it in the same diffusion pass |
 | synthesize_voice | `TtsAdapter` | Chatterbox TTS · port 8020 |
 | All LLM stages | `LlmAdapter` | Ollama qwen3.6:35b · port 11434 |
-| Image + video critique | `VlmImageCritiqueAdapter` / `VlmCritiqueAdapter` | Ollama qwen2.5-vl:7b · port 11434 |
+| Image + video critique | `VlmImageCritiqueAdapter` / `VlmCritiqueAdapter` | Ollama qwen2.5-vl:32b · port 11434 |
 
 Switch adapters with env vars — no code change needed:
 ```bash

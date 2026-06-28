@@ -213,7 +213,7 @@
     </div>
     <div class="card c-green">
       <div class="title">critique_images ✦</div>
-      <div class="sub">qwen2.5-vl:7b · scores 5 dimensions<br>character_consistency · prompt_adherence<br>kids_appropriateness · composition · expressiveness<br>Picks winner; appends to critique_feedback.jsonl</div>
+      <div class="sub">qwen2.5-vl:32b · scores 5 dimensions<br>character_consistency · prompt_adherence<br>kids_appropriateness · composition · expressiveness<br>Picks winner; appends to critique_feedback.jsonl</div>
     </div>
   </div>
 </div>
@@ -222,7 +222,7 @@
 
 <!-- image approval gate -->
 <div class="approval-box">
-  <div class="section-label">🖼 Image Approval Gate · NEW · localhost:8766</div>
+  <div class="section-label">🖼 Image Approval Gate · NEW · localhost:8765 (shared)</div>
   <div style="font-size:12px;color:#555">
     Grid of all shots' winner images · operator confirms or overrides per shot<br>
     Human overrides written back to <strong>critique_feedback.jsonl</strong> — VLM learns your preferences over time
@@ -319,9 +319,8 @@
       <code>VIDEO_ME_MAX_PLAN_ITERATIONS=3</code>
       <code>VIDEO_ME_APPROVAL_PORT=8765</code>
       <code>VIDEO_ME_IMAGE_CANDIDATES=3           # candidates per shot</code>
-      <code>VIDEO_ME_IMAGE_CRITIQUE_MODEL=qwen2.5-vl:7b</code>
+      <code>VIDEO_ME_IMAGE_CRITIQUE_MODEL=qwen2.5-vl:32b</code>
       <code>VIDEO_ME_AUTO_APPROVE_IMAGES=true     # CI bypass (images)</code>
-      <code>VIDEO_ME_IMAGE_APPROVAL_PORT=8766</code>
     </div>
   </div>
 </div>
