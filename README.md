@@ -204,7 +204,7 @@ Fish Audio S2 handles both languages from the same voice reference file — no s
 
 ### Image candidate selection (self-learning)
 
-After the storyboard is approved, the pipeline generates **N candidate images per shot** (default 3) and runs them through a VLM critique (`qwen2.5-vl:32b`) that scores each on character consistency, prompt adherence, kids-appropriateness, composition, and expressiveness. The winner is pre-selected automatically.
+After the storyboard is approved, the pipeline generates **N candidate images per shot** (default 3) and runs them through a VLM critique (`qwen3.6:35b`, the same model used for all other stages) that scores each on character consistency, prompt adherence, kids-appropriateness, composition, and expressiveness. The winner is pre-selected automatically.
 
 A second web UI at `http://localhost:8765` shows a **grid of all shots' winner images** — the operator can confirm or override any pick before video generation starts. Every override is written back to `assets/kids_duo/critique_feedback.jsonl` so the VLM learns your preferences over time (last 5 entries are injected as few-shot context on the next run).
 
