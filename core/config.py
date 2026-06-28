@@ -60,9 +60,21 @@ class Settings(BaseSettings):
     max_plan_iterations: int = 3          # max LLM critique re-plans before failing
     auto_approve_plan: bool = False       # set True in CI / smoke tests to skip approval UI
 
-    # --- human approval web UI ---
+    # --- human approval web UI (storyboard) ---
     approval_port: int = 8765
     approval_timeout_hours: float = 24.0
+
+    # --- image candidate generation + VLM critique ---
+    image_candidates: int = 3            # images generated per shot for critique
+    image_critique_model: str = "qwen2.5-vl:7b"
+    image_critique_base_url: str = "http://localhost:11434/v1"
+    image_critique_api_key: str = "ollama"
+    feedback_log_dir: Path = Path("assets/kids_duo")  # per-cast critique_feedback.jsonl
+
+    # --- human approval web UI (image grid) ---
+    auto_approve_images: bool = False    # set True in CI / smoke tests
+    image_approval_port: int = 8766
+    image_approval_timeout_hours: float = 24.0
 
 
 class AppConfig(BaseModel):

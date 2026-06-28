@@ -17,7 +17,10 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 - **Image generation**: ComfyUI + Flux.1-dev + Flux LoRA (replaces A1111 + SD 1.5). Adapter: `ComfyUIFluxAdapter` (port 8188).
 - **Video generation**: LTX-Video 2.3 via ComfyUI (replaces Wan 2.7 resident server). Native lip-sync in one diffusion pass — MuseTalk stage skipped. Adapter: `LtxAdapter` (port 8188). ~1 min/shot (was ~21 min with Wan).
 - **Plan critique loop**: after `plan_shots`, `LlmPlanCritiqueAdapter` scores 5 dimensions (character_fit, scene_achievability, pacing, kids_safety, visual_clarity). All must be ≥ 0.75 to pass. Up to 3 re-plan iterations with specific fix notes injected.
-- **Human approval gate**: after critique passes, web UI at `http://localhost:8765` shows shot table + score bars. Approve → render. Reject + notes → one more re-plan cycle. 2nd rejection → job FAILED. CI bypass: `VIDEO_ME_AUTO_APPROVE_PLAN=true`.
+- **Human approval gate (storyboard)**: after critique passes, web UI at `http://localhost:8765` shows shot table + score bars. Approve → render. Reject + notes → one more re-plan cycle. 2nd rejection → job FAILED. CI bypass: `VIDEO_ME_AUTO_APPROVE_PLAN=true`.
+- **Image candidate generation**: render_character generates N images per shot (default 3). `VlmImageCritiqueAdapter` (qwen2.5-vl:7b) scores all candidates on 5 dimensions and picks the best. Self-learning: each pick + human override is appended to `assets/kids_duo/critique_feedback.jsonl`; last 5 entries are injected as few-shot context on the next run.
+- **Human approval gate (images)**: after all shots are rendered and critiqued, web UI at `http://localhost:8766` shows a grid of winner images. Operator can override any pick, then clicks Approve. Overrides are written back to the feedback log. CI bypass: `VIDEO_ME_AUTO_APPROVE_IMAGES=true`.
+- **VLM model**: qwen2.5-vl:7b for image and video frame critique. Runs alongside qwen3.6:35b — both fit simultaneously on G200 (143 GB): ~30 GB + ~14 GB + ~44 GB (LTX) = ~88 GB peak.
 - **Shot duration**: 5–8s (2 words/sec, floor 5s, ceiling 8s).
 - **Resume**: `--resume-job JOB_ID` skips completed stages/shots. LTX completion marker: `clip.mp4`; Wan fallback: `synced.mp4`.
 - **Fallback adapters**: `VIDEO_ME_RENDER_ADAPTER=a1111` → A1111 + SD 1.5. `VIDEO_ME_VIDEO_ADAPTER=wan` → Wan 2.2 + MuseTalk.
@@ -29,6 +32,7 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 | Phase 1 — Full pipeline A1.0–A1.12 | ✅ COMPLETE (code) | — |
 | Phase 2 — Critic loop A2.x | ✅ COMPLETE (code) | Real VLM service needed for real judgment |
 | Plan critique + approval gate | ✅ COMPLETE (code) | — |
+| Image candidate critique + approval | ✅ COMPLETE (code) | — |
 | Track B — LoRAs + voice files | ⚠️ PARTIAL | SD 1.5 LoRAs trained; Flux LoRAs need retraining |
 | Track D — GPU services | ⚠️ Manual start required | Ollama ✅, ComfyUI needed, Chatterbox ✅ |
 | Track E — Compliance sign-off | ❌ PENDING | Operator hasn't signed off |
@@ -73,8 +77,15 @@ check_rights()  ◄─── BLOCKS job (status=BLOCKED) if rights_cleared=False
     ▼
 [approval gate]      Web UI localhost:8765 → human approves/rejects; 2nd rejection = FAILED
     │
-    ▼ (per shot)
-    ├── [render_character]   ComfyUI + Flux.1-dev + Flux LoRA → ImageSet (PNG)  [default]
+    ▼ (per shot — Phase A)
+    ├── [render_character ×N]  ComfyUI + Flux.1-dev + Flux LoRA → N candidate PNGs (default N=3)
+    └── [critique_images]      qwen2.5-vl:7b → picks best; logs to critique_feedback.jsonl
+    │
+    ▼
+[approve_images]     Web UI localhost:8766 → image grid; operator confirms/overrides per shot
+                     Overrides written back to feedback log (self-learning)
+    │
+    ▼ (per shot — Phase B, uses approved image)
     ├── [synthesize_voice]   Chatterbox TTS API → AudioTrack (WAV)
     ├── [generate_video]     LTX-Video 2.3 via ComfyUI → VideoClip (MP4, native lip-sync)  [default]
     └── [lip_sync]           MuseTalk — SKIPPED when VIDEO_ADAPTER=ltx (default)
@@ -121,7 +132,10 @@ The stage runner is `core/executor.py:run_stage()`. The Phase 1 DAG is
 | `adapters/generate_video/wan_adapter.py` | Wan 2.2 HTTP API (fallback) |
 | `adapters/lip_sync/lip_sync_adapter.py` | MuseTalk HTTP API (skipped when VIDEO_ADAPTER=ltx) |
 | `adapters/critique/plan_critique_adapter.py` | LLM plan critique — 5 dimensions, pass/revise |
-| `adapters/approval/web_approval_adapter.py` | Human approval web UI at localhost:8765 |
+| `adapters/critique/image_critique_adapter.py` | VLM image critique — N candidates → best pick; self-learning feedback log |
+| `adapters/approval/web_approval_adapter.py` | Human approval web UI at localhost:8765 (storyboard) |
+| `adapters/approval/image_approval_adapter.py` | Human image approval grid at localhost:8766; records overrides |
+| `assets/kids_duo/critique_feedback.jsonl` | Per-cast self-learning log (critique picks + human overrides) |
 | `adapters/assemble_video/ffmpeg_adapter.py` | ffmpeg subprocess |
 | `adapters/critique/vlm_adapter.py` | OpenAI-compatible VLM/LLM critique adapter |
 | `adapters/publish/manual_adapter.py` | local file copy + metadata.json |

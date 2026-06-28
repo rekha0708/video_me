@@ -10,6 +10,10 @@ from core.models.capabilities import (
     FetchMediaRequest,
     FetchMediaResult,
     FinalVideo,
+    ImageApprovalRequest,
+    ImageApprovalResult,
+    ImageCritiqueRequest,
+    ImageCritiqueResult,
     ImageSet,
     LipSyncRequest,
     MixAudioRequest,
@@ -82,6 +86,14 @@ class GenerateVideo(Capability[VideoRequest, VideoClip], ABC):
     # Subclasses that handle lip-sync natively (e.g. LtxAdapter) set this to True
     # so the workflow skips the separate lip_sync stage.
     native_lipsync: bool = False
+
+
+class CritiqueImages(Capability[ImageCritiqueRequest, ImageCritiqueResult], ABC):
+    name = "critique_images"
+
+
+class ApproveImages(Capability[ImageApprovalRequest, ImageApprovalResult], ABC):
+    name = "approve_images"
 
 
 class CritiquePlan(Capability[PlanCritiqueRequest, PlanCritiqueResult], ABC):

@@ -14,6 +14,9 @@ from core.models.capabilities import (
     CritiqueResult,
     FetchMediaRequest,
     FinalVideo,
+    ImageApprovalRequest,
+    ImageCritiqueRequest,
+    ImageCritiqueResult,
     LipSyncRequest,
     PlanShotsRequest,
     PublishRequest,
@@ -117,6 +120,8 @@ class _Adapters:
     plan: object
     plan_critique: object
     approval: object
+    image_critique: object
+    image_approval: object
     render: object
     voice: object
     video: object
@@ -135,6 +140,7 @@ def _make_render_adapter(s, work_dir: Path):
             work_dir=work_dir / "renders",
             base_url=s.comfyui_base_url,
             lora_dir=s.lora_dir,
+            num_images=s.image_candidates,
             allow_placeholder_lora=s.render_allow_placeholder_lora,
         )
     from adapters.render_character.diffusion_adapter import DiffusionRenderAdapter
@@ -168,7 +174,9 @@ def _make_adapters(config: AppConfig, work_dir: Path) -> _Adapters:
     from adapters.synthesize_voice.tts_adapter import TtsAdapter
     from adapters.transcribe.whisper_adapter import WhisperAdapter
 
+    from adapters.approval.image_approval_adapter import ImageApprovalAdapter
     from adapters.approval.web_approval_adapter import WebApprovalAdapter
+    from adapters.critique.image_critique_adapter import VlmImageCritiqueAdapter
     from adapters.critique.plan_critique_adapter import LlmPlanCritiqueAdapter
 
     s = config.settings
@@ -204,6 +212,19 @@ def _make_adapters(config: AppConfig, work_dir: Path) -> _Adapters:
             port=s.approval_port,
             timeout_hours=s.approval_timeout_hours,
             auto_approve=s.auto_approve_plan,
+        ),
+        image_critique=VlmImageCritiqueAdapter(
+            model=s.image_critique_model,
+            base_url=s.image_critique_base_url,
+            api_key=s.image_critique_api_key,
+            feedback_log_dir=s.feedback_log_dir,
+        ),
+        image_approval=ImageApprovalAdapter(
+            work_dir=work_dir,
+            feedback_log_path=Path(s.feedback_log_dir) / "critique_feedback.jsonl",
+            port=s.image_approval_port,
+            timeout_hours=s.image_approval_timeout_hours,
+            auto_approve=s.auto_approve_images,
         ),
         render=_make_render_adapter(s, work_dir),
         voice=TtsAdapter(
@@ -318,65 +339,38 @@ def _resolve_line(ref: str, script: Script):
     return script.scenes[scene_idx].lines[line_idx]
 
 
-async def _run_shot(
+async def _render_shot_candidates(
     shot: Shot,
-    script: Script,
     cast: Cast,
     adapters: _Adapters,
     work_dir: Path,
     options: RunOptions | None = None,
-) -> tuple[VideoClip, AudioTrack]:
-    """Run all four per-shot stages for one shot.
+) -> "ImageCritiqueResult":
+    """Phase A: render N candidates for one shot, critique them, return the winner.
 
-    Sequence: render_character → synthesize_voice → generate_video → lip_sync.
-    Returns (synced VideoClip, AudioTrack) so the caller can collect both.
-    When options.resume is True, stages whose output files already exist are skipped.
+    Runs render_character (N images) then VLM image critique.
+    Resume: if all candidate PNGs already exist, skips render and re-runs critique.
     """
+    from core.models.capabilities import ImageCritiqueRequest, ImageSet
+
     opts = options or RunOptions()
     member_map = {m.id: m for m in cast.members}
-
-    # Speaker is always characters_on_screen[0] (enforced by plan_shots trim_characters).
     speaker_id = shot.characters_on_screen[0]
     speaker = member_map[speaker_id]
 
-    # Resolve first dialogue line (plan_shots produces one line per shot).
-    first_line = (
-        _resolve_line(shot.dialogue_line_refs[0], script)
-        if shot.dialogue_line_refs
-        else None
-    )
-    expression = first_line.expression if first_line else None
-    line_text = first_line.text if first_line else ""
+    expression = None
+    render_dir = work_dir / "renders" / speaker_id
+    render_dir.mkdir(parents=True, exist_ok=True)
 
-    log_event(
-        logger, "shot_started",
-        shot_id=shot.shot_id, speaker=speaker_id, text_chars=len(line_text),
-    )
+    # Count expected candidates from the adapter's num_images setting
+    num_candidates = getattr(adapters.render, "_num_images", 1)
+    existing_pngs = sorted(render_dir.glob("render_??.png"))
 
-    # ── Resume shortcuts ──────────────────────────────────────────────────────
-    native_lipsync = getattr(adapters.video, "native_lipsync", False)
-    # When LTX is active, the finished artifact is clip.mp4 (lip-sync baked in).
-    # When Wan is active, the finished artifact is synced.mp4 (MuseTalk output).
-    if native_lipsync:
-        done_path = work_dir / "video" / shot.shot_id / "clip.mp4"
-    else:
-        done_path = work_dir / "synced" / shot.shot_id / "synced.mp4"
-
-    if opts.resume and done_path.exists():
-        logger.info("Skipping shot %s (%s exists)", shot.shot_id, done_path.name)
-        audio_files = sorted((work_dir / "audio" / speaker_id).glob("*.wav"))
-        audio_uri = str(audio_files[0]) if audio_files else str(done_path)
-        return (
-            VideoClip(uri=str(done_path), duration_sec=shot.duration_sec),
-            AudioTrack(uri=audio_uri, duration_sec=shot.duration_sec),
-        )
-
-    # ── 1. render_character ───────────────────────────────────────────────────
-    render_png = work_dir / "renders" / speaker_id / "render_00.png"
-    if opts.resume and render_png.exists():
-        logger.info("Skipping render_character for %s (render_00.png exists)", shot.shot_id)
-        from core.models.capabilities import ImageSet
-        render_result = ImageSet(member_id=speaker_id, images=[str(render_png)])
+    if opts.resume and len(existing_pngs) >= num_candidates:
+        logger.info("Skipping render_character for %s (all %d candidates exist)",
+                    shot.shot_id, num_candidates)
+        render_result = ImageSet(member_id=speaker_id,
+                                 images=[str(p) for p in existing_pngs[:num_candidates]])
     else:
         render_result = await adapters.render.run(
             RenderCharacterRequest(
@@ -386,7 +380,84 @@ async def _run_shot(
             )
         )
 
-    # ── 2. synthesize_voice ───────────────────────────────────────────────────
+    # Store candidate URIs on the critique result so the approval gate can serve them.
+    shot_prompt = f"{speaker.name} ({speaker.visual_descriptor}) in {shot.setting}; action: {shot.action}"
+    critique = await adapters.image_critique.run(
+        ImageCritiqueRequest(
+            shot_id=shot.shot_id,
+            shot_prompt=shot_prompt,
+            candidate_uris=render_result.images,
+            cast_descriptor=speaker.visual_descriptor,
+        )
+    )
+    # Attach candidate list so the approval adapter can serve them.
+    critique.candidate_uris = render_result.images  # type: ignore[attr-defined]
+    return critique
+
+
+async def _run_image_approval_gate(
+    shots: list[Shot],
+    critique_results: list["ImageCritiqueResult"],
+    adapters: _Adapters,
+) -> list[str]:
+    """Show the image approval grid UI; return approved URI per shot."""
+    from core.models.capabilities import ImageApprovalRequest
+
+    result = await adapters.image_approval.run(
+        ImageApprovalRequest(
+            shots=shots,
+            critique_results=critique_results,
+            cast_id="kids_duo",
+        )
+    )
+    return result.approved_uris
+
+
+async def _generate_shot_video(
+    shot: Shot,
+    script: Script,
+    cast: Cast,
+    adapters: _Adapters,
+    work_dir: Path,
+    image_uri: str,
+    options: RunOptions | None = None,
+) -> tuple[VideoClip, AudioTrack]:
+    """Phase B: synthesize voice + generate video for one shot using the approved image.
+
+    Skips stages whose output files already exist when opts.resume is True.
+    """
+    opts = options or RunOptions()
+    member_map = {m.id: m for m in cast.members}
+    speaker_id = shot.characters_on_screen[0]
+    speaker = member_map[speaker_id]
+
+    first_line = (
+        _resolve_line(shot.dialogue_line_refs[0], script)
+        if shot.dialogue_line_refs
+        else None
+    )
+    expression = first_line.expression if first_line else None
+    line_text = first_line.text if first_line else ""
+
+    native_lipsync = getattr(adapters.video, "native_lipsync", False)
+
+    if native_lipsync:
+        done_path = work_dir / "video" / shot.shot_id / "clip.mp4"
+    else:
+        done_path = work_dir / "synced" / shot.shot_id / "synced.mp4"
+
+    if opts.resume and done_path.exists():
+        logger.info("Skipping video generation for %s (%s exists)", shot.shot_id, done_path.name)
+        audio_files = sorted((work_dir / "audio" / speaker_id).glob("*.wav"))
+        audio_uri = str(audio_files[0]) if audio_files else str(done_path)
+        return (
+            VideoClip(uri=str(done_path), duration_sec=shot.duration_sec),
+            AudioTrack(uri=audio_uri, duration_sec=shot.duration_sec),
+        )
+
+    log_event(logger, "shot_video_started", shot_id=shot.shot_id, speaker=speaker_id)
+
+    # ── 1. synthesize_voice ───────────────────────────────────────────────────
     audio_files = sorted((work_dir / "audio" / speaker_id).glob("*.wav"))
     if opts.resume and audio_files:
         logger.info("Skipping synthesize_voice for %s (audio exists)", shot.shot_id)
@@ -401,7 +472,7 @@ async def _run_shot(
             )
         )
 
-    # ── 3. generate_video ─────────────────────────────────────────────────────
+    # ── 2. generate_video ─────────────────────────────────────────────────────
     clip_path = work_dir / "video" / shot.shot_id / "clip.mp4"
     if opts.resume and clip_path.exists():
         logger.info("Skipping generate_video for %s (clip.mp4 exists)", shot.shot_id)
@@ -409,7 +480,7 @@ async def _run_shot(
     else:
         clip = await adapters.video.run(
             VideoRequest(
-                image_uri=render_result.images[0],
+                image_uri=image_uri,
                 action=shot.action,
                 duration_sec=shot.duration_sec,
                 shot_id=shot.shot_id,
@@ -417,7 +488,7 @@ async def _run_shot(
             )
         )
 
-    # ── 4. lip_sync (skipped when video adapter handles it natively) ──────────
+    # ── 3. lip_sync (skipped when video adapter handles it natively) ──────────
     if native_lipsync:
         log_event(logger, "lip_sync_skipped", shot_id=shot.shot_id, reason="native_lipsync")
         synced = clip
@@ -738,9 +809,6 @@ async def _run_to_assembled_video(
         # Release LLM from VRAM before the GPU-heavy shot loop.
         _unload_ollama_model(config.settings.llm_base_url, config.settings.llm_model)
 
-        # 7. per-shot loop
-        synced_clips = []
-        audio_tracks = []
         shots_to_run = (
             [s for s in storyboard.shots if s.shot_id == opts.only_shot]
             if opts.only_shot
@@ -749,9 +817,23 @@ async def _run_to_assembled_video(
         if opts.only_shot and not shots_to_run:
             raise ValueError(f"Shot '{opts.only_shot}' not found in storyboard.")
 
+        # ── Phase A: render all candidates + VLM critique (sequential per shot) ──
+        critique_results = []
         for shot in shots_to_run:
-            synced, audio = await _run_shot(
-                shot, script, config.cast, adapters, ctx.work_dir, opts
+            cr = await _render_shot_candidates(shot, config.cast, adapters, ctx.work_dir, opts)
+            critique_results.append(cr)
+
+        # ── Image approval gate (single UI for all shots) ─────────────────────
+        approved_uris = await _run_image_approval_gate(
+            shots_to_run, critique_results, adapters
+        )
+
+        # ── Phase B: synthesize voice + generate video with approved image ─────
+        synced_clips = []
+        audio_tracks = []
+        for shot, image_uri in zip(shots_to_run, approved_uris):
+            synced, audio = await _generate_shot_video(
+                shot, script, config.cast, adapters, ctx.work_dir, image_uri, opts
             )
             synced_clips.append(synced)
             audio_tracks.append(audio)

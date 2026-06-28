@@ -122,6 +122,40 @@ class VideoClip(BaseModel):
     shot_id: str | None = None
 
 
+# ---------- critique_images ----------
+
+class ImageCandidateScore(BaseModel):
+    candidate_index: int
+    scores: dict[str, float] = Field(default_factory=dict)
+    reasoning: str = ""
+
+
+class ImageCritiqueRequest(BaseModel):
+    shot_id: str
+    shot_prompt: str          # human-readable description of setting + action
+    candidate_uris: list[str] # N local file paths (PNG)
+    cast_descriptor: str      # visual_descriptor of the speaking character
+    feedback_examples: list[dict] = Field(default_factory=list)  # few-shot from log
+
+
+class ImageCritiqueResult(BaseModel):
+    winner_index: int         # 0-based into candidate_uris
+    winner_uri: str
+    candidate_scores: list[ImageCandidateScore] = Field(default_factory=list)
+    overall_reasoning: str = ""
+
+
+class ImageApprovalRequest(BaseModel):
+    shots: list[Any]          # list[Shot] — avoids circular import
+    critique_results: list[ImageCritiqueResult]
+    cast_id: str
+
+
+class ImageApprovalResult(BaseModel):
+    approved_uris: list[str]              # one per shot (may be human-overridden)
+    overrides: dict[str, int] = Field(default_factory=dict)  # shot_id → candidate_index
+
+
 # ---------- critique_plan ----------
 
 class PlanCritiqueRequest(BaseModel):
