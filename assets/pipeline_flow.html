@@ -90,7 +90,7 @@
 <body>
 
 <h1>video_me · Complete Pipeline</h1>
-<p class="subtitle">ComfyUI + Flux.1-dev + LTX-Video 2.3 · Plan critique loop + human approval · June 2026</p>
+<p class="subtitle">Flux 2.0 Dev (32B) + LTX-Video 2.3 (22B) · Automated LoRA training · Plan critique + human approval · June 2026</p>
 
 <div class="legend">
   <div class="leg"><div class="dot" style="background:#1e88e5"></div>Unchanged</div>
@@ -102,20 +102,35 @@
 
 <!-- Track B -->
 <div class="section track-b">
-  <div class="section-label">⚙ Track B — One-time character training (before first run)</div>
+  <div class="section-label">⚙ Track B — Automated LoRA training (one-time, before first run) · NEW WORKFLOW</div>
+  <div style="font-size:11px;color:#555;margin-bottom:10px">
+    <strong>Cast:</strong> Max (5yo boy, primary educator) + Zoe (3yo girl, primary student) — ✅ required<br>
+    <strong>Optional:</strong> Mom + Dad (supporting parents) — add later for family scenes<br>
+    <strong>Time:</strong> ~7 hours for core cast (Max+Zoe), ~14 hours for all 4 characters
+  </div>
+  <div class="row" style="margin-bottom:8px">
+    <div class="card c-purple">
+      <div class="title">1 · Generate training images ✦</div>
+      <div class="sub">python scripts/generate_training_images.py --character max<br>
+      qwen3.6:35b refines prompts → Flux 2.0 generates → human approves at :8765<br>
+      20 images × ~30 sec = ~20 min active time per character</div>
+    </div>
+    <div class="card c-purple">
+      <div class="title">2 · Train Flux 2.0 LoRA ✦</div>
+      <div class="sub">kohya_ss · accelerate launch flux_train_network.py<br>
+      Flux 2.0 format · rank 32 · bf16 · 25 epochs · ~3 hours hands-off</div>
+    </div>
+  </div>
   <div class="row">
     <div class="card c-purple">
-      <div class="title">1 · Upload reference images</div>
-      <div class="sub">scripts/upload_reference_images.py<br>20+ photos per character, auto-captioned</div>
+      <div class="title">3 · Verify &amp; use</div>
+      <div class="sub">python -m scripts.check_track_b<br>
+      Output: loras/kids_duo_max.safetensors (~50 MB)<br>
+      loras/kids_duo_zoe.safetensors (~50 MB)</div>
     </div>
-    <div class="card c-purple">
-      <div class="title">2 · Train Flux LoRA</div>
-      <div class="sub">kohya_ss · flux_train_network.py<br>rank 32 · bf16 · 1024px</div>
-    </div>
-    <div class="card c-purple">
-      <div class="title">3 · Place LoRA weights</div>
-      <div class="sub">loras/kids_duo_max.safetensors<br>loras/kids_duo_zoe.safetensors</div>
-    </div>
+  </div>
+  <div style="font-size:10px;color:#888;margin-top:8px;text-align:center">
+    📖 See LORA_TRAINING_AUTOMATED.md + assets/kids_duo/training/CHARACTER_DESIGNS.md for full workflow
   </div>
 </div>
 
@@ -209,7 +224,7 @@
   <div class="row">
     <div class="card c-green">
       <div class="title">render_character ×3 ✦</div>
-      <div class="sub">ComfyUI + Flux.1-dev + Flux LoRA<br>3 candidate PNGs per shot · 20 steps · port 8188<br><em style="font-size:10px">VIDEO_ME_IMAGE_CANDIDATES=3</em></div>
+      <div class="sub">ComfyUI + Flux 2.0 Dev (32B) + Flux LoRA<br>3 candidate PNGs per shot · 20 steps · port 8188<br><em style="font-size:10px">VIDEO_ME_IMAGE_CANDIDATES=3</em></div>
     </div>
     <div class="card c-green">
       <div class="title">critique_images ✦</div>
@@ -240,9 +255,9 @@
 <div class="shot-box">
   <div class="shot-label">Phase B — per shot: voice synthesis + video generation</div>
   <div class="row">
-    <div class="card c-blue">
-      <div class="title">synthesize_voice</div>
-      <div class="sub">Chatterbox TTS → AudioTrack (WAV)<br>port 8020</div>
+    <div class="card c-green">
+      <div class="title">synthesize_voice ✦</div>
+      <div class="sub">Fish Audio S2 → AudioTrack (WAV) · EN + Hindi support<br>port 8025 · Fallback: Chatterbox TTS :8020</div>
     </div>
     <div class="card c-green">
       <div class="title">generate_video ✦</div>
@@ -292,12 +307,13 @@
   <div class="svc-row">
     <div class="svc-col">
       <h4>✅ Required (default)</h4>
-      <div class="svc-item svc-new">● Ollama <span class="port">:11434</span> LLM + VLM critique</div>
-      <div class="svc-item svc-new">● ComfyUI ✦ <span class="port">:8188</span> Flux image gen + LTX video gen <em style="color:#aaa;font-size:10px">(replaces A1111 + Wan)</em></div>
-      <div class="svc-item">● Chatterbox TTS <span class="port">:8020</span> voice synthesis</div>
+      <div class="svc-item svc-new">● Ollama <span class="port">:11434</span> qwen3.6:35b (LLM + VLM, natively multimodal)</div>
+      <div class="svc-item svc-new">● ComfyUI ✦ <span class="port">:8188</span> Flux 2.0 Dev image gen + LTX-2.3 22B video gen</div>
+      <div class="svc-item svc-new">● Fish Audio S2 ✦ <span class="port">:8025</span> voice synthesis (EN + Hindi) <em style="color:#aaa;font-size:10px">(replaces Chatterbox)</em></div>
     </div>
     <div class="svc-col">
       <h4>⚠ Fallback (env var switch)</h4>
+      <div class="svc-item svc-old">○ Chatterbox TTS <span class="port">:8020</span> TTS_ADAPTER=chatterbox (EN only)</div>
       <div class="svc-item svc-old">○ AUTOMATIC1111 <span class="port">:7860</span> RENDER_ADAPTER=a1111</div>
       <div class="svc-item svc-old">○ Wan 2.2 server <span class="port">:8030</span> VIDEO_ADAPTER=wan</div>
       <div class="svc-item svc-old">○ MuseTalk <span class="port">:8040</span> VIDEO_ADAPTER=wan (lip-sync)</div>
