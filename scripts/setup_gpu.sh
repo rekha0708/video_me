@@ -14,11 +14,12 @@ SKIP_SYSTEM_DEPS=0
 SKIP_PYTHON_DEPS=0
 SKIP_SERVICES=0
 SKIP_OLLAMA=0
-SKIP_A1111=0
+SKIP_COMFYUI=0
 SKIP_FISH_S2=0
+SKIP_A1111=1
 SKIP_CHATTERBOX=1
-SKIP_WAN=0
-SKIP_MUSETALK=0
+SKIP_WAN=1
+SKIP_MUSETALK=1
 SKIP_ENV_FILE=0
 ALLOW_MISSING_SERVICES=0
 CODE_TEST=0
@@ -38,10 +39,15 @@ Full GPU-machine setup for video_me on RunPod (or any Ubuntu+CUDA box):
   2. Install system packages  (ffmpeg, yt-dlp, curl, git)
   3. Create Python venv + install runtime extras
   4. Install Ollama + pull qwen3.6:35b (LLM + VLM for all stages)
-  5. Clone + configure AUTOMATIC1111 + download SD 1.5 model
-  6. Write .env with GPU-correct settings
-  7. Write scripts/start_services.sh (start all Track D services in one command)
+  5. Clone + set up ComfyUI (Flux.1-dev image gen + LTX-Video 2.3 video gen)
+  6. Clone + set up Fish Audio S2 TTS (EN + HI, port 8025)
+  7. Write .env with GPU-correct settings
   8. Run runtime readiness check
+
+  Fallback services (opt-in only, not installed by default):
+    --with-a1111        AUTOMATIC1111 + SD 1.5  (RENDER_ADAPTER=a1111)
+    --with-chatterbox   Chatterbox TTS           (TTS_ADAPTER=chatterbox)
+    --with-wan          Wan 2.2 + MuseTalk       (VIDEO_ADAPTER=wan)
 
 Network volume (RunPod):
   Models and service repos are placed under WORKSPACE (default /workspace) so
@@ -53,11 +59,11 @@ Options:
   --skip-system-deps        Skip apt-get installs
   --skip-python-deps        Skip pip install
   --skip-ollama             Skip Ollama install + model pull
-  --skip-a1111              Skip AUTOMATIC1111 setup
+  --skip-comfyui            Skip ComfyUI install (Flux + LTX, default render/video)
   --skip-fish-s2            Skip Fish Audio S2 install (default TTS, port 8025)
+  --with-a1111              Also install AUTOMATIC1111 (SD 1.5 render fallback, port 7860)
   --with-chatterbox         Also install Chatterbox TTS (EN-only fallback, port 8020)
-  --skip-wan                Skip Wan2.2 install + model download
-  --skip-musetalk           Skip MuseTalk install + weight download
+  --with-wan                Also install Wan2.2 + MuseTalk (video/lipsync fallback)
   --skip-env-file           Do not write .env (keep existing)
   --skip-services           Skip service HTTP checks in final readiness
   --allow-missing-services  Treat missing services as warnings not failures
@@ -70,14 +76,17 @@ Options:
   -h, --help                Show this help
 
 Quick commands:
-  # Full first-time setup on a fresh RunPod pod:
+  # Full first-time setup on a fresh RunPod pod (default stack only):
   bash scripts/setup_gpu.sh
+
+  # Full setup + fallback adapters:
+  bash scripts/setup_gpu.sh --with-a1111 --with-chatterbox --with-wan
 
   # Dry-run to preview all steps:
   bash scripts/setup_gpu.sh --dry-run
 
   # Code-only smoke test (no GPU, no services):
-  bash scripts/setup_gpu.sh --code-test --skip-services --skip-ollama --skip-a1111 --skip-fish-s2
+  bash scripts/setup_gpu.sh --code-test --skip-services --skip-ollama --skip-comfyui --skip-fish-s2
 
   # After pod restart (services not running, everything already installed):
   bash scripts/start_services.sh
@@ -106,9 +115,13 @@ while [[ $# -gt 0 ]]; do
     --skip-system-deps)   SKIP_SYSTEM_DEPS=1; shift ;;
     --skip-python-deps)   SKIP_PYTHON_DEPS=1; shift ;;
     --skip-ollama)        SKIP_OLLAMA=1; shift ;;
-    --skip-a1111)         SKIP_A1111=1; shift ;;
+    --skip-comfyui)       SKIP_COMFYUI=1; shift ;;
     --skip-fish-s2)       SKIP_FISH_S2=1; shift ;;
+    --with-a1111)         SKIP_A1111=0; shift ;;
     --with-chatterbox)    SKIP_CHATTERBOX=0; shift ;;
+    --with-wan)           SKIP_WAN=0; SKIP_MUSETALK=0; shift ;;
+    # kept for back-compat but now defaults to skip
+    --skip-a1111)         SKIP_A1111=1; shift ;;
     --skip-wan)           SKIP_WAN=1; shift ;;
     --skip-musetalk)      SKIP_MUSETALK=1; shift ;;
     --skip-env-file)      SKIP_ENV_FILE=1; shift ;;
@@ -255,7 +268,87 @@ setup_ollama() {
   fi
 }
 
-# ── Step 5: AUTOMATIC1111 ────────────────────────────────────────────────────
+# ── Step 5: ComfyUI (Flux.1-dev + LTX-Video 2.3) ────────────────────────────
+setup_comfyui() {
+  log "Setting up ComfyUI (Flux.1-dev image gen + LTX-Video 2.3 video gen, port 8188)"
+
+  local comfyui_dir="$WORKSPACE/ComfyUI"
+
+  if [[ ! -d "$comfyui_dir" ]]; then
+    run git clone https://github.com/comfyanonymous/ComfyUI.git "$comfyui_dir"
+  else
+    ok "ComfyUI already cloned at $comfyui_dir"
+    run git -C "$comfyui_dir" pull --ff-only || warn "git pull failed — continuing with existing checkout"
+  fi
+
+  # ComfyUI requirements (uses system torch via --system-site-packages not needed;
+  # ComfyUI manages its own deps under the standard venv or base Python).
+  run pip3 install -r "$comfyui_dir/requirements.txt" || \
+      warn "Some ComfyUI deps may have failed — check $comfyui_dir/requirements.txt"
+
+  # Custom node managers and node packages for Flux + LTX
+  local custom_nodes="$comfyui_dir/custom_nodes"
+  if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$custom_nodes"; fi
+
+  # ComfyUI-Manager (optional but useful for installing Flux/LTX nodes via UI)
+  if [[ ! -d "$custom_nodes/ComfyUI-Manager" ]]; then
+    run git clone https://github.com/ltdrdata/ComfyUI-Manager.git \
+        "$custom_nodes/ComfyUI-Manager"
+  else
+    ok "ComfyUI-Manager already installed"
+  fi
+
+  # Model directories
+  local models_dir="$comfyui_dir/models"
+  if [[ "$DRY_RUN" == "0" ]]; then
+    mkdir -p "$models_dir/checkpoints" "$models_dir/loras" \
+             "$models_dir/vae" "$models_dir/clip" "$models_dir/unet"
+  fi
+
+  # Download Flux.1-dev model (~24 GB) — requires HF token (gated model)
+  local flux_model="$models_dir/unet/flux1-dev.safetensors"
+  if [[ ! -f "$flux_model" ]]; then
+    if [[ -n "$HF_TOKEN" ]]; then
+      log "Downloading Flux.1-dev model (~24 GB)"
+      run huggingface-cli download black-forest-labs/FLUX.1-dev \
+          flux1-dev.safetensors --local-dir "$models_dir/unet" \
+          --token "$HF_TOKEN"
+      ok "Flux.1-dev downloaded to $flux_model"
+    else
+      warn "Flux.1-dev not downloaded — set HF_TOKEN and re-run, or download manually."
+      warn "  huggingface-cli download black-forest-labs/FLUX.1-dev flux1-dev.safetensors \\"
+      warn "      --local-dir $models_dir/unet --token YOUR_HF_TOKEN"
+    fi
+  else
+    ok "Flux.1-dev already at $flux_model"
+  fi
+
+  # Download LTX-Video 2.3 model (~12 GB)
+  local ltx_model="$models_dir/checkpoints/ltx-video-2b-v0.9.5.safetensors"
+  if [[ ! -f "$ltx_model" ]]; then
+    log "Downloading LTX-Video 2.3 model (~12 GB)"
+    run huggingface-cli download Lightricks/LTX-Video \
+        ltx-video-2b-v0.9.5.safetensors --local-dir "$models_dir/checkpoints" \
+        ${HF_TOKEN:+--token "$HF_TOKEN"}
+    ok "LTX-Video 2.3 downloaded to $ltx_model"
+  else
+    ok "LTX-Video 2.3 already at $ltx_model"
+  fi
+
+  # Symlink project LoRA dir into ComfyUI's loras folder
+  local lora_link="$models_dir/loras/kids_duo"
+  local lora_src="$ROOT_DIR/loras"
+  if [[ ! -e "$lora_link" ]]; then
+    run ln -s "$lora_src" "$lora_link"
+    ok "Symlinked $lora_src → $lora_link"
+  else
+    ok "ComfyUI LoRA symlink already exists at $lora_link"
+  fi
+
+  ok "ComfyUI setup complete (dir: $comfyui_dir)"
+}
+
+# ── Step 5b: AUTOMATIC1111 (fallback — opt-in only) ──────────────────────────
 setup_a1111() {
   log "Setting up AUTOMATIC1111 Stable Diffusion Web UI"
 
@@ -587,12 +680,18 @@ if [[ "$SKIP_OLLAMA" == "0" ]]; then
   setup_ollama
 fi
 
-if [[ "$SKIP_A1111" == "0" ]]; then
-  setup_a1111
+# Default stack
+if [[ "$SKIP_COMFYUI" == "0" ]]; then
+  setup_comfyui
 fi
 
 if [[ "$SKIP_FISH_S2" == "0" ]]; then
   setup_fish_s2
+fi
+
+# Fallback adapters (opt-in via --with-*)
+if [[ "$SKIP_A1111" == "0" ]]; then
+  setup_a1111
 fi
 
 if [[ "$SKIP_CHATTERBOX" == "0" ]]; then
@@ -626,7 +725,7 @@ printf '  Next steps:\n'
 printf '    1. bash scripts/start_services.sh     # start all services\n'
 printf '    2. python -m scripts.check_runtime_readiness   # verify all PASS\n'
 printf '    3. python -m scripts.check_track_b    # verify LoRA + voice files\n'
-printf '    4. python -m pytest -q                # confirm 313 tests pass\n'
+printf '    4. python -m pytest -q                # confirm 312+ tests pass\n'
 printf '\n'
 printf '  Then run the pipeline:\n'
 printf '    python -c "import asyncio; from core.config import load_app_config; from core.workflow import run_with_critique; config = load_app_config(); job = asyncio.run(run_with_critique(source_url='"'"'YOUR_URL'"'"', rights_cleared=True, app_config=config)); print(job.status)"\n'
