@@ -139,7 +139,9 @@ elif curl -sf http://localhost:8030/health >/dev/null 2>&1; then
   ok "Wan2.2 already responding"
 else
   cd "$ROOT_DIR"
-  WAN_DIR="$WORKSPACE/Wan2.2" WAN_MODEL_DIR="$WORKSPACE/Wan2.2-I2V-A14B" \
+  # wan package is installed as an editable package in .venv_wan so WAN_DIR is
+  # only needed as an existence guard; use the inner repo dir so the path check passes.
+  WAN_DIR="$WORKSPACE/Wan2.2/Wan2.2" WAN_MODEL_DIR="$WORKSPACE/Wan2.2-I2V-A14B" \
   nohup "$WORKSPACE/.venv_wan/bin/uvicorn" services.wan_server:app \
     --host 0.0.0.0 --port 8030 >"$LOG_DIR/wan.log" 2>&1 &
   ok "Wan2.2 starting (log: $LOG_DIR/wan.log)"

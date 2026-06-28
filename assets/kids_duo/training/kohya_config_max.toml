@@ -1,0 +1,63 @@
+# kohya_ss Flux LoRA training config — Max (kids_duo)
+# Run from /workspace/video_me:
+#   accelerate launch /workspace/sd-scripts/flux_train_network.py \
+#     --config_file assets/kids_duo/training/kohya_config_max.toml
+
+[model_arguments]
+pretrained_model_name_or_path = "/workspace/ComfyUI/models/diffusion_models/flux2-dev.safetensors"
+clip_l                        = "/workspace/ComfyUI/models/text_encoders/clip_l.safetensors"
+t5xxl                         = "/workspace/ComfyUI/models/text_encoders/t5xxl_fp8_e4m3fn.safetensors"
+ae                            = "/workspace/ComfyUI/models/diffusion_models/ae.safetensors"
+
+[output_arguments]
+output_dir           = "/workspace/video_me/loras/"
+output_name          = "kids_duo_max"
+save_model_as        = "safetensors"
+save_every_n_epochs  = 5
+
+[training_arguments]
+max_train_epochs            = 25
+train_batch_size            = 4
+gradient_accumulation_steps = 1
+learning_rate               = 1e-4
+unet_lr                     = 1e-4
+text_encoder_lr             = 5e-5
+lr_scheduler                = "cosine_with_restarts"
+lr_warmup_steps             = 50
+optimizer_type              = "AdamW8bit"
+mixed_precision             = "bf16"
+save_precision              = "bf16"
+seed                        = 42
+fp8_base                    = true   # loads T5+FLUX in fp8, saves ~40 GB VRAM
+
+[network_arguments]
+network_module = "networks.lora_flux"
+network_dim    = 32
+network_alpha  = 16
+
+[dataset_arguments]
+cache_latents = true
+
+[[dataset.general]]
+resolution       = 1024
+min_bucket_reso  = 768
+max_bucket_reso  = 2048
+batch_size       = 4
+keep_tokens      = 1
+
+[[dataset.general.subsets]]
+image_dir         = "/workspace/video_me/assets/kids_duo/training/images/max"
+caption_extension = ".txt"
+num_repeats       = 60
+
+[sample_prompt_arguments]
+sample_every_n_epochs = 5
+sample_sampler        = "euler"
+sample_scheduler      = "normal"
+
+[[sample_prompts]]
+prompt = "kids_duo_max, 5-year-old cartoon boy, blue and white striped t-shirt, pointing finger up, teaching expression, soft cartoon illustration, clean white background"
+width  = 1024
+height = 1024
+steps  = 20
+scale  = 3.5

@@ -587,31 +587,59 @@ setup_chatterbox() {
 # ── Step 6b: Wan 2.2 ─────────────────────────────────────────────────────────
 setup_wan() {
   log "Setting up Wan2.2 image-to-video (port 8030)"
+  # Wan2.2 is a fallback video adapter (VIDEO_ADAPTER=wan). The default adapter
+  # is LTX-2.3 via ComfyUI — only install Wan if you need the fallback path.
+  #
+  # Clone layout: git clone → $WORKSPACE/Wan2.2/Wan2.2/ (repo root with wan/ pkg)
+  # The wan Python package is installed as editable so `import wan` works without
+  # sys.path tricks. WAN_DIR in start_services.sh points to the inner repo root.
 
-  local wan_dir="$WORKSPACE/Wan2.2"
+  local wan_outer="$WORKSPACE/Wan2.2"
+  local wan_dir="$WORKSPACE/Wan2.2/Wan2.2"   # repo root containing wan/ package
   local wan_model_dir="$WORKSPACE/Wan2.2-I2V-A14B"
+  local venv_dir="$WORKSPACE/.venv_wan"
 
   if [[ ! -d "$wan_dir" ]]; then
-    run git clone https://github.com/Wan-Video/Wan2.2.git "$wan_dir"
+    run git clone https://github.com/Wan-Video/Wan2.2.git "$wan_outer"
   else
     ok "Wan2.2 already cloned at $wan_dir"
     run git -C "$wan_dir" pull --ff-only || warn "git pull failed — continuing"
   fi
 
-  # flash_attn requires compilation and often fails — install everything else first,
-  # then attempt flash_attn via --no-build-isolation (uses already-built torch headers)
-  log "Installing Wan2.2 requirements (excluding flash_attn)"
-  grep -v -i "flash.attn\|flash_attn" "$wan_dir/requirements.txt" > /tmp/wan_req_noflash.txt
-  run "$PYTHON_BIN" -m pip install -r /tmp/wan_req_noflash.txt
+  if [[ ! -d "$venv_dir" ]]; then
+    log "Creating $venv_dir (system-site-packages for torch 2.8.0+cu128)"
+    run python3 -m venv --system-site-packages "$venv_dir"
+  else
+    ok "Wan2.2 venv already exists at $venv_dir"
+  fi
 
-  log "Installing flash_attn (pre-built, no compilation)"
-  run "$PYTHON_BIN" -m pip install flash-attn --no-build-isolation || \
-      warn "flash_attn install failed — Wan2.2 will run without flash attention (slower but functional)"
+  local pip="$venv_dir/bin/pip"
+  run "$pip" install --upgrade pip
 
-  run "$PYTHON_BIN" -m pip install "huggingface_hub[cli]" hf_transfer fastapi uvicorn
+  # Core deps — numpy must be ≥2.0 to satisfy system scipy (1.18+)
+  run "$pip" install \
+      opencv-python "diffusers>=0.31.0" "transformers>=4.49.0,<=4.51.3" \
+      "tokenizers>=0.20.3" "accelerate>=1.1.1" tqdm "imageio[ffmpeg]" \
+      easydict ftfy "numpy>=2.0,<2.3" dashscope \
+      decord librosa rotary-embedding-torch peft \
+      fastapi uvicorn python-multipart \
+      huggingface_hub hf_transfer || warn "Some Wan deps may have failed"
 
-  if [[ ! -d "$wan_model_dir" ]]; then
+  # Install wan as an editable package (avoids WAN_DIR sys.path manipulation)
+  run "$pip" install -e "$wan_dir" --no-deps
+
+  # flash_attn — compile from source using system CUDA headers
+  if ! "$venv_dir/bin/python" -c "import flash_attn" 2>/dev/null; then
+    log "Building flash_attn (~10-15 min, CUDA compilation)"
+    run "$pip" install flash-attn --no-build-isolation || \
+        warn "flash_attn build failed — Wan2.2 will run without flash attention (slower)"
+  else
+    ok "flash_attn already installed"
+  fi
+
+  if [[ ! -d "$wan_model_dir" ]] || [[ -z "$(ls -A "$wan_model_dir" 2>/dev/null)" ]]; then
     log "Downloading Wan2.2-I2V-A14B model (~30 GB) — this will take a while"
+    if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$wan_model_dir"; fi
     run env HF_HUB_ENABLE_HF_TRANSFER=0 ${HF_TOKEN:+HF_TOKEN="$HF_TOKEN"} \
         hf download Wan-AI/Wan2.2-I2V-A14B --local-dir "$wan_model_dir"
     ok "Wan2.2-I2V-A14B downloaded to $wan_model_dir"

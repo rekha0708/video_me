@@ -25,3 +25,6 @@ voices/**/*.flac
 
 # Local training output logs. Model weights are ignored above.
 training_logs/
+
+# musubi-tuner pre-cache (latents + text encoder outputs) — large binary files.
+assets/kids_duo/training/cache/

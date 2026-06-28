@@ -1,0 +1,11 @@
+[general]
+resolution = [1024, 1024]
+caption_extension = ".txt"
+batch_size = 4
+enable_bucket = true
+bucket_no_upscale = false
+
+[[datasets]]
+image_directory = "/workspace/video_me/assets/kids_duo/training/images/zoe"
+cache_directory = "/workspace/video_me/assets/kids_duo/training/cache/zoe"
+num_repeats = 60
