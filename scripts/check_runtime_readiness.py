@@ -158,18 +158,31 @@ def _join_url(base_url: str, suffix: str) -> str:
     return f"{base_url.rstrip('/')}/{suffix.lstrip('/')}"
 
 
-def _service_urls(settings: Settings) -> list[tuple[str, str]]:
-    return [
-        ("LLM OpenAI-compatible API", _join_url(settings.llm_base_url, "models")),
-        (
-            "Critique OpenAI-compatible API",
-            _join_url(settings.critique_base_url, "models"),
-        ),
-        ("AUTOMATIC1111 Stable Diffusion", _join_url(settings.sd_base_url, "sdapi/v1/sd-models")),
-        ("Chatterbox TTS", _join_url(settings.tts_base_url, "health")),
-        ("Wan image-to-video", _join_url(settings.wan_base_url, "health")),
-        ("Wav2Lip lip sync", _join_url(settings.lipsync_base_url, "health")),
+def _service_urls(settings: Settings) -> list[tuple[str, str, bool]]:
+    """Return (name, url, required) tuples. required=False means WARN on failure."""
+    urls: list[tuple[str, str, bool]] = [
+        # Required: always needed
+        ("Ollama LLM/VLM API", _join_url(settings.llm_base_url, "models"), True),
     ]
+
+    # Render backend
+    if settings.render_adapter == "comfyui_flux":
+        urls.append(("ComfyUI (Flux.1-dev + LTX)", settings.comfyui_base_url + "/", True))
+    else:
+        urls.append(("AUTOMATIC1111 (fallback)", _join_url(settings.sd_base_url, "sdapi/v1/sd-models"), True))
+
+    # TTS backend
+    if settings.tts_adapter == "fish_s2":
+        urls.append(("Fish Audio S2 TTS", _join_url(settings.fish_s2_base_url, "health"), True))
+    else:
+        urls.append(("Chatterbox TTS (fallback)", _join_url(settings.tts_base_url, "health"), True))
+
+    # Video backend (Wan + MuseTalk only needed when VIDEO_ADAPTER=wan)
+    if settings.video_adapter == "wan":
+        urls.append(("Wan image-to-video (fallback)", _join_url(settings.wan_base_url, "health"), True))
+        urls.append(("MuseTalk lip-sync (fallback)", _join_url(settings.lipsync_base_url, "health"), True))
+
+    return urls
 
 
 def _url_ok(
@@ -197,12 +210,13 @@ def check_service_health(
     urlopen: Callable = urllib.request.urlopen,
 ) -> list[CheckResult]:
     results: list[CheckResult] = []
-    for name, url in _service_urls(settings):
+    for name, url, required in _service_urls(settings):
         ok, detail = _url_ok(url, timeout=timeout, urlopen=urlopen)
         if ok:
             results.append(CheckResult(f"Service: {name}", PASS, f"{url} ({detail})"))
         else:
-            status = WARN if allow_missing_services else FAIL
+            # Non-required services always WARN; required services FAIL unless allow_missing
+            status = WARN if (allow_missing_services or not required) else FAIL
             results.append(CheckResult(f"Service: {name}", status, f"{url} ({detail})"))
     return results
 

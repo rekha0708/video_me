@@ -15,7 +15,8 @@ SKIP_PYTHON_DEPS=0
 SKIP_SERVICES=0
 SKIP_OLLAMA=0
 SKIP_A1111=0
-SKIP_CHATTERBOX=0
+SKIP_FISH_S2=0
+SKIP_CHATTERBOX=1
 SKIP_WAN=0
 SKIP_MUSETALK=0
 SKIP_ENV_FILE=0
@@ -36,7 +37,7 @@ Full GPU-machine setup for video_me on RunPod (or any Ubuntu+CUDA box):
   1. Verify CUDA / GPU
   2. Install system packages  (ffmpeg, yt-dlp, curl, git)
   3. Create Python venv + install runtime extras
-  4. Install Ollama + pull qwen2.5:7b and llava:7b
+  4. Install Ollama + pull qwen3.6:35b (LLM + VLM for all stages)
   5. Clone + configure AUTOMATIC1111 + download SD 1.5 model
   6. Write .env with GPU-correct settings
   7. Write scripts/start_services.sh (start all Track D services in one command)
@@ -53,7 +54,8 @@ Options:
   --skip-python-deps        Skip pip install
   --skip-ollama             Skip Ollama install + model pull
   --skip-a1111              Skip AUTOMATIC1111 setup
-  --skip-chatterbox         Skip Chatterbox TTS install
+  --skip-fish-s2            Skip Fish Audio S2 install (default TTS, port 8025)
+  --with-chatterbox         Also install Chatterbox TTS (EN-only fallback, port 8020)
   --skip-wan                Skip Wan2.2 install + model download
   --skip-musetalk           Skip MuseTalk install + weight download
   --skip-env-file           Do not write .env (keep existing)
@@ -75,7 +77,7 @@ Quick commands:
   bash scripts/setup_gpu.sh --dry-run
 
   # Code-only smoke test (no GPU, no services):
-  bash scripts/setup_gpu.sh --code-test --skip-services --skip-ollama --skip-a1111
+  bash scripts/setup_gpu.sh --code-test --skip-services --skip-ollama --skip-a1111 --skip-fish-s2
 
   # After pod restart (services not running, everything already installed):
   bash scripts/start_services.sh
@@ -105,7 +107,8 @@ while [[ $# -gt 0 ]]; do
     --skip-python-deps)   SKIP_PYTHON_DEPS=1; shift ;;
     --skip-ollama)        SKIP_OLLAMA=1; shift ;;
     --skip-a1111)         SKIP_A1111=1; shift ;;
-    --skip-chatterbox)    SKIP_CHATTERBOX=1; shift ;;
+    --skip-fish-s2)       SKIP_FISH_S2=1; shift ;;
+    --with-chatterbox)    SKIP_CHATTERBOX=0; shift ;;
     --skip-wan)           SKIP_WAN=1; shift ;;
     --skip-musetalk)      SKIP_MUSETALK=1; shift ;;
     --skip-env-file)      SKIP_ENV_FILE=1; shift ;;
@@ -234,21 +237,21 @@ setup_ollama() {
   fi
 
   # Start Ollama server in background for model pulls, stop it after
-  log "Pulling Ollama models (qwen2.5:7b + llava:7b)"
+  # qwen3.6:35b handles ALL stages: text LLM + image critique + video critique (one model).
+  # ~30 GB VRAM. G200 budget: qwen3.6:35b (~30 GB) + LTX (~44 GB) + Fish S2 (~20 GB) = ~94 GB peak.
+  log "Pulling Ollama models (qwen3.6:35b — all stages)"
   if [[ "$DRY_RUN" == "0" ]]; then
     OLLAMA_MODELS="$WORKSPACE/ollama" nohup ollama serve &>/tmp/ollama_setup.log &
     OLLAMA_PID=$!
     sleep 5  # give server time to start
 
-    ollama pull qwen2.5:7b  || warn "qwen2.5:7b pull failed — retry manually: ollama pull qwen2.5:7b"
-    ollama pull llava:7b     || warn "llava:7b pull failed — retry manually: ollama pull llava:7b"
+    ollama pull qwen3.6:35b || warn "qwen3.6:35b pull failed — retry manually: ollama pull qwen3.6:35b"
 
     kill "$OLLAMA_PID" 2>/dev/null || true
     wait "$OLLAMA_PID" 2>/dev/null || true
     ok "Ollama models pulled to $WORKSPACE/ollama"
   else
-    run ollama pull qwen2.5:7b
-    run ollama pull llava:7b
+    run ollama pull qwen3.6:35b
   fi
 }
 
@@ -297,10 +300,39 @@ setup_a1111() {
   fi
 }
 
-# ── Step 6a: Chatterbox TTS ──────────────────────────────────────────────────
+# ── Step 6a: Fish Audio S2 TTS ───────────────────────────────────────────────
+setup_fish_s2() {
+  log "Setting up Fish Audio S2 TTS (port 8025, EN + HI + 80 languages)"
+  # Fish Audio S2 runs as a self-hosted HTTP server with voice cloning.
+  # Requires a dedicated venv with system-site-packages for torch 2.8.0+cu128.
+  local fish_dir="$WORKSPACE/fish-speech"
+  local venv_dir="$WORKSPACE/.venv_fish_s2"
+
+  if [[ ! -d "$fish_dir" ]]; then
+    run git clone https://github.com/fishaudio/fish-speech.git "$fish_dir"
+  else
+    ok "Fish Speech already cloned at $fish_dir"
+    run git -C "$fish_dir" pull --ff-only || warn "git pull failed — continuing"
+  fi
+
+  if [[ ! -d "$venv_dir" ]]; then
+    log "Creating $venv_dir (system-site-packages for torch 2.8.0+cu128)"
+    run python3 -m venv --system-site-packages "$venv_dir"
+  else
+    ok "Fish S2 venv already exists at $venv_dir"
+  fi
+
+  local pip="$venv_dir/bin/pip"
+  run "$pip" install --upgrade pip
+  run "$pip" install -r "$fish_dir/requirements.txt" || warn "Some Fish S2 deps may have failed"
+  run "$pip" install fastapi uvicorn python-multipart
+
+  ok "Fish Audio S2 installed (venv: $venv_dir)"
+}
+
+# ── Step 6a-fallback: Chatterbox TTS (optional, EN-only fallback) ────────────
 setup_chatterbox() {
-  log "Setting up Chatterbox TTS (port 8020)"
-  # Chatterbox is a pip package — installs into the main venv
+  log "Setting up Chatterbox TTS (port 8020, EN-only fallback)"
   run "$PYTHON_BIN" -m pip install chatterbox-tts torchaudio fastapi uvicorn
   ok "Chatterbox TTS installed"
 }
@@ -464,11 +496,28 @@ VIDEO_ME_REVIEW_DIR=$WORKSPACE/video_me/review
 VIDEO_ME_LORA_DIR=$ROOT_DIR/loras
 VIDEO_ME_VOICE_DIR=$ROOT_DIR/voices
 
-VIDEO_ME_LLM_MODEL=qwen2.5:7b
+# Single model for all stages: text LLM + image critique + video critique
+# qwen3.6:35b (MoE 35B, natively multimodal, ~30 GB VRAM)
+VIDEO_ME_LLM_MODEL=qwen3.6:35b
 VIDEO_ME_LLM_BASE_URL=http://localhost:11434/v1
-VIDEO_ME_CRITIQUE_MODEL=llava:7b
+VIDEO_ME_CRITIQUE_MODEL=qwen3.6:35b
 VIDEO_ME_CRITIQUE_BASE_URL=http://localhost:11434/v1
 
+# Render: ComfyUI + Flux.1-dev (default) | a1111 (fallback)
+VIDEO_ME_RENDER_ADAPTER=comfyui_flux
+VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188
+
+# Video: LTX-Video 2.3 via ComfyUI (default) | wan (fallback)
+VIDEO_ME_VIDEO_ADAPTER=ltx
+
+# TTS: Fish Audio S2 (default, EN + HI + 80 languages) | chatterbox (EN-only fallback)
+VIDEO_ME_TTS_ADAPTER=fish_s2
+VIDEO_ME_FISH_S2_BASE_URL=http://localhost:8025
+
+# Language: en | hi | both (runs pipeline twice for both)
+VIDEO_ME_TARGET_LANGUAGE=en
+
+# Fallback service URLs (only needed when using non-default adapters)
 VIDEO_ME_SD_BASE_URL=http://localhost:7860
 VIDEO_ME_TTS_BASE_URL=http://localhost:8020
 VIDEO_ME_WAN_BASE_URL=http://localhost:8030
@@ -540,6 +589,10 @@ fi
 
 if [[ "$SKIP_A1111" == "0" ]]; then
   setup_a1111
+fi
+
+if [[ "$SKIP_FISH_S2" == "0" ]]; then
+  setup_fish_s2
 fi
 
 if [[ "$SKIP_CHATTERBOX" == "0" ]]; then
