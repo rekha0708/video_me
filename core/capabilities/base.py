@@ -13,6 +13,8 @@ from core.models.capabilities import (
     ImageSet,
     LipSyncRequest,
     MixAudioRequest,
+    PlanCritiqueRequest,
+    PlanCritiqueResult,
     PlanShotsRequest,
     PublishRequest,
     PublishResult,
@@ -77,6 +79,13 @@ class SynthesizeVoice(Capability[VoiceRequest, AudioTrack], ABC):
 
 class GenerateVideo(Capability[VideoRequest, VideoClip], ABC):
     name = "generate_video"
+    # Subclasses that handle lip-sync natively (e.g. LtxAdapter) set this to True
+    # so the workflow skips the separate lip_sync stage.
+    native_lipsync: bool = False
+
+
+class CritiquePlan(Capability[PlanCritiqueRequest, PlanCritiqueResult], ABC):
+    name = "critique_plan"
 
 
 class LipSync(Capability[LipSyncRequest, VideoClip], ABC):

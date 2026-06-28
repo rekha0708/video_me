@@ -9,38 +9,38 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 
 ---
 
-## Current state (as of 2026-06-25)
+## Current state (as of 2026-06-27)
 
-**313 tests pass ✅. Resume + phase control implemented. Wan resident model active. Pipeline run 17 in progress (resuming from s03 after server restart).**
+**Stack upgraded to ComfyUI + Flux.1-dev (image) + LTX-Video 2.3 (video, native lip-sync). Plan critique loop + human approval gate added. 313 tests pass ✅.**
 
-- **LLM**: qwen3.6:35b (MoE 35B). Thinking mode disabled via `extra_body={"think": False}` + no `response_format`. `max_tokens=16384`. `json_repair` fallback.
-- **VRAM unload**: workflow evicts qwen3.6:35b before shot loop so Wan has full 80 GB.
-- **MuseTalk fixed**: mmcv 2.1.0 built from source; 9 `torch.load` calls patched `weights_only=False`. Returns original video on face-detection failure (cartoon passthrough).
+- **LLM**: qwen3.6:35b (MoE 35B). Thinking mode disabled via `extra_body={"think": False}` + no `response_format`. `max_tokens=16384`. `json_repair` fallback. Used for all LLM stages including plan critique.
+- **Image generation**: ComfyUI + Flux.1-dev + Flux LoRA (replaces A1111 + SD 1.5). Adapter: `ComfyUIFluxAdapter` (port 8188).
+- **Video generation**: LTX-Video 2.3 via ComfyUI (replaces Wan 2.7 resident server). Native lip-sync in one diffusion pass — MuseTalk stage skipped. Adapter: `LtxAdapter` (port 8188). ~1 min/shot (was ~21 min with Wan).
+- **Plan critique loop**: after `plan_shots`, `LlmPlanCritiqueAdapter` scores 5 dimensions (character_fit, scene_achievability, pacing, kids_safety, visual_clarity). All must be ≥ 0.75 to pass. Up to 3 re-plan iterations with specific fix notes injected.
+- **Human approval gate**: after critique passes, web UI at `http://localhost:8765` shows shot table + score bars. Approve → render. Reject + notes → one more re-plan cycle. 2nd rejection → job FAILED. CI bypass: `VIDEO_ME_AUTO_APPROVE_PLAN=true`.
 - **Shot duration**: 5–8s (2 words/sec, floor 5s, ceiling 8s).
-- **Resume**: `--resume-job JOB_ID` skips completed stages/shots. `--phase plan|render|assemble|all` runs one phase at a time. `--only-shot s03` isolates a single shot.
-- **Wan resident model**: `wan_server.py` loads `WanI2V` once at startup into CPU RAM. No subprocess per shot. Both DiTs (54 GB each, 108 GB total) exceed A100 80 GB — `offload_model=True` required; one DiT on GPU at a time. Per-shot: ~21 min (was ~26 min). Path to ~5 min: INT8 quantization.
+- **Resume**: `--resume-job JOB_ID` skips completed stages/shots. LTX completion marker: `clip.mp4`; Wan fallback: `synced.mp4`.
+- **Fallback adapters**: `VIDEO_ME_RENDER_ADAPTER=a1111` → A1111 + SD 1.5. `VIDEO_ME_VIDEO_ADAPTER=wan` → Wan 2.2 + MuseTalk.
+- **Track B LoRAs**: existing SD 1.5 weights won't work with Flux — retrain with `flux_train_network.py` (kohya_ss config already updated).
 
 | Track / Phase | Status | Blocker |
 |---|---|---|
 | Phase 0 — Skeleton | ✅ COMPLETE | — |
 | Phase 1 — Full pipeline A1.0–A1.12 | ✅ COMPLETE (code) | — |
 | Phase 2 — Critic loop A2.x | ✅ COMPLETE (code) | Real VLM service needed for real judgment |
-| Track B — LoRAs + voice files | ✅ READY | Real LoRAs trained (1000 steps, rank 32, SD 1.5); voice refs generated |
-| Track D — GPU services | ⚠️ Manual start required | Ollama ✅, A1111 ✅, Chatterbox ✅ (60s load time), Wan ✅, MuseTalk ✅ |
+| Plan critique + approval gate | ✅ COMPLETE (code) | — |
+| Track B — LoRAs + voice files | ⚠️ PARTIAL | SD 1.5 LoRAs trained; Flux LoRAs need retraining |
+| Track D — GPU services | ⚠️ Manual start required | Ollama ✅, ComfyUI needed, Chatterbox ✅ |
 | Track E — Compliance sign-off | ❌ PENDING | Operator hasn't signed off |
 
-Track B LoRAs are real trained weights (37 MB each, in git via LFS). Voice reference files are
-gTTS bootstrap WAVs — acceptable for pipeline runs, replace with recorded child voices for
-brand-accurate results.
-
-Pipeline runs through all LLM stages (analyze → adapt → plan) without issue. MuseTalk is patched
-and services confirmed healthy. First complete end-to-end run (including lip_sync) in progress.
+Voice reference files are gTTS bootstrap WAVs — acceptable for pipeline runs; replace with recorded
+child voices for brand-accurate results.
 
 **After every pod restart, run:**
 ```bash
 bash scripts/start_services.sh
 ```
-This script auto-reinstalls Ollama (base Linux binary is wiped on restart), then starts all 5 services and verifies each health endpoint.
+This script auto-reinstalls Ollama (base Linux binary is wiped on restart), then starts services and verifies each health endpoint.
 
 ---
 
@@ -67,11 +67,17 @@ check_rights()  ◄─── BLOCKS job (status=BLOCKED) if rights_cleared=False
     ▼
 [plan_shots]         LLM → Storyboard (Shot list, ≤2 chars/shot)
     │
+    ▼
+[critique_plan]      LLM loop (≤3×) → scores 5 dimensions, re-plans with fix notes if <0.75
+    │
+    ▼
+[approval gate]      Web UI localhost:8765 → human approves/rejects; 2nd rejection = FAILED
+    │
     ▼ (per shot)
-    ├── [render_character]   AUTOMATIC1111 SD API → ImageSet (PNG)
+    ├── [render_character]   ComfyUI + Flux.1-dev + Flux LoRA → ImageSet (PNG)  [default]
     ├── [synthesize_voice]   Chatterbox TTS API → AudioTrack (WAV)
-    ├── [generate_video]     Wan 2.7 API → VideoClip (MP4)
-    └── [lip_sync]           Wav2Lip API → VideoClip (synced MP4)
+    ├── [generate_video]     LTX-Video 2.3 via ComfyUI → VideoClip (MP4, native lip-sync)  [default]
+    └── [lip_sync]           MuseTalk — SKIPPED when VIDEO_ADAPTER=ltx (default)
     │
     ▼
 [assemble_video]     ffmpeg concat + scale 1080×1920 + captions + disclosure
@@ -108,10 +114,14 @@ The stage runner is `core/executor.py:run_stage()`. The Phase 1 DAG is
 | `adapters/analyze_content/llm_adapter.py` | Ollama/OpenAI-compat LLM |
 | `adapters/adapt_script/llm_adapter.py` | Ollama/OpenAI-compat LLM + guardrail injection |
 | `adapters/plan_shots/llm_adapter.py` | Ollama/OpenAI-compat LLM + shot structure derivation |
-| `adapters/render_character/diffusion_adapter.py` | AUTOMATIC1111 SD API |
+| `adapters/render_character/comfyui_flux_adapter.py` | ComfyUI + Flux.1-dev + LoRA (default) |
+| `adapters/render_character/diffusion_adapter.py` | AUTOMATIC1111 SD API (fallback) |
 | `adapters/synthesize_voice/tts_adapter.py` | Chatterbox TTS HTTP API |
-| `adapters/generate_video/wan_adapter.py` | Wan 2.7 HTTP API |
-| `adapters/lip_sync/lip_sync_adapter.py` | Wav2Lip HTTP API |
+| `adapters/generate_video/ltx_adapter.py` | LTX-Video 2.3 via ComfyUI (default, native lip-sync) |
+| `adapters/generate_video/wan_adapter.py` | Wan 2.2 HTTP API (fallback) |
+| `adapters/lip_sync/lip_sync_adapter.py` | MuseTalk HTTP API (skipped when VIDEO_ADAPTER=ltx) |
+| `adapters/critique/plan_critique_adapter.py` | LLM plan critique — 5 dimensions, pass/revise |
+| `adapters/approval/web_approval_adapter.py` | Human approval web UI at localhost:8765 |
 | `adapters/assemble_video/ffmpeg_adapter.py` | ffmpeg subprocess |
 | `adapters/critique/vlm_adapter.py` | OpenAI-compatible VLM/LLM critique adapter |
 | `adapters/publish/manual_adapter.py` | local file copy + metadata.json |
@@ -209,14 +219,14 @@ heavy ML packages into the project `.venv` — keep it lightweight for fast CI.
 All five services must be healthy before `run_pipeline_job()` is called. The executor calls
 `capability.health()` before each stage.
 
-| Service | Default URL | Purpose |
-|---|---|---|
-| Ollama | `http://localhost:11434` | LLM for analyze, adapt, plan stages |
-| Ollama / VLM | `http://localhost:11434` | Critique stage, e.g. LLaVA/Qwen-VL |
-| AUTOMATIC1111 | `http://localhost:7860` | Stable Diffusion for render_character |
-| Chatterbox TTS | `http://localhost:8020` | TTS for synthesize_voice |
-| Wan 2.7 | `http://localhost:8030` | Image-to-video for generate_video |
-| Wav2Lip | `http://localhost:8040` | Lip sync for lip_sync stage |
+| Service | Default URL | Purpose | Required? |
+|---|---|---|---|
+| Ollama | `http://localhost:11434` | LLM (analyze, adapt, plan, critique_plan) + VLM critique | ✅ Always |
+| ComfyUI | `http://localhost:8188` | Flux.1-dev image gen + LTX-Video 2.3 video gen | ✅ Default |
+| Chatterbox TTS | `http://localhost:8020` | TTS for synthesize_voice | ✅ Always |
+| AUTOMATIC1111 | `http://localhost:7860` | SD 1.5 render_character fallback | ⚠️ `RENDER_ADAPTER=a1111` only |
+| Wan 2.2 | `http://localhost:8030` | Image-to-video fallback | ⚠️ `VIDEO_ADAPTER=wan` only |
+| MuseTalk | `http://localhost:8040` | Lip sync (Wan path only) | ⚠️ `VIDEO_ADAPTER=wan` only |
 
 Quick health check:
 ```bash

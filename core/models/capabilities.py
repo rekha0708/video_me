@@ -75,6 +75,7 @@ class AdaptScriptRequest(BaseModel):
 class PlanShotsRequest(BaseModel):
     script: Script
     cast: Cast
+    critique_notes: list[str] = Field(default_factory=list)  # injected on re-plan
 
 
 # ---------- render_character ----------
@@ -112,12 +113,27 @@ class VideoRequest(BaseModel):
     action: str
     duration_sec: float
     shot_id: str
+    audio_uri: str | None = None  # set when video adapter has native_lipsync=True
 
 
 class VideoClip(BaseModel):
     uri: str
     duration_sec: float
     shot_id: str | None = None
+
+
+# ---------- critique_plan ----------
+
+class PlanCritiqueRequest(BaseModel):
+    storyboard: Storyboard
+    script: Script
+    cast: Cast
+
+
+class PlanCritiqueResult(BaseModel):
+    verdict: Literal["pass", "revise"]
+    scores: dict[str, float] = Field(default_factory=dict)
+    revision_notes: list[str] = Field(default_factory=list)
 
 
 # ---------- lip_sync → VideoClip ----------

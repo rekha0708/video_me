@@ -1,0 +1,149 @@
+<svg viewBox="0 0 900 1020" xmlns="http://www.w3.org/2000/svg" font-family="system-ui,-apple-system,sans-serif" font-size="12">
+  <title>video_me — complete pipeline (June 2026)</title>
+  <rect width="900" height="1020" fill="#fafafa" rx="10"/>
+
+  <defs>
+    <marker id="a"  markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#999"/></marker>
+    <marker id="ag" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#43a047"/></marker>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#c62828"/></marker>
+  </defs>
+
+  <!-- title -->
+  <text x="450" y="26" text-anchor="middle" font-size="16" font-weight="700" fill="#1a237e">video_me · Complete Pipeline</text>
+  <text x="450" y="42" text-anchor="middle" font-size="10" fill="#888">Updated stack · June 2026 · ComfyUI + Flux.1-dev + LTX-Video 2.3</text>
+
+  <!-- legend -->
+  <rect x="30" y="52" width="10" height="10" rx="2" fill="#1e88e5"/><text x="45" y="61" font-size="10" fill="#555">Unchanged</text>
+  <rect x="130" y="52" width="10" height="10" rx="2" fill="#43a047"/><text x="145" y="61" font-size="10" fill="#555">New / upgraded</text>
+  <rect x="260" y="52" width="10" height="10" rx="2" fill="#fb8c00"/><text x="275" y="61" font-size="10" fill="#555">Human gate</text>
+  <rect x="360" y="52" width="10" height="10" rx="2" fill="#8e24aa"/><text x="375" y="61" font-size="10" fill="#555">Track B (one-time)</text>
+  <rect x="490" y="52" width="10" height="10" rx="2" fill="#90a4ae" stroke="#90a4ae"/><text x="505" y="61" font-size="10" fill="#555">Fallback / optional</text>
+
+  <!-- ── TRACK B ── -->
+  <rect x="20" y="72" width="860" height="66" rx="7" fill="#f3e5f5" stroke="#8e24aa" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="450" y="89" text-anchor="middle" font-weight="700" font-size="11" fill="#4a148c">⚙ Track B — One-time character training (before first run)</text>
+  <rect x="32"  y="95" width="264" height="34" rx="5" fill="#fff" stroke="#ce93d8" stroke-width="1"/>
+  <text x="164" y="109" text-anchor="middle" font-weight="600" font-size="10" fill="#4a148c">1 · Upload reference images</text>
+  <text x="164" y="122" text-anchor="middle" font-size="9" fill="#555">upload_reference_images.py → 20+ photos/char</text>
+  <rect x="318" y="95" width="264" height="34" rx="5" fill="#fff" stroke="#ce93d8" stroke-width="1"/>
+  <text x="450" y="109" text-anchor="middle" font-weight="600" font-size="10" fill="#4a148c">2 · Train Flux LoRA</text>
+  <text x="450" y="122" text-anchor="middle" font-size="9" fill="#555">kohya_ss · flux_train_network.py · rank 32 · bf16</text>
+  <rect x="604" y="95" width="264" height="34" rx="5" fill="#fff" stroke="#ce93d8" stroke-width="1"/>
+  <text x="736" y="109" text-anchor="middle" font-weight="600" font-size="10" fill="#4a148c">3 · Output LoRAs</text>
+  <text x="736" y="122" text-anchor="middle" font-size="9" fill="#555">loras/kids_duo_max.safetensors + kids_duo_zoe.safetensors</text>
+
+  <line x1="450" y1="138" x2="450" y2="154" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- fetch + transcribe -->
+  <rect x="180" y="154" width="540" height="38" rx="6" fill="#e3f2fd" stroke="#1e88e5" stroke-width="1.5"/>
+  <text x="450" y="170" text-anchor="middle" font-weight="600" fill="#0d47a1">fetch_media → transcribe</text>
+  <text x="450" y="184" text-anchor="middle" font-size="10" fill="#555">yt-dlp · ffmpeg · faster-whisper  →  TranscribeResult</text>
+  <line x1="450" y1="192" x2="450" y2="208" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- analyze + adapt -->
+  <rect x="180" y="208" width="540" height="38" rx="6" fill="#e3f2fd" stroke="#1e88e5" stroke-width="1.5"/>
+  <text x="450" y="224" text-anchor="middle" font-weight="600" fill="#0d47a1">analyze_content → adapt_script</text>
+  <text x="450" y="238" text-anchor="middle" font-size="10" fill="#555">Ollama · qwen3.6:35b  →  Script (Max &amp; Zoe dialogue)</text>
+  <line x1="450" y1="246" x2="450" y2="260" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- rights gate -->
+  <rect x="320" y="260" width="260" height="24" rx="5" fill="#ffebee" stroke="#e53935" stroke-width="1.2"/>
+  <text x="450" y="276" text-anchor="middle" font-size="10" font-weight="700" fill="#c62828">⛔ rights_cleared gate — blocks if False</text>
+  <line x1="450" y1="284" x2="450" y2="298" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- plan_shots -->
+  <rect x="180" y="298" width="540" height="38" rx="6" fill="#e3f2fd" stroke="#1e88e5" stroke-width="1.5"/>
+  <text x="450" y="314" text-anchor="middle" font-weight="600" fill="#0d47a1">plan_shots</text>
+  <text x="450" y="328" text-anchor="middle" font-size="10" fill="#555">Ollama · qwen3.6:35b  →  Storyboard (camera · action · chars · 5–8s/shot)</text>
+  <line x1="450" y1="336" x2="450" y2="352" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- critique loop -->
+  <rect x="80" y="352" width="740" height="102" rx="7" fill="#e8f5e9" stroke="#43a047" stroke-width="1.8"/>
+  <text x="450" y="370" text-anchor="middle" font-weight="700" font-size="12" fill="#1b5e20">🔁 critique_plan loop ✦ NEW — up to 3 iterations · same model</text>
+  <!-- score pills -->
+  <rect x="120" y="378" width="104" height="16" rx="8" fill="#c8e6c9"/><text x="172" y="389" text-anchor="middle" font-size="9" fill="#1b5e20">character_fit</text>
+  <rect x="232" y="378" width="140" height="16" rx="8" fill="#c8e6c9"/><text x="302" y="389" text-anchor="middle" font-size="9" fill="#1b5e20">scene_achievability</text>
+  <rect x="380" y="378" width="60" height="16" rx="8" fill="#c8e6c9"/><text x="410" y="389" text-anchor="middle" font-size="9" fill="#1b5e20">pacing</text>
+  <rect x="448" y="378" width="84" height="16" rx="8" fill="#c8e6c9"/><text x="490" y="389" text-anchor="middle" font-size="9" fill="#1b5e20">kids_safety</text>
+  <rect x="540" y="378" width="88" height="16" rx="8" fill="#c8e6c9"/><text x="584" y="389" text-anchor="middle" font-size="9" fill="#1b5e20">visual_clarity</text>
+  <!-- pass/revise -->
+  <text x="450" y="412" text-anchor="middle" font-size="10" fill="#333">All scores ≥ 0.75 → <tspan font-weight="700" fill="#2e7d32">pass</tspan>  ·  Any score &lt; 0.75 → <tspan font-weight="700" fill="#c62828">revise</tspan>: re-runs plan_shots with fix notes</text>
+  <text x="450" y="428" text-anchor="middle" font-size="10" fill="#555">Ollama · qwen3.6:35b  (no extra model or service)</text>
+  <!-- loop-back arrow -->
+  <path d="M80,400 Q44,400 44,320 Q44,298 180,310" fill="none" stroke="#c62828" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#ar)"/>
+  <text x="28" y="365" font-size="9" fill="#c62828" writing-mode="tb">re-plan</text>
+
+  <line x1="450" y1="454" x2="450" y2="470" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- human approval -->
+  <rect x="80" y="470" width="740" height="90" rx="7" fill="#fff3e0" stroke="#fb8c00" stroke-width="1.8"/>
+  <text x="450" y="490" text-anchor="middle" font-weight="700" font-size="12" fill="#bf360c">👤 Human Approval Gate ✦ NEW</text>
+  <text x="450" y="506" text-anchor="middle" font-size="10" fill="#555">Job → PENDING_APPROVAL  ·  Web UI: http://localhost:8765  ·  files: storyboard_review.md + .json</text>
+  <!-- approve btn -->
+  <rect x="240" y="516" width="176" height="22" rx="5" fill="#2e7d32"/>
+  <text x="328" y="531" text-anchor="middle" font-size="10" fill="#fff" font-weight="600">✓ Approve → start rendering</text>
+  <!-- reject btn -->
+  <rect x="430" y="516" width="230" height="22" rx="5" fill="#c62828"/>
+  <text x="545" y="531" text-anchor="middle" font-size="10" fill="#fff" font-weight="600">✗ Reject + notes → 1 more re-plan → UI again</text>
+  <text x="450" y="554" text-anchor="middle" font-size="9" fill="#888">2nd rejection → job FAILED  ·  CI bypass: VIDEO_ME_AUTO_APPROVE_PLAN=true</text>
+
+  <line x1="450" y1="560" x2="450" y2="576" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- per-shot divider -->
+  <text x="450" y="588" text-anchor="middle" font-size="10" fill="#aaa" font-style="italic">— per-shot loop (GPU starts here) —</text>
+  <rect x="80" y="594" width="740" height="130" rx="7" fill="none" stroke="#ccc" stroke-width="1.2" stroke-dasharray="5 3"/>
+
+  <!-- three shot cards -->
+  <rect x="96"  y="604" width="224" height="52" rx="5" fill="#e8f5e9" stroke="#43a047" stroke-width="1.5"/>
+  <text x="208" y="620" text-anchor="middle" font-weight="700" font-size="10" fill="#1b5e20">render_character ✦</text>
+  <text x="208" y="634" text-anchor="middle" font-size="9" fill="#555">ComfyUI + Flux.1-dev + Flux LoRA</text>
+  <text x="208" y="647" text-anchor="middle" font-size="9" fill="#555">1024×1024 · 20 steps · port 8188</text>
+
+  <rect x="338" y="604" width="224" height="52" rx="5" fill="#e3f2fd" stroke="#1e88e5" stroke-width="1.5"/>
+  <text x="450" y="620" text-anchor="middle" font-weight="700" font-size="10" fill="#0d47a1">synthesize_voice</text>
+  <text x="450" y="634" text-anchor="middle" font-size="9" fill="#555">Chatterbox TTS → AudioTrack (WAV)</text>
+  <text x="450" y="647" text-anchor="middle" font-size="9" fill="#555">port 8020</text>
+
+  <rect x="580" y="604" width="224" height="52" rx="5" fill="#e8f5e9" stroke="#43a047" stroke-width="1.5"/>
+  <text x="692" y="620" text-anchor="middle" font-weight="700" font-size="10" fill="#1b5e20">generate_video ✦</text>
+  <text x="692" y="634" text-anchor="middle" font-size="9" fill="#555">LTX-Video 2.3 · ComfyUI · image+audio</text>
+  <text x="692" y="647" text-anchor="middle" font-size="9" fill="#555">native lip-sync · ~1 min/shot · port 8188</text>
+
+  <!-- lip_sync skipped -->
+  <rect x="96" y="668" width="708" height="46" rx="5" fill="#eceff1" stroke="#90a4ae" stroke-width="1.2" stroke-dasharray="4 2"/>
+  <text x="450" y="686" text-anchor="middle" font-weight="600" font-size="10" fill="#546e7a">lip_sync — SKIPPED (LTX-Video 2.3 handles lip-sync natively in one diffusion pass)</text>
+  <text x="450" y="700" text-anchor="middle" font-size="9" fill="#90a4ae">MuseTalk :8040 active only when VIDEO_ME_VIDEO_ADAPTER=wan</text>
+
+  <line x1="450" y1="724" x2="450" y2="740" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- assemble -->
+  <rect x="180" y="740" width="540" height="38" rx="6" fill="#e3f2fd" stroke="#1e88e5" stroke-width="1.5"/>
+  <text x="450" y="756" text-anchor="middle" font-weight="600" fill="#0d47a1">assemble_video</text>
+  <text x="450" y="770" text-anchor="middle" font-size="10" fill="#555">ffmpeg · 1080×1920 · captions · AI disclosure label burned in</text>
+  <line x1="450" y1="778" x2="450" y2="794" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- critique Phase 2 -->
+  <rect x="180" y="794" width="540" height="38" rx="6" fill="#e3f2fd" stroke="#1e88e5" stroke-width="1.5"/>
+  <text x="450" y="810" text-anchor="middle" font-weight="600" fill="#0d47a1">critique (Phase 2 — video quality)</text>
+  <text x="450" y="824" text-anchor="middle" font-size="10" fill="#555">VLM samples frames · scores engagement/safety/clarity · pass / regenerate / reject</text>
+  <line x1="450" y1="832" x2="450" y2="848" stroke="#999" stroke-width="1.5" marker-end="url(#a)"/>
+
+  <!-- publish -->
+  <rect x="180" y="848" width="540" height="38" rx="6" fill="#e3f2fd" stroke="#1e88e5" stroke-width="1.5"/>
+  <text x="450" y="864" text-anchor="middle" font-weight="600" fill="#0d47a1">publish</text>
+  <text x="450" y="878" text-anchor="middle" font-size="10" fill="#555">review/&lt;timestamp&gt;_&lt;stem&gt;/video.mp4 + metadata.json · human sign-off before distribution</text>
+
+  <!-- services box -->
+  <rect x="20" y="900" width="860" height="106" rx="7" fill="#fff" stroke="#ddd" stroke-width="1.2"/>
+  <text x="450" y="918" text-anchor="middle" font-weight="700" font-size="11" fill="#333">Services — new default stack (3 required, down from 5)</text>
+  <!-- required -->
+  <text x="40"  y="936" font-size="10" fill="#2e7d32" font-weight="600">✅ Required</text>
+  <text x="40"  y="951" font-size="10" fill="#555">● Ollama           :11434   LLM + VLM critique</text>
+  <text x="40"  y="965" font-size="10" fill="#1b5e20" font-weight="600">● ComfyUI ✦        :8188    image gen (Flux) + video gen (LTX) — replaces A1111 + Wan</text>
+  <text x="40"  y="979" font-size="10" fill="#555">● Chatterbox TTS   :8020   voice synthesis</text>
+  <!-- fallback -->
+  <text x="500" y="936" font-size="10" fill="#888" font-weight="600">⚠ Fallback (env var switch)</text>
+  <text x="500" y="951" font-size="10" fill="#aaa">○ AUTOMATIC1111    :7860   RENDER_ADAPTER=a1111</text>
+  <text x="500" y="965" font-size="10" fill="#aaa">○ Wan 2.2 server   :8030   VIDEO_ADAPTER=wan</text>
+  <text x="500" y="979" font-size="10" fill="#aaa">○ MuseTalk         :8040   VIDEO_ADAPTER=wan (lip-sync)</text>
+</svg>

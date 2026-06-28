@@ -205,6 +205,12 @@ class LlmPlanShotsAdapter(PlanShots):
             lines_block=lines_block,
         )
 
+        if req.critique_notes:
+            notes_block = "\n".join(f"- {n}" for n in req.critique_notes)
+            user_content += (
+                f"\n\nPREVIOUS CRITIQUE — fix all of the following in your new plan:\n{notes_block}"
+            )
+
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": user_content},

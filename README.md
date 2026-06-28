@@ -6,17 +6,16 @@ interchangeable adapter behind a typed capability ABC.
 
 ## Status
 
-**Phase 2 code-complete — 313 tests passing.**
-Pipeline has real Max/Zoe LoRA weights trained locally. Real end-to-end output is now blocked
-on reference voice WAVs plus Track D GPU/model services.
+**Phase 2 code-complete — 313 tests passing.**  
+Stack upgraded to ComfyUI + Flux.1-dev (image) + LTX-Video 2.3 (video, native lip-sync).  
 See `BUILD_PROGRESS.md` for the full implementation journal and next steps.
 
 ```
 Phase 0  Skeleton + storage          ✅ COMPLETE
-Phase 1  Full pipeline A1.0–A1.12   ✅ COMPLETE (code) — blocked on Track B + D
+Phase 1  Full pipeline A1.0–A1.12   ✅ COMPLETE (code)
 Phase 2  Critic loop A2.x            ✅ COMPLETE (code) — VLM service needed for real judgment
-Track B  LoRAs + voice files         ⚠️ PARTIAL — LoRAs trained; voice WAVs pending
-Track D  GPU services                ❌ Not provisioned — budget decision pending
+Track B  LoRAs + voice files         ⚠️ PARTIAL — SD1.5 LoRAs trained; Flux LoRAs need retraining
+Track D  GPU services                ⚠️ ComfyUI + Chatterbox + Ollama needed
 ```
 
 ## Quick start (tests only — no services needed)
@@ -85,24 +84,36 @@ backends need the same preprocessing.
 
 ## Track B — Files required before pipeline runs
 
-LoRA weights are trained locally and must exist at the exact paths below. Reference voice WAVs are still required before the full pipeline can run:
-
 ```
 loras/
-  kids_duo_max.safetensors   (Max)
-  kids_duo_zoe.safetensors   (Zoe)
+  kids_duo_max.safetensors   ← Flux LoRA for Max
+  kids_duo_zoe.safetensors   ← Flux LoRA for Zoe
 
 voices/
   kids_duo/
-    max.wav   (Max — ~10–30s reference speech)
+    max.wav   (Max — ~10–30s clear reference speech)
     zoe.wav   (Zoe)
 ```
 
-Run `python -m scripts.check_track_b` to verify placement. See
-`.claude/agents/track-b-setup.md` and `assets/kids_duo/` for the full setup guide.
+Run `python -m scripts.check_track_b` to verify placement.
 
-The current local LoRA files are real trained weights from the 2026-06-24 A100 training run.
-They are intentionally ignored by git because model binaries live outside source control.
+### Training Flux LoRAs (one-time, per character)
+
+```bash
+# Step 1 — import raw reference photos into the training dataset
+python -m scripts.upload_reference_images --character max ~/photos/max/*.jpg
+python -m scripts.upload_reference_images --character zoe ~/photos/zoe/*.jpg
+# Aim for 20+ images per character. Captions are written automatically.
+
+# Step 2 — train (requires kohya_ss + Flux model weights in models/Flux/)
+accelerate launch flux_train_network.py \
+  --config_file assets/kids_duo/training/kohya_config.toml
+# Change output_name to kids_duo_zoe for Zoe's run.
+# Output: loras/kids_duo_max.safetensors (~37 MB, Flux format)
+```
+
+> **Note:** existing SD 1.5 LoRAs from the June 2026 training run will not work with Flux.
+> Retrain using the steps above. The kohya config already targets `flux1-dev.safetensors`.
 
 ## GPU setup and readiness
 
@@ -148,29 +159,70 @@ and `scripts.check_runtime_readiness`.
 
 ## Track D — Services required before pipeline runs
 
-| Service | Port | Purpose |
-|---|---|---|
-| Ollama | 11434 | LLM (analyze, adapt, plan stages) |
-| Ollama / VLM | 11434 | Critique stage (e.g. LLaVA/Qwen-VL via OpenAI-compatible API) |
-| AUTOMATIC1111 | 7860 | Stable Diffusion (render_character) |
-| Chatterbox TTS | 8020 | TTS (synthesize_voice) |
-| Wan 2.7 | 8030 | Image-to-video (generate_video) |
-| Wav2Lip | 8040 | Lip sync (lip_sync) |
+| Service | Port | Purpose | Required? |
+|---|---|---|---|
+| Ollama | 11434 | LLM (analyze, adapt, plan) + VLM critique | ✅ Always |
+| ComfyUI | 8188 | Flux image gen + LTX-Video 2.3 video gen | ✅ Default |
+| Chatterbox TTS | 8020 | Voice synthesis | ✅ Always |
+| AUTOMATIC1111 | 7860 | SD 1.5 image gen | ⚠️ Only if `RENDER_ADAPTER=a1111` |
+| Wan 2.2 | 8030 | Image-to-video | ⚠️ Only if `VIDEO_ADAPTER=wan` |
+| MuseTalk | 8040 | Lip sync | ⚠️ Only if `VIDEO_ADAPTER=wan` |
+
+> **Default stack needs only 3 services: Ollama + ComfyUI + Chatterbox.**
 
 See `.claude/agents/pipeline-runner.md` for startup commands and pre-flight check.
 
 ## Architecture
 
+> **Interactive pipeline diagram:** open [`assets/pipeline_flow.html`](assets/pipeline_flow.html) in a browser for the full annotated flow with all stages, critique scores, approval gate, and service summary.
+
+![Pipeline flow](assets/pipeline_flow.svg)
+
+Every stage is a `Capability[Request, Result]` ABC in `core/capabilities/`.  
+Concrete adapters live in `adapters/<stage>/`.  
+The full DAG is in `core/workflow.py:run_pipeline_job()`.
+
+### Plan critique + approval gate
+
+After `plan_shots`, the pipeline runs a critique loop before any GPU work starts:
+
 ```
-URL → fetch_media → transcribe → analyze_content → [check_rights gate]
-    → adapt_script → plan_shots
-    → per shot: render_character + synthesize_voice + generate_video + lip_sync
-    → assemble_video → [optional critique loop] → publish → review/
+plan_shots → critique_plan loop (max 3×) → Human Approval UI → render loop
+                    ↑ revise with notes ┘        ↓ reject once → re-plan → UI again
+                                                 2nd reject → job FAILED
 ```
 
-Every stage is a `Capability[Request, Result]` ABC in `core/capabilities/`.
-Concrete adapters live in `adapters/<stage>/`.
-The full DAG is in `core/workflow.py:run_pipeline_job()`.
+The approval UI opens automatically at `http://localhost:8765` and shows a shot table
+with critique scores. Click **Approve** to start rendering, or **Reject** with notes
+to trigger one more re-plan cycle.
+
+Review files written to `<work_dir>/storyboard_review.md` and `storyboard_review.json`.
+
+```bash
+# Skip approval gate in CI / smoke tests
+VIDEO_ME_AUTO_APPROVE_PLAN=true
+
+# Tune the loop
+VIDEO_ME_MAX_PLAN_ITERATIONS=3     # LLM critique re-plans before passing to human
+VIDEO_ME_APPROVAL_PORT=8765
+VIDEO_ME_APPROVAL_TIMEOUT_HOURS=24
+```
+
+### Adapter stack (current defaults)
+
+| Stage | Adapter | Service |
+|---|---|---|
+| render_character | `ComfyUIFluxAdapter` | ComfyUI + Flux.1-dev + LoRA · port 8188 |
+| generate_video | `LtxAdapter` | LTX-Video 2.3 via ComfyUI · port 8188 · native lip-sync |
+| lip_sync | **skipped** | LTX handles it in the same diffusion pass |
+| synthesize_voice | `TtsAdapter` | Chatterbox TTS · port 8020 |
+| All LLM stages | `LlmAdapter` | Ollama qwen3.6:35b · port 11434 |
+
+Switch adapters with env vars — no code change needed:
+```bash
+VIDEO_ME_RENDER_ADAPTER=a1111        # fall back to AUTOMATIC1111 + SD 1.5
+VIDEO_ME_VIDEO_ADAPTER=wan           # fall back to Wan 2.2 + MuseTalk lip-sync
+```
 
 ## Configuration
 
@@ -180,20 +232,34 @@ Channel and cast config live in `config/`:
 
 Environment variables (via `.env` or shell):
 ```bash
+# Paths
 VIDEO_ME_DATA_DIR=/data/video_me
 VIDEO_ME_REVIEW_DIR=/data/review
 VIDEO_ME_LORA_DIR=/models/loras
 VIDEO_ME_VOICE_DIR=/data/voices
-VIDEO_ME_LLM_MODEL=qwen2.5:7b
+
+# LLM
+VIDEO_ME_LLM_MODEL=qwen3.6:35b
 VIDEO_ME_LLM_BASE_URL=http://localhost:11434/v1
 VIDEO_ME_CRITIQUE_MODEL=llava:7b
 VIDEO_ME_CRITIQUE_BASE_URL=http://localhost:11434/v1
-VIDEO_ME_SD_BASE_URL=http://localhost:7860
-VIDEO_ME_TTS_BASE_URL=http://localhost:8020
-VIDEO_ME_WAN_BASE_URL=http://localhost:8030
-VIDEO_ME_LIPSYNC_BASE_URL=http://localhost:8040
+
+# Adapter selection (default: comfyui_flux + ltx)
+VIDEO_ME_RENDER_ADAPTER=comfyui_flux   # or: a1111
+VIDEO_ME_VIDEO_ADAPTER=ltx             # or: wan
+
+# Service URLs
+VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188   # ComfyUI (Flux image + LTX video)
+VIDEO_ME_TTS_BASE_URL=http://localhost:8020        # Chatterbox TTS
+VIDEO_ME_SD_BASE_URL=http://localhost:7860         # A1111 (fallback only)
+VIDEO_ME_WAN_BASE_URL=http://localhost:8030        # Wan 2.2 (fallback only)
+VIDEO_ME_LIPSYNC_BASE_URL=http://localhost:8040    # MuseTalk (fallback only)
+
+# Whisper
 VIDEO_ME_WHISPER_DEVICE=cpu              # use cuda on a GPU box
 VIDEO_ME_WHISPER_COMPUTE_TYPE=int8       # use float16 on CUDA
+
+# Storage
 VIDEO_ME_JOB_STORE=postgres           # default: sqlite
 VIDEO_ME_ARTIFACT_STORE=s3            # default: local
 ```

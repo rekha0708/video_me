@@ -37,9 +37,17 @@ class Settings(BaseSettings):
     critique_model: str = "llava:7b"
     critique_base_url: str = "http://localhost:11434/v1"
     critique_api_key: str = "ollama"
-    sd_base_url: str = "http://localhost:7860"
+    # --- render_character backend ("a1111" or "comfyui_flux") ---
+    render_adapter: Literal["a1111", "comfyui_flux"] = "comfyui_flux"
+    sd_base_url: str = "http://localhost:7860"       # AUTOMATIC1111 (kept for fallback)
+    comfyui_base_url: str = "http://localhost:8188"  # ComfyUI (Flux + LTX)
+
+    # --- generate_video backend ("wan" or "ltx") ---
+    video_adapter: Literal["wan", "ltx"] = "ltx"
+    wan_base_url: str = "http://localhost:8030"      # Wan 2.2 resident server (kept for fallback)
+    ltx_base_url: str = "http://localhost:8188"      # LTX-Video 2.3 via ComfyUI (default same host)
+
     tts_base_url: str = "http://localhost:8020"
-    wan_base_url: str = "http://localhost:8030"
     lipsync_base_url: str = "http://localhost:8040"
     whisper_model_size: str = "medium"
     whisper_device: str = "cuda"
@@ -47,6 +55,14 @@ class Settings(BaseSettings):
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"
     render_allow_placeholder_lora: bool = False
+
+    # --- plan critique loop ---
+    max_plan_iterations: int = 3          # max LLM critique re-plans before failing
+    auto_approve_plan: bool = False       # set True in CI / smoke tests to skip approval UI
+
+    # --- human approval web UI ---
+    approval_port: int = 8765
+    approval_timeout_hours: float = 24.0
 
 
 class AppConfig(BaseModel):

@@ -17,6 +17,7 @@ def _make_job_id() -> str:
 class JobStatus(StrEnum):
     CREATED = "created"
     RUNNING = "running"
+    PENDING_APPROVAL = "pending_approval"
     COMPLETED = "completed"
     BLOCKED = "blocked"
     FAILED = "failed"

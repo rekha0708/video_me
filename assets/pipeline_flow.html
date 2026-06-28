@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>video_me — Full Pipeline Flow</title>
+<style>
+  :root{--blue:#1e88e5;--blue-bg:#e3f2fd;--green:#2e7d32;--green-bg:#e8f5e9;--green-border:#43a047;
+    --orange:#bf360c;--orange-bg:#fff3e0;--orange-border:#fb8c00;--purple:#4a148c;
+    --purple-bg:#f3e5f5;--purple-border:#8e24aa;--grey:#546e7a;--grey-bg:#eceff1;
+    --grey-border:#90a4ae;--red:#c62828;--card-shadow:0 2px 8px rgba(0,0,0,.10)}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,-apple-system,sans-serif;font-size:13px;background:#f0f2f5;
+       padding:24px;min-width:840px}
+  h1{text-align:center;color:#1a237e;font-size:20px;margin-bottom:4px}
+  .subtitle{text-align:center;color:#888;font-size:11px;margin-bottom:20px}
+
+  /* legend */
+  .legend{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin-bottom:20px}
+  .leg{display:flex;align-items:center;gap:5px;font-size:11px;color:#555}
+  .dot{width:10px;height:10px;border-radius:2px;flex-shrink:0}
+
+  /* sections */
+  .section{border-radius:10px;padding:14px 16px;margin-bottom:8px}
+  .section-label{font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px}
+  .track-b{background:var(--purple-bg);border:1.5px dashed var(--purple-border)}
+  .track-b .section-label{color:var(--purple)}
+
+  /* cards row */
+  .row{display:flex;gap:10px;align-items:stretch}
+  .card{flex:1;border-radius:7px;padding:10px 12px;font-size:12px;line-height:1.4}
+  .card .title{font-weight:700;margin-bottom:3px}
+  .card .sub{color:#666;font-size:11px}
+  .c-blue{background:var(--blue-bg);border:1.5px solid var(--blue);color:#0d47a1}
+  .c-green{background:var(--green-bg);border:1.5px solid var(--green-border);color:var(--green)}
+  .c-orange{background:var(--orange-bg);border:1.5px solid var(--orange-border);color:var(--orange)}
+  .c-purple{background:#fff;border:1.5px solid var(--purple-border);color:var(--purple)}
+  .c-grey{background:var(--grey-bg);border:1.5px dashed var(--grey-border);color:var(--grey)}
+  .c-red{background:#ffebee;border:1.5px solid var(--red);color:var(--red)}
+
+  /* arrow */
+  .arrow{text-align:center;color:#bbb;font-size:18px;line-height:1;margin:4px 0}
+  .arrow-label{text-align:center;font-size:10px;color:#aaa;margin-top:-2px;margin-bottom:4px}
+
+  /* critique loop */
+  .critique-box{background:var(--green-bg);border:2px solid var(--green-border);
+    border-radius:10px;padding:14px 16px;margin-bottom:8px}
+  .critique-box .section-label{color:var(--green)}
+  .pills{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+  .pill{background:#c8e6c9;color:var(--green);border-radius:12px;padding:2px 10px;font-size:10px;font-weight:600}
+  .loop-note{font-size:11px;color:#555;margin-top:6px}
+  .loop-note strong{color:var(--red)}
+  .loop-note em{color:var(--green)}
+
+  /* approval box */
+  .approval-box{background:var(--orange-bg);border:2px solid var(--orange-border);
+    border-radius:10px;padding:14px 16px;margin-bottom:8px}
+  .approval-box .section-label{color:var(--orange)}
+  .btn-row{display:flex;gap:10px;margin-top:10px}
+  .btn{border-radius:6px;padding:7px 16px;font-size:12px;font-weight:700;border:none;cursor:default}
+  .btn-green{background:#2e7d32;color:#fff}
+  .btn-red{background:#c62828;color:#fff}
+  .approval-note{font-size:10px;color:#888;margin-top:6px}
+
+  /* shot loop */
+  .shot-box{background:#fff;border:1.5px dashed #ccc;border-radius:10px;padding:14px 16px;margin-bottom:8px}
+  .shot-label{font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#999;margin-bottom:10px;text-align:center}
+  .skipped{background:var(--grey-bg);border:1.5px dashed var(--grey-border);border-radius:7px;
+    padding:8px 12px;text-align:center;color:var(--grey);font-size:11px;margin-top:8px}
+
+  /* services */
+  .services{background:#fff;border:1.5px solid #e0e0e0;border-radius:10px;padding:14px 16px;margin-top:8px}
+  .services .section-label{color:#333}
+  .svc-row{display:flex;gap:10px}
+  .svc-col{flex:1}
+  .svc-col h4{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+  .svc-item{font-size:11px;padding:3px 0;display:flex;align-items:baseline;gap:6px}
+  .svc-item .port{font-family:monospace;background:#f5f5f5;padding:1px 5px;border-radius:3px;font-size:10px}
+  .svc-new{color:var(--green);font-weight:600}
+  .svc-old{color:#aaa}
+
+  /* env section */
+  .env-box{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:12px 14px;margin-top:8px}
+  .env-box h4{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#666;margin-bottom:8px}
+  .env-cols{display:flex;gap:16px}
+  .env-col{flex:1}
+  code{font-family:'Fira Code',monospace,monospace;font-size:10px;background:#f5f5f5;
+       padding:1px 5px;border-radius:3px;display:block;margin:2px 0;color:#333}
+</style>
+</head>
+<body>
+
+<h1>video_me · Complete Pipeline</h1>
+<p class="subtitle">ComfyUI + Flux.1-dev + LTX-Video 2.3 · Plan critique loop + human approval · June 2026</p>
+
+<div class="legend">
+  <div class="leg"><div class="dot" style="background:#1e88e5"></div>Unchanged</div>
+  <div class="leg"><div class="dot" style="background:#43a047"></div>New / upgraded</div>
+  <div class="leg"><div class="dot" style="background:#fb8c00"></div>Human gate</div>
+  <div class="leg"><div class="dot" style="background:#8e24aa"></div>Track B (one-time)</div>
+  <div class="leg"><div class="dot" style="background:#90a4ae"></div>Fallback / optional</div>
+</div>
+
+<!-- Track B -->
+<div class="section track-b">
+  <div class="section-label">⚙ Track B — One-time character training (before first run)</div>
+  <div class="row">
+    <div class="card c-purple">
+      <div class="title">1 · Upload reference images</div>
+      <div class="sub">scripts/upload_reference_images.py<br>20+ photos per character, auto-captioned</div>
+    </div>
+    <div class="card c-purple">
+      <div class="title">2 · Train Flux LoRA</div>
+      <div class="sub">kohya_ss · flux_train_network.py<br>rank 32 · bf16 · 1024px</div>
+    </div>
+    <div class="card c-purple">
+      <div class="title">3 · Place LoRA weights</div>
+      <div class="sub">loras/kids_duo_max.safetensors<br>loras/kids_duo_zoe.safetensors</div>
+    </div>
+  </div>
+</div>
+
+<div class="arrow">↓</div>
+
+<!-- fetch + transcribe -->
+<div class="row" style="margin-bottom:8px">
+  <div class="card c-blue">
+    <div class="title">fetch_media</div>
+    <div class="sub">yt-dlp · ffmpeg · download + audio extraction</div>
+  </div>
+  <div class="card c-blue">
+    <div class="title">transcribe</div>
+    <div class="sub">faster-whisper → TranscribeResult (segments + timestamps)</div>
+  </div>
+</div>
+
+<div class="arrow">↓</div>
+
+<!-- analyze + adapt -->
+<div class="row" style="margin-bottom:8px">
+  <div class="card c-blue">
+    <div class="title">analyze_content</div>
+    <div class="sub">Ollama · qwen3.6:35b → ContentMetadata + LearningObjective</div>
+  </div>
+  <div class="card c-blue">
+    <div class="title">adapt_script</div>
+    <div class="sub">Ollama · qwen3.6:35b → Script (Max &amp; Zoe dialogue, transformed)</div>
+  </div>
+</div>
+
+<!-- rights gate -->
+<div style="margin-bottom:8px">
+  <div class="card c-red" style="text-align:center;padding:8px">
+    <div class="title">⛔ rights_cleared gate — job BLOCKED if rights_cleared=False</div>
+  </div>
+</div>
+
+<div class="arrow">↓</div>
+
+<!-- plan_shots -->
+<div class="row" style="margin-bottom:8px">
+  <div class="card c-blue">
+    <div class="title">plan_shots</div>
+    <div class="sub">Ollama · qwen3.6:35b → Storyboard (camera · action · characters · 5–8s/shot)<br>
+    Accepts <code style="display:inline">critique_notes</code> field on re-plan iterations</div>
+  </div>
+</div>
+
+<div class="arrow">↓</div>
+
+<!-- critique loop -->
+<div class="critique-box">
+  <div class="section-label">🔁 critique_plan loop · NEW · up to 3 iterations · same qwen3.6:35b model</div>
+  <div class="pills">
+    <span class="pill">character_fit</span>
+    <span class="pill">scene_achievability</span>
+    <span class="pill">pacing</span>
+    <span class="pill">kids_safety</span>
+    <span class="pill">visual_clarity</span>
+  </div>
+  <div class="loop-note">
+    All scores ≥ 0.75 → <em>verdict: pass</em> &nbsp;·&nbsp;
+    Any score &lt; 0.75 → <strong>verdict: revise</strong>: fix notes injected into next plan_shots call<br>
+    Temperature 0.1 · No extra model or service needed · Adapter: <code style="display:inline">LlmPlanCritiqueAdapter</code>
+  </div>
+</div>
+
+<div class="arrow">↓</div>
+
+<!-- approval gate -->
+<div class="approval-box">
+  <div class="section-label">👤 Human Approval Gate · NEW · job status → PENDING_APPROVAL</div>
+  <div style="font-size:12px;color:#555">
+    Web UI opens at <strong>http://localhost:8765</strong> · shows shot table + critique score bars<br>
+    Review files written to: <code style="display:inline">storyboard_review.md</code> and <code style="display:inline">storyboard_review.json</code>
+  </div>
+  <div class="btn-row">
+    <div class="btn btn-green">✓ Approve → start rendering</div>
+    <div class="btn btn-red">✗ Reject + notes → 1 more re-plan → UI again</div>
+  </div>
+  <div class="approval-note">2nd rejection → job FAILED &nbsp;·&nbsp; CI bypass: <code style="display:inline">VIDEO_ME_AUTO_APPROVE_PLAN=true</code> &nbsp;·&nbsp; Port / timeout configurable via env</div>
+</div>
+
+<div class="arrow">↓</div>
+<div class="arrow-label">— per-shot GPU loop —</div>
+
+<!-- shot loop -->
+<div class="shot-box">
+  <div class="shot-label">Per-shot loop (parallel render · voice · video)</div>
+  <div class="row">
+    <div class="card c-green">
+      <div class="title">render_character ✦</div>
+      <div class="sub">ComfyUI + Flux.1-dev + Flux LoRA<br>1024×1024 · 20 steps · port 8188</div>
+    </div>
+    <div class="card c-blue">
+      <div class="title">synthesize_voice</div>
+      <div class="sub">Chatterbox TTS → AudioTrack (WAV)<br>port 8020</div>
+    </div>
+    <div class="card c-green">
+      <div class="title">generate_video ✦</div>
+      <div class="sub">LTX-Video 2.3 via ComfyUI<br>image + audio → MP4 · native lip-sync · ~1 min/shot · port 8188</div>
+    </div>
+  </div>
+  <div class="skipped">
+    lip_sync — <strong>SKIPPED</strong> (LTX-Video 2.3 handles lip-sync natively in one diffusion pass)<br>
+    <span style="font-size:10px">MuseTalk :8040 only active when <code style="display:inline">VIDEO_ME_VIDEO_ADAPTER=wan</code></span>
+  </div>
+</div>
+
+<div class="arrow">↓</div>
+
+<!-- assemble -->
+<div class="row" style="margin-bottom:8px">
+  <div class="card c-blue">
+    <div class="title">assemble_video</div>
+    <div class="sub">ffmpeg · 1080×1920 · captions · AI disclosure label burned in</div>
+  </div>
+</div>
+
+<div class="arrow">↓</div>
+
+<!-- critique Phase 2 -->
+<div class="row" style="margin-bottom:8px">
+  <div class="card c-blue">
+    <div class="title">critique (Phase 2 — video quality)</div>
+    <div class="sub">VLM samples frames locally · scores engagement / safety / clarity<br>
+    → pass | regenerate | reject · sampled frames persisted for audit</div>
+  </div>
+</div>
+
+<div class="arrow">↓</div>
+
+<!-- publish -->
+<div class="row" style="margin-bottom:12px">
+  <div class="card c-blue">
+    <div class="title">publish</div>
+    <div class="sub">review/&lt;timestamp&gt;_&lt;stem&gt;/video.mp4 + metadata.json · human sign-off before distribution</div>
+  </div>
+</div>
+
+<!-- services -->
+<div class="services">
+  <div class="section-label">Services — default stack (3 required, down from 5)</div>
+  <div class="svc-row">
+    <div class="svc-col">
+      <h4>✅ Required (default)</h4>
+      <div class="svc-item svc-new">● Ollama <span class="port">:11434</span> LLM + VLM critique</div>
+      <div class="svc-item svc-new">● ComfyUI ✦ <span class="port">:8188</span> Flux image gen + LTX video gen <em style="color:#aaa;font-size:10px">(replaces A1111 + Wan)</em></div>
+      <div class="svc-item">● Chatterbox TTS <span class="port">:8020</span> voice synthesis</div>
+    </div>
+    <div class="svc-col">
+      <h4>⚠ Fallback (env var switch)</h4>
+      <div class="svc-item svc-old">○ AUTOMATIC1111 <span class="port">:7860</span> RENDER_ADAPTER=a1111</div>
+      <div class="svc-item svc-old">○ Wan 2.2 server <span class="port">:8030</span> VIDEO_ADAPTER=wan</div>
+      <div class="svc-item svc-old">○ MuseTalk <span class="port">:8040</span> VIDEO_ADAPTER=wan (lip-sync)</div>
+    </div>
+  </div>
+</div>
+
+<!-- env vars -->
+<div class="env-box">
+  <h4>Key env vars</h4>
+  <div class="env-cols">
+    <div class="env-col">
+      <code>VIDEO_ME_RENDER_ADAPTER=comfyui_flux  # or: a1111</code>
+      <code>VIDEO_ME_VIDEO_ADAPTER=ltx            # or: wan</code>
+      <code>VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188</code>
+    </div>
+    <div class="env-col">
+      <code>VIDEO_ME_AUTO_APPROVE_PLAN=true       # CI bypass</code>
+      <code>VIDEO_ME_MAX_PLAN_ITERATIONS=3</code>
+      <code>VIDEO_ME_APPROVAL_PORT=8765</code>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

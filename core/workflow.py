@@ -115,6 +115,8 @@ class _Adapters:
     analyze: object
     adapt: object
     plan: object
+    plan_critique: object
+    approval: object
     render: object
     voice: object
     video: object
@@ -125,6 +127,34 @@ class _Adapters:
     ffmpeg_bin: str = field(default="ffmpeg")
 
 
+def _make_render_adapter(s, work_dir: Path):
+    """Select render_character adapter based on VIDEO_ME_RENDER_ADAPTER env var."""
+    if s.render_adapter == "comfyui_flux":
+        from adapters.render_character.comfyui_flux_adapter import ComfyUIFluxAdapter
+        return ComfyUIFluxAdapter(
+            work_dir=work_dir / "renders",
+            base_url=s.comfyui_base_url,
+            lora_dir=s.lora_dir,
+            allow_placeholder_lora=s.render_allow_placeholder_lora,
+        )
+    from adapters.render_character.diffusion_adapter import DiffusionRenderAdapter
+    return DiffusionRenderAdapter(
+        work_dir=work_dir / "renders",
+        base_url=s.sd_base_url,
+        lora_dir=s.lora_dir,
+        allow_placeholder_lora=s.render_allow_placeholder_lora,
+    )
+
+
+def _make_video_adapter(s, work_dir: Path):
+    """Select generate_video adapter based on VIDEO_ME_VIDEO_ADAPTER env var."""
+    if s.video_adapter == "ltx":
+        from adapters.generate_video.ltx_adapter import LtxAdapter
+        return LtxAdapter(work_dir=work_dir / "video", base_url=s.ltx_base_url)
+    from adapters.generate_video.wan_adapter import WanAdapter
+    return WanAdapter(work_dir=work_dir / "video", base_url=s.wan_base_url)
+
+
 def _make_adapters(config: AppConfig, work_dir: Path) -> _Adapters:
     """Instantiate all Phase 1 adapters with job-scoped work directories."""
     from adapters.adapt_script.llm_adapter import LlmAdaptScriptAdapter
@@ -132,13 +162,14 @@ def _make_adapters(config: AppConfig, work_dir: Path) -> _Adapters:
     from adapters.assemble_video.ffmpeg_adapter import FfmpegAssembleAdapter
     from adapters.critique.vlm_adapter import VlmCritiqueAdapter
     from adapters.fetch_media.ytdlp_adapter import YtDlpAdapter
-    from adapters.generate_video.wan_adapter import WanAdapter
     from adapters.lip_sync.lip_sync_adapter import LipSyncAdapter
     from adapters.plan_shots.llm_adapter import LlmPlanShotsAdapter
     from adapters.publish.manual_adapter import ManualPublishAdapter
-    from adapters.render_character.diffusion_adapter import DiffusionRenderAdapter
     from adapters.synthesize_voice.tts_adapter import TtsAdapter
     from adapters.transcribe.whisper_adapter import WhisperAdapter
+
+    from adapters.approval.web_approval_adapter import WebApprovalAdapter
+    from adapters.critique.plan_critique_adapter import LlmPlanCritiqueAdapter
 
     s = config.settings
     return _Adapters(
@@ -163,18 +194,24 @@ def _make_adapters(config: AppConfig, work_dir: Path) -> _Adapters:
             base_url=s.llm_base_url,
             api_key=s.llm_api_key,
         ),
-        render=DiffusionRenderAdapter(
-            work_dir=work_dir / "renders",
-            base_url=s.sd_base_url,
-            lora_dir=s.lora_dir,
-            allow_placeholder_lora=s.render_allow_placeholder_lora,
+        plan_critique=LlmPlanCritiqueAdapter(
+            model=s.llm_model,
+            base_url=s.llm_base_url,
+            api_key=s.llm_api_key,
         ),
+        approval=WebApprovalAdapter(
+            work_dir=work_dir,
+            port=s.approval_port,
+            timeout_hours=s.approval_timeout_hours,
+            auto_approve=s.auto_approve_plan,
+        ),
+        render=_make_render_adapter(s, work_dir),
         voice=TtsAdapter(
             work_dir=work_dir / "audio",
             base_url=s.tts_base_url,
             voice_dir=s.voice_dir,
         ),
-        video=WanAdapter(work_dir=work_dir / "video", base_url=s.wan_base_url),
+        video=_make_video_adapter(s, work_dir),
         lipsync=LipSyncAdapter(work_dir=work_dir / "synced", base_url=s.lipsync_base_url),
         assemble=FfmpegAssembleAdapter(
             work_dir=work_dir / "assembled",
@@ -317,15 +354,20 @@ async def _run_shot(
     )
 
     # ── Resume shortcuts ──────────────────────────────────────────────────────
-    # If synced.mp4 already exists the whole shot is done — return both artifacts.
-    synced_path = work_dir / "synced" / shot.shot_id / "synced.mp4"
-    if opts.resume and synced_path.exists():
-        logger.info("Skipping shot %s (synced.mp4 exists)", shot.shot_id)
-        clip_path = work_dir / "video" / shot.shot_id / "clip.mp4"
+    native_lipsync = getattr(adapters.video, "native_lipsync", False)
+    # When LTX is active, the finished artifact is clip.mp4 (lip-sync baked in).
+    # When Wan is active, the finished artifact is synced.mp4 (MuseTalk output).
+    if native_lipsync:
+        done_path = work_dir / "video" / shot.shot_id / "clip.mp4"
+    else:
+        done_path = work_dir / "synced" / shot.shot_id / "synced.mp4"
+
+    if opts.resume and done_path.exists():
+        logger.info("Skipping shot %s (%s exists)", shot.shot_id, done_path.name)
         audio_files = sorted((work_dir / "audio" / speaker_id).glob("*.wav"))
-        audio_uri = str(audio_files[0]) if audio_files else str(synced_path)
+        audio_uri = str(audio_files[0]) if audio_files else str(done_path)
         return (
-            VideoClip(uri=str(synced_path), duration_sec=shot.duration_sec),
+            VideoClip(uri=str(done_path), duration_sec=shot.duration_sec),
             AudioTrack(uri=audio_uri, duration_sec=shot.duration_sec),
         )
 
@@ -371,17 +413,22 @@ async def _run_shot(
                 action=shot.action,
                 duration_sec=shot.duration_sec,
                 shot_id=shot.shot_id,
+                audio_uri=audio_track.uri if native_lipsync else None,
             )
         )
 
-    # ── 4. lip_sync ───────────────────────────────────────────────────────────
-    synced = await adapters.lipsync.run(
-        LipSyncRequest(
-            video_uri=clip.uri,
-            audio_uri=audio_track.uri,
-            shot_id=shot.shot_id,
+    # ── 4. lip_sync (skipped when video adapter handles it natively) ──────────
+    if native_lipsync:
+        log_event(logger, "lip_sync_skipped", shot_id=shot.shot_id, reason="native_lipsync")
+        synced = clip
+    else:
+        synced = await adapters.lipsync.run(
+            LipSyncRequest(
+                video_uri=clip.uri,
+                audio_uri=audio_track.uri,
+                shot_id=shot.shot_id,
+            )
         )
-    )
 
     log_event(logger, "shot_completed", shot_id=shot.shot_id)
     return synced, audio_track
@@ -449,6 +496,126 @@ def _load_artifact(
     except Exception as exc:
         logger.warning("Could not deserialize artifact '%s' (%s): %s — will re-run stage", stage, model_cls.__name__, exc)
         return None
+
+
+async def _critique_loop(
+    storyboard: Storyboard,
+    script: Script,
+    ctx: "_JobContext",
+    max_iterations: int,
+) -> tuple[Storyboard, list[str]]:
+    """
+    Run the plan critique loop: up to max_iterations re-plan attempts.
+    Returns (final_storyboard, last_critique_notes).
+    If critique never passes within the budget, returns the best storyboard
+    with its notes (caller decides whether to fail or pass to approval UI).
+    """
+    from core.models.capabilities import PlanCritiqueRequest, PlanShotsRequest
+
+    adapters = ctx.adapters
+    config = ctx.config
+    notes: list[str] = []
+
+    for attempt in range(1, max_iterations + 1):
+        if attempt > 1 and notes:
+            log_event(logger, "plan_replan", attempt=attempt, notes=notes)
+            storyboard = await adapters.plan.run(
+                PlanShotsRequest(script=script, cast=config.cast, critique_notes=notes)
+            )
+
+        critique = await adapters.plan_critique.run(
+            PlanCritiqueRequest(storyboard=storyboard, script=script, cast=config.cast)
+        )
+        log_event(logger, "critique_plan_result",
+                  attempt=attempt, verdict=critique.verdict, scores=critique.scores)
+
+        if critique.verdict == "pass":
+            return storyboard, critique.revision_notes
+
+        notes = critique.revision_notes
+        logger.info("critique_plan: revise (attempt %d/%d) notes=%s", attempt, max_iterations, notes)
+
+    logger.warning("critique_plan: max iterations reached — proceeding with best storyboard")
+    return storyboard, notes
+
+
+async def _run_plan_critique_and_approval(
+    storyboard: Storyboard,
+    script: Script,
+    ctx: "_JobContext",
+    opts: "RunOptions",
+) -> tuple[Storyboard, Script]:
+    """
+    Run the critique loop then the human approval gate.
+    On rejection, runs one more critique loop with the human's notes, then
+    shows the approval UI again. A second rejection fails the job.
+    """
+    from core.models.capabilities import PlanCritiqueRequest, PlanShotsRequest
+
+    s = ctx.config.settings
+    job = ctx.job
+    job_store = ctx.job_store
+    adapters = ctx.adapters
+
+    # ── LLM critique loop ─────────────────────────────────────────────────────
+    storyboard, last_notes = await _critique_loop(
+        storyboard, script, ctx, s.max_plan_iterations
+    )
+
+    # Reconstruct final critique result for the UI (re-run to get fresh scores)
+    final_critique = await adapters.plan_critique.run(
+        PlanCritiqueRequest(storyboard=storyboard, script=script, cast=ctx.config.cast)
+    )
+
+    # ── Human approval gate ───────────────────────────────────────────────────
+    job.status = JobStatus.PENDING_APPROVAL
+    job_store.save_job(job)
+
+    approved, rejection_notes = await adapters.approval.request_approval(
+        storyboard=storyboard,
+        script=script,
+        cast=ctx.config.cast,
+        critique=final_critique,
+        iteration=1,
+    )
+
+    if approved:
+        job.status = JobStatus.RUNNING
+        job_store.save_job(job)
+        return storyboard, script
+
+    # ── Rejection path: one more re-plan with human notes ────────────────────
+    log_event(logger, "plan_human_rejected", notes=rejection_notes)
+    combined_notes = last_notes + ([rejection_notes] if rejection_notes else [])
+    storyboard = await adapters.plan.run(
+        PlanShotsRequest(script=script, cast=ctx.config.cast, critique_notes=combined_notes)
+    )
+    storyboard, _ = await _critique_loop(storyboard, script, ctx, s.max_plan_iterations)
+    final_critique = await adapters.plan_critique.run(
+        PlanCritiqueRequest(storyboard=storyboard, script=script, cast=ctx.config.cast)
+    )
+
+    # Second approval UI — if rejected again, fail the job
+    approved, rejection_notes = await adapters.approval.request_approval(
+        storyboard=storyboard,
+        script=script,
+        cast=ctx.config.cast,
+        critique=final_critique,
+        iteration=2,
+    )
+
+    if not approved:
+        job.status = JobStatus.FAILED
+        job_store.save_job(job)
+        raise RuntimeError(
+            f"Storyboard rejected twice by human reviewer. "
+            f"Last notes: {rejection_notes!r}. "
+            "Restart the job with --phase plan to generate a new storyboard."
+        )
+
+    job.status = JobStatus.RUNNING
+    job_store.save_job(job)
+    return storyboard, script
 
 
 async def _run_to_assembled_video(
@@ -532,6 +699,14 @@ async def _run_to_assembled_video(
             "plan_shots", adapters.plan,
             PlanShotsRequest(script=script, cast=config.cast),
             Storyboard,
+        )
+
+        # 7. critique_plan loop + human approval gate
+        storyboard, script = await _run_plan_critique_and_approval(
+            storyboard=storyboard,
+            script=script,
+            ctx=ctx,
+            opts=opts,
         )
 
         if opts.phase == "plan":
