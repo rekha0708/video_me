@@ -104,7 +104,7 @@ def _build_few_shot_block(examples: list[dict]) -> str:
 
 class VlmImageCritiqueAdapter(CritiqueImages):
     """
-    Critique N candidate images for a shot using a local VLM (qwen2.5-vl:7b).
+    Critique N candidate images for a shot using a local VLM (qwen3.6:35b, natively multimodal).
     Reads/appends the per-cast feedback log for self-learning.
     """
 
@@ -112,7 +112,7 @@ class VlmImageCritiqueAdapter(CritiqueImages):
 
     def __init__(
         self,
-        model: str = "qwen2.5-vl:32b",
+        model: str = "qwen3.6:35b",
         base_url: str = "http://localhost:11434/v1",
         api_key: str = "ollama",
         feedback_log_dir: Path = Path("assets/kids_duo"),

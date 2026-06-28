@@ -15,7 +15,7 @@ Phase 0  Skeleton + storage          ✅ COMPLETE
 Phase 1  Full pipeline A1.0–A1.12   ✅ COMPLETE (code)
 Phase 2  Critic loop A2.x            ✅ COMPLETE (code) — VLM service needed for real judgment
 Track B  LoRAs + voice files         ⚠️ PARTIAL — SD1.5 LoRAs trained; Flux LoRAs need retraining
-Track D  GPU services                ⚠️ ComfyUI + Chatterbox + Ollama needed
+Track D  GPU services                ⚠️ ComfyUI + Fish Audio S2 + Ollama needed
 ```
 
 ## Quick start (tests only — no services needed)
@@ -163,12 +163,13 @@ and `scripts.check_runtime_readiness`.
 |---|---|---|---|
 | Ollama | 11434 | LLM (analyze, adapt, plan) + VLM critique | ✅ Always |
 | ComfyUI | 8188 | Flux image gen + LTX-Video 2.3 video gen | ✅ Default |
-| Chatterbox TTS | 8020 | Voice synthesis | ✅ Always |
+| Fish Audio S2 | 8025 | Voice synthesis (EN + HI) | ✅ Default |
+| Chatterbox TTS | 8020 | Voice synthesis (EN only, fallback) | ⚠️ Only if `TTS_ADAPTER=chatterbox` |
 | AUTOMATIC1111 | 7860 | SD 1.5 image gen | ⚠️ Only if `RENDER_ADAPTER=a1111` |
 | Wan 2.2 | 8030 | Image-to-video | ⚠️ Only if `VIDEO_ADAPTER=wan` |
 | MuseTalk | 8040 | Lip sync | ⚠️ Only if `VIDEO_ADAPTER=wan` |
 
-> **Default stack needs only 3 services: Ollama + ComfyUI + Chatterbox.**
+> **Default stack needs only 3 services: Ollama + ComfyUI + Fish Audio S2.**
 
 See `.claude/agents/pipeline-runner.md` for startup commands and pre-flight check.
 
@@ -182,6 +183,25 @@ Every stage is a `Capability[Request, Result]` ABC in `core/capabilities/`.
 Concrete adapters live in `adapters/<stage>/`.  
 The full DAG is in `core/workflow.py:run_pipeline_job()`.
 
+### Language selection
+
+Select the output language at run start. The pipeline adapts the script dialogue and voice synthesis accordingly.
+
+```bash
+# English only (default)
+VIDEO_ME_TARGET_LANGUAGE=en
+
+# Hindi only
+VIDEO_ME_TARGET_LANGUAGE=hi
+
+# Both English and Hindi — runs the pipeline twice, produces two review outputs
+VIDEO_ME_TARGET_LANGUAGE=both
+```
+
+Or via the `target_language` parameter on `run_pipeline_job(target_language="hi")`.
+
+Fish Audio S2 handles both languages from the same voice reference file — no separate Hindi voice recording needed.
+
 ### Image candidate selection (self-learning)
 
 After the storyboard is approved, the pipeline generates **N candidate images per shot** (default 3) and runs them through a VLM critique (`qwen2.5-vl:32b`) that scores each on character consistency, prompt adherence, kids-appropriateness, composition, and expressiveness. The winner is pre-selected automatically.
@@ -190,7 +210,7 @@ A second web UI at `http://localhost:8765` shows a **grid of all shots' winner i
 
 ```bash
 VIDEO_ME_IMAGE_CANDIDATES=3              # images generated per shot
-VIDEO_ME_IMAGE_CRITIQUE_MODEL=qwen2.5-vl:32b
+VIDEO_ME_IMAGE_CRITIQUE_MODEL=qwen3.6:35b   # same model as all other LLM stages
 VIDEO_ME_AUTO_APPROVE_IMAGES=true        # CI bypass
 ```
 
@@ -225,18 +245,18 @@ VIDEO_ME_APPROVAL_TIMEOUT_HOURS=24
 | Stage | Adapter | Service |
 |---|---|---|
 | render_character ×N | `ComfyUIFluxAdapter` | ComfyUI + Flux.1-dev + LoRA · port 8188 · N=3 candidates |
-| critique_images | `VlmImageCritiqueAdapter` | Ollama qwen2.5-vl:32b · port 11434 · self-learning |
+| critique_images | `VlmImageCritiqueAdapter` | Ollama qwen3.6:35b · port 11434 · self-learning |
 | approve_images | `ImageApprovalAdapter` | Web UI · localhost:8765 (shared) · grid with per-shot override |
 | generate_video | `LtxAdapter` | LTX-Video 2.3 via ComfyUI · port 8188 · native lip-sync |
 | lip_sync | **skipped** | LTX handles it in the same diffusion pass |
-| synthesize_voice | `TtsAdapter` | Chatterbox TTS · port 8020 |
-| All LLM stages | `LlmAdapter` | Ollama qwen3.6:35b · port 11434 |
-| Image + video critique | `VlmImageCritiqueAdapter` / `VlmCritiqueAdapter` | Ollama qwen2.5-vl:32b · port 11434 |
+| synthesize_voice | `FishS2TtsAdapter` | Fish Audio S2 · port 8025 · EN + HI |
+| All LLM + VLM stages | `LlmAdapter` / `VlmCritiqueAdapter` | Ollama qwen3.6:35b · port 11434 (single model, natively multimodal) |
 
 Switch adapters with env vars — no code change needed:
 ```bash
 VIDEO_ME_RENDER_ADAPTER=a1111        # fall back to AUTOMATIC1111 + SD 1.5
 VIDEO_ME_VIDEO_ADAPTER=wan           # fall back to Wan 2.2 + MuseTalk lip-sync
+VIDEO_ME_TTS_ADAPTER=chatterbox      # fall back to Chatterbox TTS (English only)
 ```
 
 ## Configuration
@@ -253,19 +273,24 @@ VIDEO_ME_REVIEW_DIR=/data/review
 VIDEO_ME_LORA_DIR=/models/loras
 VIDEO_ME_VOICE_DIR=/data/voices
 
-# LLM
+# LLM + VLM (single model for everything — text, image critique, video critique)
 VIDEO_ME_LLM_MODEL=qwen3.6:35b
 VIDEO_ME_LLM_BASE_URL=http://localhost:11434/v1
-VIDEO_ME_CRITIQUE_MODEL=llava:7b
+VIDEO_ME_CRITIQUE_MODEL=qwen3.6:35b
 VIDEO_ME_CRITIQUE_BASE_URL=http://localhost:11434/v1
 
-# Adapter selection (default: comfyui_flux + ltx)
+# Language
+VIDEO_ME_TARGET_LANGUAGE=en            # en | hi | both
+
+# Adapter selection (default: comfyui_flux + ltx + fish_s2)
 VIDEO_ME_RENDER_ADAPTER=comfyui_flux   # or: a1111
 VIDEO_ME_VIDEO_ADAPTER=ltx             # or: wan
+VIDEO_ME_TTS_ADAPTER=fish_s2           # or: chatterbox
 
 # Service URLs
 VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188   # ComfyUI (Flux image + LTX video)
-VIDEO_ME_TTS_BASE_URL=http://localhost:8020        # Chatterbox TTS
+VIDEO_ME_FISH_S2_BASE_URL=http://localhost:8025   # Fish Audio S2 (EN + HI TTS)
+VIDEO_ME_TTS_BASE_URL=http://localhost:8020        # Chatterbox TTS (fallback)
 VIDEO_ME_SD_BASE_URL=http://localhost:7860         # A1111 (fallback only)
 VIDEO_ME_WAN_BASE_URL=http://localhost:8030        # Wan 2.2 (fallback only)
 VIDEO_ME_LIPSYNC_BASE_URL=http://localhost:8040    # MuseTalk (fallback only)

@@ -68,6 +68,7 @@ class AdaptScriptRequest(BaseModel):
     metadata: ContentMetadata
     cast: Cast
     channel_profile: ChannelProfile
+    language: str = "en"  # BCP-47 code: "en" | "hi"
 
 
 # ---------- plan_shots → Storyboard (already defined in content.py) ----------
@@ -98,6 +99,7 @@ class VoiceRequest(BaseModel):
     voice_profile_ref: str
     speaker_id: str
     expression: str | None = None
+    language: str = "en"  # BCP-47 code: "en" | "hi"
 
 
 class AudioTrack(BaseModel):

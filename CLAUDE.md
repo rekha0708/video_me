@@ -18,12 +18,14 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 - **Video generation**: LTX-Video 2.3 via ComfyUI (replaces Wan 2.7 resident server). Native lip-sync in one diffusion pass — MuseTalk stage skipped. Adapter: `LtxAdapter` (port 8188). ~1 min/shot (was ~21 min with Wan).
 - **Plan critique loop**: after `plan_shots`, `LlmPlanCritiqueAdapter` scores 5 dimensions (character_fit, scene_achievability, pacing, kids_safety, visual_clarity). All must be ≥ 0.75 to pass. Up to 3 re-plan iterations with specific fix notes injected.
 - **Human approval gate (storyboard)**: after critique passes, web UI at `http://localhost:8765` shows shot table + score bars. Approve → render. Reject + notes → one more re-plan cycle. 2nd rejection → job FAILED. CI bypass: `VIDEO_ME_AUTO_APPROVE_PLAN=true`.
-- **Image candidate generation**: render_character generates N images per shot (default 3). `VlmImageCritiqueAdapter` (qwen2.5-vl:32b) scores all candidates on 5 dimensions and picks the best. Self-learning: each pick + human override is appended to `assets/kids_duo/critique_feedback.jsonl`; last 5 entries are injected as few-shot context on the next run.
+- **Image candidate generation**: render_character generates N images per shot (default 3). `VlmImageCritiqueAdapter` (qwen3.6:35b, natively multimodal) scores all candidates on 5 dimensions and picks the best. Self-learning: each pick + human override is appended to `assets/kids_duo/critique_feedback.jsonl`; last 5 entries are injected as few-shot context on the next run.
 - **Human approval gate (images)**: after all shots are rendered and critiqued, web UI at `http://localhost:8765 (shared port)` shows a grid of winner images. Operator can override any pick, then clicks Approve. Overrides are written back to the feedback log. CI bypass: `VIDEO_ME_AUTO_APPROVE_IMAGES=true`.
-- **VLM model**: qwen2.5-vl:32b for image and video frame critique. Runs alongside qwen3.6:35b — both fit simultaneously on G200 (143 GB): ~30 GB (qwen3.6:35b) + ~64 GB (qwen2.5-vl:32b) + ~44 GB (LTX) = ~138 GB peak.
+- **Single VLM for everything**: qwen3.6:35b (MoE 35B, natively multimodal via early-fusion training, MMMU 81.7) handles ALL stages — text LLM + image critique + video frame critique. Drops qwen2.5-vl:32b entirely. VRAM: ~30 GB (qwen3.6:35b) + ~44 GB (LTX) + ~20 GB (Fish S2) = ~94 GB peak on G200 (143 GB). 49 GB headroom.
+- **TTS**: Fish Audio S2 (`FishS2TtsAdapter`, port 8025). Supports English and Hindi (80+ languages, voice cloning from reference WAV). Replaces Chatterbox TTS. Fallback: `VIDEO_ME_TTS_ADAPTER=chatterbox`.
+- **Language selection**: `VIDEO_ME_TARGET_LANGUAGE=en|hi|both`. "both" runs the full pipeline twice (shared images, separate dialogue/audio). Script dialogue is translated by the LLM when language ≠ "en".
 - **Shot duration**: 5–8s (2 words/sec, floor 5s, ceiling 8s).
 - **Resume**: `--resume-job JOB_ID` skips completed stages/shots. LTX completion marker: `clip.mp4`; Wan fallback: `synced.mp4`.
-- **Fallback adapters**: `VIDEO_ME_RENDER_ADAPTER=a1111` → A1111 + SD 1.5. `VIDEO_ME_VIDEO_ADAPTER=wan` → Wan 2.2 + MuseTalk.
+- **Fallback adapters**: `VIDEO_ME_RENDER_ADAPTER=a1111` → A1111 + SD 1.5. `VIDEO_ME_VIDEO_ADAPTER=wan` → Wan 2.2 + MuseTalk. `VIDEO_ME_TTS_ADAPTER=chatterbox` → Chatterbox TTS.
 - **Track B LoRAs**: existing SD 1.5 weights won't work with Flux — retrain with `flux_train_network.py` (kohya_ss config already updated).
 
 | Track / Phase | Status | Blocker |
@@ -34,7 +36,8 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 | Plan critique + approval gate | ✅ COMPLETE (code) | — |
 | Image candidate critique + approval | ✅ COMPLETE (code) | — |
 | Track B — LoRAs + voice files | ⚠️ PARTIAL | SD 1.5 LoRAs trained; Flux LoRAs need retraining |
-| Track D — GPU services | ⚠️ Manual start required | Ollama ✅, ComfyUI needed, Chatterbox ✅ |
+| Fish Audio S2 TTS (EN + HI) | ✅ COMPLETE (code) | Fish S2 server setup needed |
+| Track D — GPU services | ⚠️ Manual start required | Ollama ✅, ComfyUI needed, Fish Audio S2 needed |
 | Track E — Compliance sign-off | ❌ PENDING | Operator hasn't signed off |
 
 Voice reference files are gTTS bootstrap WAVs — acceptable for pipeline runs; replace with recorded
@@ -86,7 +89,7 @@ check_rights()  ◄─── BLOCKS job (status=BLOCKED) if rights_cleared=False
                      Overrides written back to feedback log (self-learning)
     │
     ▼ (per shot — Phase B, uses approved image)
-    ├── [synthesize_voice]   Chatterbox TTS API → AudioTrack (WAV)
+    ├── [synthesize_voice]   Fish Audio S2 API → AudioTrack (WAV, EN or HI)
     ├── [generate_video]     LTX-Video 2.3 via ComfyUI → VideoClip (MP4, native lip-sync)  [default]
     └── [lip_sync]           MuseTalk — SKIPPED when VIDEO_ADAPTER=ltx (default)
     │
@@ -127,7 +130,8 @@ The stage runner is `core/executor.py:run_stage()`. The Phase 1 DAG is
 | `adapters/plan_shots/llm_adapter.py` | Ollama/OpenAI-compat LLM + shot structure derivation |
 | `adapters/render_character/comfyui_flux_adapter.py` | ComfyUI + Flux.1-dev + LoRA (default) |
 | `adapters/render_character/diffusion_adapter.py` | AUTOMATIC1111 SD API (fallback) |
-| `adapters/synthesize_voice/tts_adapter.py` | Chatterbox TTS HTTP API |
+| `adapters/synthesize_voice/fish_s2_adapter.py` | Fish Audio S2 HTTP API (EN + HI, default) |
+| `adapters/synthesize_voice/tts_adapter.py` | Chatterbox TTS HTTP API (EN only, fallback) |
 | `adapters/generate_video/ltx_adapter.py` | LTX-Video 2.3 via ComfyUI (default, native lip-sync) |
 | `adapters/generate_video/wan_adapter.py` | Wan 2.2 HTTP API (fallback) |
 | `adapters/lip_sync/lip_sync_adapter.py` | MuseTalk HTTP API (skipped when VIDEO_ADAPTER=ltx) |
@@ -237,7 +241,8 @@ All five services must be healthy before `run_pipeline_job()` is called. The exe
 |---|---|---|---|
 | Ollama | `http://localhost:11434` | LLM (analyze, adapt, plan, critique_plan) + VLM critique | ✅ Always |
 | ComfyUI | `http://localhost:8188` | Flux.1-dev image gen + LTX-Video 2.3 video gen | ✅ Default |
-| Chatterbox TTS | `http://localhost:8020` | TTS for synthesize_voice | ✅ Always |
+| Fish Audio S2 | `http://localhost:8025` | TTS (EN + HI) for synthesize_voice | ✅ Default |
+| Chatterbox TTS | `http://localhost:8020` | TTS (EN only, fallback) | ⚠️ `TTS_ADAPTER=chatterbox` only |
 | AUTOMATIC1111 | `http://localhost:7860` | SD 1.5 render_character fallback | ⚠️ `RENDER_ADAPTER=a1111` only |
 | Wan 2.2 | `http://localhost:8030` | Image-to-video fallback | ⚠️ `VIDEO_ADAPTER=wan` only |
 | MuseTalk | `http://localhost:8040` | Lip sync (Wan path only) | ⚠️ `VIDEO_ADAPTER=wan` only |
@@ -257,7 +262,7 @@ Local/mock placeholder check without services:
 bash scripts/setup_gpu.sh --code-test --skip-services
 ```
 
-LLM model needed: `qwen3.6:35b` (MoE 35B, 29–30 GB VRAM); critique defaults to `llava:7b`. Rollback: `VIDEO_ME_LLM_MODEL=qwen3:14b`. Phase 2 samples local video
+LLM+VLM model: `qwen3.6:35b` (MoE 35B, ~30 GB VRAM, natively multimodal) — used for ALL stages including image and video critique. No separate VLM model needed. Rollback: `VIDEO_ME_LLM_MODEL=qwen3:14b`. Phase 2 samples local video
 frames in the adapter and sends them as multimodal `image_url` data URLs. This keeps the MVP
 inspectable because sampled frames are saved under the job work directory and persisted on
 `CritiqueResult.sampled_frame_uris`.

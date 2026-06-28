@@ -31,6 +31,20 @@ Rules:
 - Assign lines by each character's personality.
 - Return ONLY valid JSON — no markdown fences, no prose."""
 
+_LANGUAGE_NAMES: dict[str, str] = {"en": "English", "hi": "Hindi"}
+
+
+def _system_prompt_for_language(language: str) -> str:
+    if language == "en":
+        return _SYSTEM_PROMPT
+    lang_name = _LANGUAGE_NAMES.get(language, language)
+    return (
+        _SYSTEM_PROMPT
+        + f"\nIMPORTANT: Write ALL dialogue lines in {lang_name}. "
+        "Keep words simple and natural for young children in that language."
+    )
+
+
 # Only ask the LLM for scenes. learning_objective, source_rights, mode, and
 # caption_text are all injected by the adapter after parsing.
 _USER_TEMPLATE = """\
@@ -218,7 +232,7 @@ class LlmAdaptScriptAdapter(AdaptScript):
         )
 
         return [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": _system_prompt_for_language(req.language)},
             {"role": "user", "content": user_content},
         ]
 

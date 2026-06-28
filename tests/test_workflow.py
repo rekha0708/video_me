@@ -1,6 +1,7 @@
 """Tests for run_pipeline_job (A1.12) and its private helpers."""
+from contextlib import contextmanager, ExitStack
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -11,6 +12,7 @@ from core.models.capabilities import (
     CritiqueResult,
     FetchMediaResult,
     FinalVideo,
+    ImageCritiqueResult,
     PublishResult,
     TranscribeResult,
     VideoClip,
@@ -28,9 +30,10 @@ from core.models.guardrails import SourceRights
 from core.models.job import JobStatus
 from core.workflow import (
     _concat_audio,
+    _generate_shot_video,
     _make_adapters,
     _resolve_line,
-    _run_shot,
+    _run_plan_critique_and_approval,
     run_pipeline_job,
     run_with_critique,
 )
@@ -66,6 +69,10 @@ def test_make_adapters_uses_runtime_settings(tmp_path) -> None:
         critique_api_key="vlm-key",
         sd_base_url="http://sd.test",
         tts_base_url="http://tts.test",
+        fish_s2_base_url="http://fish.test",
+        tts_adapter="fish_s2",
+        render_adapter="a1111",
+        video_adapter="wan",
         wan_base_url="http://wan.test",
         lipsync_base_url="http://lipsync.test",
         whisper_model_size="small",
@@ -87,7 +94,7 @@ def test_make_adapters_uses_runtime_settings(tmp_path) -> None:
     assert adapters.plan._base_url == "http://llm.test/v1"
     assert adapters.render._base_url == "http://sd.test"
     assert adapters.render._allow_placeholder_lora is True
-    assert adapters.voice._base_url == "http://tts.test"
+    assert adapters.voice._base_url == "http://fish.test"  # Fish S2 default
     assert adapters.video._base_url == "http://wan.test"
     assert adapters.lipsync._base_url == "http://lipsync.test"
     assert adapters.critique._model == "vlm-model"
@@ -96,6 +103,22 @@ def test_make_adapters_uses_runtime_settings(tmp_path) -> None:
     assert adapters.critique._ffprobe_bin == "/opt/bin/ffprobe"
     assert adapters.assemble._ffmpeg_bin == "/opt/bin/ffmpeg"
     assert adapters.ffmpeg_bin == "/opt/bin/ffmpeg"
+
+
+def test_make_adapters_chatterbox_fallback(tmp_path) -> None:
+    config = load_app_config()
+    config.settings = Settings(
+        data_dir=tmp_path,
+        artifact_dir=tmp_path / "artifacts",
+        sqlite_path=tmp_path / "video_me.db",
+        tts_adapter="chatterbox",
+        tts_base_url="http://chatterbox.test",
+    )
+    adapters = _make_adapters(config, tmp_path / "job")
+    assert adapters.voice._base_url == "http://chatterbox.test"
+
+
+# ------------------------------------------------------------------ shared data builders
 
 
 def _fetch_result() -> FetchMediaResult:
@@ -178,9 +201,9 @@ def _two_shot_storyboard() -> Storyboard:
                 shot_id="s02",
                 scene_ref="scene-1",
                 characters_on_screen=["max"],
-                setting="cozy classroom",
-                camera="close-up",
-                action="character counts fingers",
+                setting="sunny garden",
+                camera="wide shot",
+                action="character points",
                 dialogue_line_refs=["scene-1-line-0"],
                 duration_sec=4.0,
             ),
@@ -189,15 +212,11 @@ def _two_shot_storyboard() -> Storyboard:
 
 
 def _final_video() -> FinalVideo:
-    return FinalVideo(uri="/tmp/final.mp4", duration_sec=3.5)
+    return FinalVideo(uri="/tmp/final.mp4", duration_sec=10.0)
 
 
 def _publish_result() -> PublishResult:
-    return PublishResult(
-        review_path="/review/video.mp4",
-        metadata_path="/review/metadata.json",
-        status="pending_review",
-    )
+    return PublishResult(review_path="/review/video.mp4", metadata_path="/review/meta.json")
 
 
 def _critique_result(verdict: str = "pass") -> CritiqueResult:
@@ -215,6 +234,10 @@ def _synced_clip() -> VideoClip:
 
 def _audio_track() -> AudioTrack:
     return AudioTrack(uri="/tmp/dialogue.wav", duration_sec=2.5, speaker_id="max")
+
+
+def _image_critique_result() -> ImageCritiqueResult:
+    return ImageCritiqueResult(winner_index=0, winner_uri="/tmp/render_00.png")
 
 
 def _stage_results():
@@ -251,6 +274,29 @@ def _make_run_stage_with_critiques(verdicts: list[str], call_order: list[str] | 
     return _run_stage
 
 
+@contextmanager
+def _mock_shot_patches():
+    """Context manager that bypasses image critique/approval/shot loop."""
+    with ExitStack() as stack:
+        stack.enter_context(patch(
+            "core.workflow._run_plan_critique_and_approval",
+            new=AsyncMock(return_value=(_storyboard(), _script())),
+        ))
+        stack.enter_context(patch(
+            "core.workflow._render_shot_candidates",
+            new=AsyncMock(return_value=_image_critique_result()),
+        ))
+        stack.enter_context(patch(
+            "core.workflow._run_image_approval_gate",
+            new=AsyncMock(return_value=["/tmp/render_00.png"]),
+        ))
+        stack.enter_context(patch(
+            "core.workflow._generate_shot_video",
+            new=AsyncMock(return_value=(_synced_clip(), _audio_track())),
+        ))
+        yield
+
+
 # ------------------------------------------------------------------ run_pipeline_job
 
 
@@ -260,12 +306,12 @@ async def test_run_pipeline_job_completes(tmp_path) -> None:
     with (
         patch("core.workflow._make_adapters", return_value=MagicMock(ffmpeg_bin="ffmpeg")),
         patch("core.workflow.run_stage", new=_make_run_stage(_stage_results())),
-        patch("core.workflow._run_shot", new=AsyncMock(return_value=(_synced_clip(), _audio_track()))),
         patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
         patch("core.workflow.create_job_store", return_value=MagicMock()),
         patch("core.workflow.create_artifact_store", return_value=MagicMock()),
     ):
-        job = await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
+        with _mock_shot_patches():
+            job = await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
 
     assert job.status == JobStatus.COMPLETED
 
@@ -282,12 +328,12 @@ async def test_run_pipeline_job_job_is_running_when_stages_start(tmp_path) -> No
     with (
         patch("core.workflow._make_adapters", return_value=MagicMock(ffmpeg_bin="ffmpeg")),
         patch("core.workflow.run_stage", new=spy_run_stage),
-        patch("core.workflow._run_shot", new=AsyncMock(return_value=(_synced_clip(), _audio_track()))),
         patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
         patch("core.workflow.create_job_store", return_value=MagicMock()),
         patch("core.workflow.create_artifact_store", return_value=MagicMock()),
     ):
-        await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
+        with _mock_shot_patches():
+            await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
 
     assert all(s == "running" for s in observed_statuses)
 
@@ -369,12 +415,12 @@ async def test_stage_call_order(tmp_path) -> None:
     with (
         patch("core.workflow._make_adapters", return_value=MagicMock(ffmpeg_bin="ffmpeg")),
         patch("core.workflow.run_stage", new=recording_run_stage),
-        patch("core.workflow._run_shot", new=AsyncMock(return_value=(_synced_clip(), _audio_track()))),
         patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
         patch("core.workflow.create_job_store", return_value=MagicMock()),
         patch("core.workflow.create_artifact_store", return_value=MagicMock()),
     ):
-        await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
+        with _mock_shot_patches():
+            await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
 
     assert call_order == [
         "fetch_media",
@@ -391,19 +437,31 @@ async def test_stage_call_order(tmp_path) -> None:
 async def test_per_shot_loop_runs_for_each_shot(tmp_path) -> None:
     config = _make_config(tmp_path)
     results = {**_stage_results(), "plan_shots": _two_shot_storyboard()}
-    mock_run_shot = AsyncMock(return_value=(_synced_clip(), _audio_track()))
+    mock_generate = AsyncMock(return_value=(_synced_clip(), _audio_track()))
 
     with (
         patch("core.workflow._make_adapters", return_value=MagicMock(ffmpeg_bin="ffmpeg")),
         patch("core.workflow.run_stage", new=_make_run_stage(results)),
-        patch("core.workflow._run_shot", new=mock_run_shot),
+        patch(
+            "core.workflow._run_plan_critique_and_approval",
+            new=AsyncMock(return_value=(_two_shot_storyboard(), _script())),
+        ),
+        patch(
+            "core.workflow._render_shot_candidates",
+            new=AsyncMock(return_value=_image_critique_result()),
+        ),
+        patch(
+            "core.workflow._run_image_approval_gate",
+            new=AsyncMock(return_value=["/tmp/r0.png", "/tmp/r1.png"]),
+        ),
+        patch("core.workflow._generate_shot_video", new=mock_generate),
         patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
         patch("core.workflow.create_job_store", return_value=MagicMock()),
         patch("core.workflow.create_artifact_store", return_value=MagicMock()),
     ):
         await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
 
-    assert mock_run_shot.call_count == 2
+    assert mock_generate.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -420,7 +478,22 @@ async def test_assemble_receives_all_synced_clips(tmp_path) -> None:
     with (
         patch("core.workflow._make_adapters", return_value=MagicMock(ffmpeg_bin="ffmpeg")),
         patch("core.workflow.run_stage", new=recording_run_stage),
-        patch("core.workflow._run_shot", new=AsyncMock(return_value=(_synced_clip(), _audio_track()))),
+        patch(
+            "core.workflow._run_plan_critique_and_approval",
+            new=AsyncMock(return_value=(_two_shot_storyboard(), _script())),
+        ),
+        patch(
+            "core.workflow._render_shot_candidates",
+            new=AsyncMock(return_value=_image_critique_result()),
+        ),
+        patch(
+            "core.workflow._run_image_approval_gate",
+            new=AsyncMock(return_value=["/tmp/r0.png", "/tmp/r1.png"]),
+        ),
+        patch(
+            "core.workflow._generate_shot_video",
+            new=AsyncMock(return_value=(_synced_clip(), _audio_track())),
+        ),
         patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
         patch("core.workflow.create_job_store", return_value=MagicMock()),
         patch("core.workflow.create_artifact_store", return_value=MagicMock()),
@@ -443,12 +516,12 @@ async def test_publish_gets_script_learning_objective(tmp_path) -> None:
     with (
         patch("core.workflow._make_adapters", return_value=MagicMock(ffmpeg_bin="ffmpeg")),
         patch("core.workflow.run_stage", new=recording_run_stage),
-        patch("core.workflow._run_shot", new=AsyncMock(return_value=(_synced_clip(), _audio_track()))),
         patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
         patch("core.workflow.create_job_store", return_value=MagicMock()),
         patch("core.workflow.create_artifact_store", return_value=MagicMock()),
     ):
-        await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
+        with _mock_shot_patches():
+            await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
 
     req = publish_request_captured["request"]
     assert req.learning_objective_summary == "Children learn to count to five."
@@ -461,12 +534,12 @@ async def test_work_dir_created_under_data_dir(tmp_path) -> None:
     with (
         patch("core.workflow._make_adapters", return_value=MagicMock(ffmpeg_bin="ffmpeg")),
         patch("core.workflow.run_stage", new=_make_run_stage(_stage_results())),
-        patch("core.workflow._run_shot", new=AsyncMock(return_value=(_synced_clip(), _audio_track()))),
         patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
         patch("core.workflow.create_job_store", return_value=MagicMock()),
         patch("core.workflow.create_artifact_store", return_value=MagicMock()),
     ):
-        job = await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
+        with _mock_shot_patches():
+            job = await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
 
     job_work_dir = tmp_path / "jobs" / job.job_id
     assert job_work_dir.is_dir()
@@ -486,12 +559,12 @@ async def test_run_with_critique_pass_publishes(tmp_path) -> None:
             "core.workflow.run_stage",
             new=_make_run_stage_with_critiques(["pass"], call_order),
         ),
-        patch("core.workflow._run_shot", new=AsyncMock(return_value=(_synced_clip(), _audio_track()))),
         patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
         patch("core.workflow.create_job_store", return_value=MagicMock()),
         patch("core.workflow.create_artifact_store", return_value=MagicMock()),
     ):
-        job = await run_with_critique("http://example.com", rights_cleared=True, app_config=config)
+        with _mock_shot_patches():
+            job = await run_with_critique("http://example.com", rights_cleared=True, app_config=config)
 
     assert job.status == JobStatus.COMPLETED
     assert "critique_attempt_1" in call_order
@@ -509,12 +582,12 @@ async def test_run_with_critique_regenerates_then_publishes(tmp_path) -> None:
             "core.workflow.run_stage",
             new=_make_run_stage_with_critiques(["regenerate", "pass"], call_order),
         ),
-        patch("core.workflow._run_shot", new=AsyncMock(return_value=(_synced_clip(), _audio_track()))),
         patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
         patch("core.workflow.create_job_store", return_value=MagicMock()),
         patch("core.workflow.create_artifact_store", return_value=MagicMock()),
     ):
-        job = await run_with_critique("http://example.com", rights_cleared=True, app_config=config)
+        with _mock_shot_patches():
+            job = await run_with_critique("http://example.com", rights_cleared=True, app_config=config)
 
     assert job.status == JobStatus.COMPLETED
     assert call_order.count("assemble_video") == 2
@@ -535,13 +608,13 @@ async def test_run_with_critique_reject_blocks_without_publish(tmp_path) -> None
             "core.workflow.run_stage",
             new=_make_run_stage_with_critiques(["reject"], call_order),
         ),
-        patch("core.workflow._run_shot", new=AsyncMock(return_value=(_synced_clip(), _audio_track()))),
         patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
         patch("core.workflow.create_job_store", return_value=mock_job_store),
         patch("core.workflow.create_artifact_store", return_value=MagicMock()),
     ):
-        with pytest.raises(StageError, match="reject"):
-            await run_with_critique("http://example.com", rights_cleared=True, app_config=config)
+        with _mock_shot_patches():
+            with pytest.raises(StageError, match="reject"):
+                await run_with_critique("http://example.com", rights_cleared=True, app_config=config)
 
     last_saved = mock_job_store.save_job.call_args_list[-1][0][0]
     assert last_saved.status == JobStatus.BLOCKED
@@ -561,13 +634,13 @@ async def test_run_with_critique_max_regenerations_sets_failed(tmp_path) -> None
             "core.workflow.run_stage",
             new=_make_run_stage_with_critiques(["regenerate", "regenerate"], call_order),
         ),
-        patch("core.workflow._run_shot", new=AsyncMock(return_value=(_synced_clip(), _audio_track()))),
         patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
         patch("core.workflow.create_job_store", return_value=mock_job_store),
         patch("core.workflow.create_artifact_store", return_value=MagicMock()),
     ):
-        with pytest.raises(StageError, match="max_regenerations exhausted"):
-            await run_with_critique("http://example.com", rights_cleared=True, app_config=config)
+        with _mock_shot_patches():
+            with pytest.raises(StageError, match="max_regenerations exhausted"):
+                await run_with_critique("http://example.com", rights_cleared=True, app_config=config)
 
     last_saved = mock_job_store.save_job.call_args_list[-1][0][0]
     assert last_saved.status == JobStatus.FAILED
@@ -716,18 +789,13 @@ async def test_concat_audio_output_uri_points_to_combined(tmp_path) -> None:
     assert "combined_audio.wav" in result.uri
 
 
-# ------------------------------------------------------------------ _run_shot
+# ------------------------------------------------------------------ _generate_shot_video
 
 
 @pytest.mark.asyncio
-async def test_run_shot_calls_adapters_in_sequence(tmp_path) -> None:
-    """render → voice → video → lipsync must be called in order."""
+async def test_generate_shot_video_calls_adapters_in_sequence(tmp_path) -> None:
+    """voice → video → lipsync must be called in order for non-native-lipsync adapter."""
     call_order: list[str] = []
-    _ImageSet = type("ImageSet", (), {"images": ["/img.png"]})
-
-    async def _render(req):
-        call_order.append("render")
-        return _ImageSet()
 
     async def _voice(req):
         call_order.append("voice")
@@ -742,49 +810,48 @@ async def test_run_shot_calls_adapters_in_sequence(tmp_path) -> None:
         return VideoClip(uri="/s.mp4", duration_sec=3.0, shot_id="s01")
 
     adapters = MagicMock()
-    adapters.render.run = _render
     adapters.voice.run = _voice
     adapters.video.run = _video
     adapters.lipsync.run = _lipsync
+    adapters.video.native_lipsync = False
 
-    config = _make_config(tmp_path)
     shot = _storyboard().shots[0]
+    config = _make_config(tmp_path)
 
-    await _run_shot(shot, _script(), config.cast, adapters, Path(tmp_path))
+    await _generate_shot_video(
+        shot, _script(), config.cast, adapters, Path(tmp_path), "/img.png"
+    )
 
-    assert call_order == ["render", "voice", "video", "lipsync"]
+    assert call_order == ["voice", "video", "lipsync"]
 
 
 @pytest.mark.asyncio
-async def test_run_shot_returns_synced_clip_and_audio_track(tmp_path) -> None:
+async def test_generate_shot_video_returns_synced_clip_and_audio(tmp_path) -> None:
     expected_synced = VideoClip(uri="/synced.mp4", duration_sec=3.5, shot_id="s01")
     expected_audio = AudioTrack(uri="/dlg.wav", duration_sec=2.0, speaker_id="max")
 
     adapters = MagicMock()
-    adapters.render.run = AsyncMock(
-        return_value=type("ImageSet", (), {"images": ["/img.png"]})()
-    )
     adapters.voice.run = AsyncMock(return_value=expected_audio)
     adapters.video.run = AsyncMock(
         return_value=VideoClip(uri="/raw.mp4", duration_sec=3.5, shot_id="s01")
     )
     adapters.lipsync.run = AsyncMock(return_value=expected_synced)
+    adapters.video.native_lipsync = False
 
-    config = _make_config(tmp_path)
     shot = _storyboard().shots[0]
+    config = _make_config(tmp_path)
 
-    synced, audio = await _run_shot(shot, _script(), config.cast, adapters, Path(tmp_path))
+    synced, audio = await _generate_shot_video(
+        shot, _script(), config.cast, adapters, Path(tmp_path), "/img.png"
+    )
 
     assert synced is expected_synced
     assert audio is expected_audio
 
 
 @pytest.mark.asyncio
-async def test_run_shot_passes_speaker_id_to_voice(tmp_path) -> None:
+async def test_generate_shot_video_passes_speaker_id_to_voice(tmp_path) -> None:
     adapters = MagicMock()
-    adapters.render.run = AsyncMock(
-        return_value=type("ImageSet", (), {"images": ["/img.png"]})()
-    )
     adapters.voice.run = AsyncMock(
         return_value=AudioTrack(uri="/d.wav", duration_sec=1.0, speaker_id="max")
     )
@@ -794,22 +861,22 @@ async def test_run_shot_passes_speaker_id_to_voice(tmp_path) -> None:
     adapters.lipsync.run = AsyncMock(
         return_value=VideoClip(uri="/s.mp4", duration_sec=1.0, shot_id="s01")
     )
+    adapters.video.native_lipsync = False
 
-    config = _make_config(tmp_path)
     shot = _storyboard().shots[0]
+    config = _make_config(tmp_path)
 
-    await _run_shot(shot, _script(), config.cast, adapters, Path(tmp_path))
+    await _generate_shot_video(
+        shot, _script(), config.cast, adapters, Path(tmp_path), "/img.png"
+    )
 
     voice_req = adapters.voice.run.call_args[0][0]
     assert voice_req.speaker_id == "max"
 
 
 @pytest.mark.asyncio
-async def test_run_shot_passes_shot_id_to_lipsync(tmp_path) -> None:
+async def test_generate_shot_video_passes_shot_id_to_lipsync(tmp_path) -> None:
     adapters = MagicMock()
-    adapters.render.run = AsyncMock(
-        return_value=type("ImageSet", (), {"images": ["/img.png"]})()
-    )
     adapters.voice.run = AsyncMock(
         return_value=AudioTrack(uri="/d.wav", duration_sec=1.0, speaker_id="max")
     )
@@ -819,11 +886,41 @@ async def test_run_shot_passes_shot_id_to_lipsync(tmp_path) -> None:
     adapters.lipsync.run = AsyncMock(
         return_value=VideoClip(uri="/s.mp4", duration_sec=1.0, shot_id="s01")
     )
+    adapters.video.native_lipsync = False
 
-    config = _make_config(tmp_path)
     shot = _storyboard().shots[0]
+    config = _make_config(tmp_path)
 
-    await _run_shot(shot, _script(), config.cast, adapters, Path(tmp_path))
+    await _generate_shot_video(
+        shot, _script(), config.cast, adapters, Path(tmp_path), "/img.png"
+    )
 
     lipsync_req = adapters.lipsync.run.call_args[0][0]
     assert lipsync_req.shot_id == "s01"
+
+
+@pytest.mark.asyncio
+async def test_generate_shot_video_skips_lipsync_for_native(tmp_path) -> None:
+    """When video adapter has native_lipsync=True, lipsync adapter is not called."""
+    adapters = MagicMock()
+    adapters.voice.run = AsyncMock(
+        return_value=AudioTrack(uri="/d.wav", duration_sec=1.0, speaker_id="max")
+    )
+    adapters.video.run = AsyncMock(
+        return_value=VideoClip(uri="/c.mp4", duration_sec=1.0, shot_id="s01")
+    )
+    adapters.video.native_lipsync = True
+
+    shot = _storyboard().shots[0]
+    config = _make_config(tmp_path)
+
+    # Create the clip.mp4 so resume check passes
+    clip_dir = tmp_path / "video" / "s01"
+    clip_dir.mkdir(parents=True)
+    # native_lipsync path: video run returns the final clip directly
+    synced, _ = await _generate_shot_video(
+        shot, _script(), config.cast, adapters, Path(tmp_path), "/img.png"
+    )
+
+    adapters.lipsync.run.assert_not_called()
+    assert synced.uri == "/c.mp4"

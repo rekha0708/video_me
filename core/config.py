@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     llm_model: str = "qwen3.6:35b"
     llm_base_url: str = "http://localhost:11434/v1"
     llm_api_key: str = "ollama"
-    critique_model: str = "llava:7b"
+    critique_model: str = "qwen3.6:35b"
     critique_base_url: str = "http://localhost:11434/v1"
     critique_api_key: str = "ollama"
     # --- render_character backend ("a1111" or "comfyui_flux") ---
@@ -47,7 +47,14 @@ class Settings(BaseSettings):
     wan_base_url: str = "http://localhost:8030"      # Wan 2.2 resident server (kept for fallback)
     ltx_base_url: str = "http://localhost:8188"      # LTX-Video 2.3 via ComfyUI (default same host)
 
-    tts_base_url: str = "http://localhost:8020"
+    # --- synthesize_voice backend ("chatterbox" or "fish_s2") ---
+    tts_adapter: Literal["chatterbox", "fish_s2"] = "fish_s2"
+    tts_base_url: str = "http://localhost:8020"       # Chatterbox (fallback)
+    fish_s2_base_url: str = "http://localhost:8025"   # Fish Audio S2 (default)
+
+    # --- language selection ---
+    target_language: str = "en"  # "en" | "hi" | "both"
+
     lipsync_base_url: str = "http://localhost:8040"
     whisper_model_size: str = "medium"
     whisper_device: str = "cuda"
@@ -66,7 +73,7 @@ class Settings(BaseSettings):
 
     # --- image candidate generation + VLM critique ---
     image_candidates: int = 3            # images generated per shot for critique
-    image_critique_model: str = "qwen2.5-vl:32b"
+    image_critique_model: str = "qwen3.6:35b"
     image_critique_base_url: str = "http://localhost:11434/v1"
     image_critique_api_key: str = "ollama"
     feedback_log_dir: Path = Path("assets/kids_duo")  # per-cast critique_feedback.jsonl

@@ -53,10 +53,12 @@ class RunOptions:
       "all"      — full pipeline (default).
     resume:      skip stages whose artifact JSON already exists on disk.
     only_shot:   in the shot loop, process only this shot ID (e.g. "s01").
+    language:    BCP-47 language code for this run — "en" or "hi".
     """
     phase: Phase = "all"
     resume: bool = False
     only_shot: str | None = None
+    language: str = "en"
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +163,23 @@ def _make_video_adapter(s, work_dir: Path):
     return WanAdapter(work_dir=work_dir / "video", base_url=s.wan_base_url)
 
 
+def _make_tts_adapter(s, work_dir: Path):
+    """Select synthesize_voice adapter based on VIDEO_ME_TTS_ADAPTER env var."""
+    if s.tts_adapter == "fish_s2":
+        from adapters.synthesize_voice.fish_s2_adapter import FishS2TtsAdapter
+        return FishS2TtsAdapter(
+            work_dir=work_dir / "audio",
+            base_url=s.fish_s2_base_url,
+            voice_dir=s.voice_dir,
+        )
+    from adapters.synthesize_voice.tts_adapter import TtsAdapter
+    return TtsAdapter(
+        work_dir=work_dir / "audio",
+        base_url=s.tts_base_url,
+        voice_dir=s.voice_dir,
+    )
+
+
 def _make_adapters(config: AppConfig, work_dir: Path) -> _Adapters:
     """Instantiate all Phase 1 adapters with job-scoped work directories."""
     from adapters.adapt_script.llm_adapter import LlmAdaptScriptAdapter
@@ -171,7 +190,7 @@ def _make_adapters(config: AppConfig, work_dir: Path) -> _Adapters:
     from adapters.lip_sync.lip_sync_adapter import LipSyncAdapter
     from adapters.plan_shots.llm_adapter import LlmPlanShotsAdapter
     from adapters.publish.manual_adapter import ManualPublishAdapter
-    from adapters.synthesize_voice.tts_adapter import TtsAdapter
+    from adapters.synthesize_voice.tts_adapter import TtsAdapter  # Chatterbox fallback
     from adapters.transcribe.whisper_adapter import WhisperAdapter
 
     from adapters.approval.image_approval_adapter import ImageApprovalAdapter
@@ -227,11 +246,7 @@ def _make_adapters(config: AppConfig, work_dir: Path) -> _Adapters:
             auto_approve=s.auto_approve_images,
         ),
         render=_make_render_adapter(s, work_dir),
-        voice=TtsAdapter(
-            work_dir=work_dir / "audio",
-            base_url=s.tts_base_url,
-            voice_dir=s.voice_dir,
-        ),
+        voice=_make_tts_adapter(s, work_dir),
         video=_make_video_adapter(s, work_dir),
         lipsync=LipSyncAdapter(work_dir=work_dir / "synced", base_url=s.lipsync_base_url),
         assemble=FfmpegAssembleAdapter(
@@ -469,6 +484,7 @@ async def _generate_shot_video(
                 voice_profile_ref=speaker.voice_profile_ref,
                 speaker_id=speaker_id,
                 expression=expression,
+                language=opts.language if opts else "en",
             )
         )
 
@@ -761,6 +777,7 @@ async def _run_to_assembled_video(
                 metadata=metadata,
                 cast=config.cast,
                 channel_profile=config.channel_profile,
+                language=opts.language,
             ),
             Script,
         )
@@ -949,6 +966,7 @@ async def run_pipeline_job(
     app_config: AppConfig | None = None,
     options: RunOptions | None = None,
     resume_job_id: str | None = None,
+    target_language: str = "en",
 ) -> Job:
     """
     Full Phase 1 pipeline: URL → review-folder MP4 + metadata sidecar.
@@ -972,14 +990,37 @@ async def run_pipeline_job(
         app_config:     Override the default YAML-loaded config (useful in tests).
     """
     config = app_config or load_app_config()
-    opts = options or RunOptions()
-    if opts.resume and not resume_job_id:
-        raise ValueError("resume=True requires resume_job_id to be set.")
-    ctx = (
-        _restore_job_context(resume_job_id, config)
-        if resume_job_id
-        else _make_job_context(source_url, rights_cleared, config)
-    )
+
+    # Resolve target language(s): "both" expands to ["en", "hi"]
+    effective_lang = target_language or config.settings.target_language
+    if effective_lang == "both":
+        languages = ["en", "hi"]
+    else:
+        languages = [effective_lang]
+
+    # For multi-language runs, execute sequentially and return the last job.
+    last_job: Job | None = None
+    for lang in languages:
+        lang_opts = RunOptions(
+            phase=(options.phase if options else "all"),
+            resume=(options.resume if options else False),
+            only_shot=(options.only_shot if options else None),
+            language=lang,
+        )
+        if lang_opts.resume and not resume_job_id:
+            raise ValueError("resume=True requires resume_job_id to be set.")
+        ctx = (
+            _restore_job_context(resume_job_id, config)
+            if resume_job_id
+            else _make_job_context(source_url, rights_cleared, config)
+        )
+        last_job = await _run_single_language_job(ctx, lang_opts)
+
+    return last_job  # type: ignore[return-value]
+
+
+async def _run_single_language_job(ctx: "_JobContext", opts: RunOptions) -> Job:
+    """Run the pipeline for a single target language."""
     job = ctx.job
 
     try:
