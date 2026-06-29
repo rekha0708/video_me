@@ -23,6 +23,20 @@ WORKSPACE="${WORKSPACE:-/workspace}"
 LOG_DIR="$WORKSPACE/logs"
 mkdir -p "$LOG_DIR"
 
+# ── Claude Code memory symlink ────────────────────────────────────────────────
+# /root/ is wiped on pod restart. Recreate the symlink so Claude Code memory
+# points at the persistent copy in /workspace/video_me/.claude/memory/.
+CLAUDE_MEM_TARGET="$ROOT_DIR/.claude/memory"
+CLAUDE_MEM_LINK="/root/.claude/projects/-workspace/memory"
+if [[ ! -L "$CLAUDE_MEM_LINK" || "$(readlink "$CLAUDE_MEM_LINK")" != "$CLAUDE_MEM_TARGET" ]]; then
+  mkdir -p /root/.claude/projects/-workspace
+  rm -rf "$CLAUDE_MEM_LINK"
+  ln -s "$CLAUDE_MEM_TARGET" "$CLAUDE_MEM_LINK"
+  ok "Claude Code memory symlink restored → $CLAUDE_MEM_TARGET"
+else
+  ok "Claude Code memory symlink OK"
+fi
+
 log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 ok()  { printf '\033[0;32m  ✓ %s\033[0m\n' "$*"; }
 warn(){ printf '\033[0;33m  ! %s\033[0m\n' "$*"; }
