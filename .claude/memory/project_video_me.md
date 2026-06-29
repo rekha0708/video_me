@@ -11,7 +11,7 @@ Kids' educational video pipeline that transforms a source video into an animated
 
 **Stack:**
 - LLM/VLM: qwen3.6:35b via Ollama (port 11434)
-- Image gen: ComfyUI + Flux 2.0 Dev 32B (port 8188)
+- Image gen: **musubi-tuner `flux_2_generate_image.py`** (direct subprocess, NOT ComfyUI — ComfyUI lacks Mistral 3 loader node)
 - Video gen: LTX-2.3 22B via ComfyUI (port 8188, native lip-sync)
 - TTS: Fish Audio S2 Pro (port 8025, EN + HI + 80 languages)
 - Fallback video: Wan 2.2 I2V (port 8030)

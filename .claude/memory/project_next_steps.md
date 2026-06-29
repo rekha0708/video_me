@@ -1,21 +1,34 @@
 ---
 name: project-next-steps
-description: Immediate next steps after Max LoRA training completes (as of 2026-06-29)
-metadata: 
-  node_type: memory
+description: Pipeline end-to-end run status and render adapter fix (as of 2026-06-29)
+metadata:
   type: project
-  originSessionId: 0f42bdac-7ce1-4470-b65d-7073873d419a
 ---
 
-Max LoRA training completing ~8:10 AM 2026-06-29. After it finishes:
+Pipeline first run completed LLM stages successfully. Job ID: `20260629-074235-za3`.
 
-1. Verify `loras/kids_duo_max.safetensors` is ~745 MB (not the old 37 MB stale file)
-2. Run `python -m scripts.check_track_b` — both LoRAs + voice refs should be READY
-3. Run pipeline end-to-end with source video at `/workspace/downloads/learn_body_parts_with_rosie_fun_kids_act.mp4`
-4. Human approval gates at `localhost:8765` — storyboard first, then image grid
+**LLM stages all ✅:**
+- fetch_media (1s), transcribe (40s), analyze_content (84s), adapt_script (45s)
+- plan_shots: 14 shots, critique passed first attempt (all scores ≥0.80, kids_safety 1.0)
+- Human storyboard approval: approved
 
-**Source video confirmed:** `/workspace/downloads/learn_body_parts_with_rosie_fun_kids_act.mp4` (13 MB, rights_cleared=True per user)
+**ComfyUI render failure + fix:**
+ComfyUI `Flux2*` nodes are cloud API nodes (require BFL API key), not local inference.
+ComfyUI also lacks a Mistral 3 text encoder loader — it only has CLIP+T5 (Flux 1.x).
 
-**Services already up:** Ollama ✓, ComfyUI ✓, Fish S2 ✓
+Fix: wrote `adapters/render_character/musubi_flux_adapter.py` — calls musubi-tuner's
+`flux_2_generate_image.py` directly as a subprocess. Default adapter changed to `musubi_flux`.
+
+**Current state:** pipeline resumed at render_character (shot 1/14), using musubi_flux adapter.
+
+**Run command:**
+```bash
+# New run:
+VIDEO_ME_RENDER_ADAPTER=musubi_flux .venv/bin/python run_pipeline.py <video> --rights-cleared
+# Resume:
+.venv/bin/python run_pipeline.py --resume-job <JOB_ID> --rights-cleared
+```
+
+**Human approval gates:** storyboard at localhost:8765 (done), image grid (coming after renders)
 
 **Why:** [[project-video-me]], [[project-lora-training]]

@@ -136,6 +136,14 @@ class _Adapters:
 
 def _make_render_adapter(s, work_dir: Path):
     """Select render_character adapter based on VIDEO_ME_RENDER_ADAPTER env var."""
+    if s.render_adapter == "musubi_flux":
+        from adapters.render_character.musubi_flux_adapter import MusubiFluxAdapter
+        return MusubiFluxAdapter(
+            work_dir=work_dir / "renders",
+            lora_dir=s.lora_dir,
+            num_images=s.image_candidates,
+            allow_placeholder_lora=s.render_allow_placeholder_lora,
+        )
     if s.render_adapter == "comfyui_flux":
         from adapters.render_character.comfyui_flux_adapter import ComfyUIFluxAdapter
         return ComfyUIFluxAdapter(
