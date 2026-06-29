@@ -28,3 +28,10 @@ training_logs/
 
 # musubi-tuner pre-cache (latents + text encoder outputs) — large binary files.
 assets/kids_duo/training/cache/
+
+# Downloaded source videos — large binaries, not committed.
+downloads/*.mp4
+downloads/*.mkv
+downloads/*.webm
+downloads/*.avi
+downloads/*.mov
