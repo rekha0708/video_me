@@ -6,8 +6,8 @@ interchangeable adapter behind a typed capability ABC.
 
 ## Status
 
-**Phase 2 code-complete — 313 tests passing.**
-Stack upgraded to ComfyUI + Flux 2.0 Dev (image, 32B) + LTX-2.3 22B distilled (video, native lip-sync).
+**Phase 2 code-complete — 315 tests (312 pass locally; 3 stale `json_repair` tests, see CLAUDE.md).**
+Stack: Flux 2.0 Dev (image, 32B) via musubi-tuner + LTX-2.3 22B distilled (video, native lip-sync) via ComfyUI + Fish Audio S2 (TTS).
 See `BUILD_PROGRESS.md` for the full implementation journal and next steps.
 
 ```
@@ -25,7 +25,7 @@ git clone https://github.com/rekha0708/video_me
 cd video_me
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-python -m pytest -q      # 313 tests, all passing
+python -m pytest -q      # 315 tests collected
 ```
 
 ## Running the Phase 0 no-op workflow
@@ -135,7 +135,7 @@ source .env
 2. Create token: https://huggingface.co/settings/tokens (Read-only, with gated repo access)
 3. Add to `.env` file
 
-See `ENV_SETUP_GUIDE.md` for detailed instructions.
+See `.env.example` for the full annotated variable list and `DEPLOY.md` for the GPU walkthrough.
 
 ### Step 2: Install runtime dependencies on a GPU machine
 
@@ -182,7 +182,8 @@ and `scripts.check_runtime_readiness`.
 | Service | Port | Purpose | Required? |
 |---|---|---|---|
 | Ollama | 11434 | LLM (analyze, adapt, plan) + VLM critique | ✅ Always |
-| ComfyUI | 8188 | Flux 2.0 Dev image gen + LTX-2.3 22B video gen | ✅ Default |
+| musubi-tuner | — | Flux 2.0 image gen (subprocess, no server) | ✅ Default (image) |
+| ComfyUI | 8188 | LTX-2.3 22B video gen | ✅ Default (video) |
 | Fish Audio S2 | 8025 | Voice synthesis (EN + HI) | ✅ Default |
 | Chatterbox TTS | 8020 | Voice synthesis (EN only, fallback) | ⚠️ Only if `TTS_ADAPTER=chatterbox` |
 | AUTOMATIC1111 | 7860 | SD 1.5 image gen | ⚠️ Only if `RENDER_ADAPTER=a1111` |
@@ -264,7 +265,7 @@ VIDEO_ME_APPROVAL_TIMEOUT_HOURS=24
 
 | Stage | Adapter | Service |
 |---|---|---|
-| render_character ×N | `ComfyUIFluxAdapter` | ComfyUI + Flux 2.0 Dev + LoRA · port 8188 · N=3 candidates |
+| render_character ×N | `MusubiFluxAdapter` | musubi-tuner Flux 2.0 local inference (subprocess) · N=3 candidates |
 | critique_images | `VlmImageCritiqueAdapter` | Ollama qwen3.6:35b · port 11434 · self-learning |
 | approve_images | `ImageApprovalAdapter` | Web UI · localhost:8765 (shared) · grid with per-shot override |
 | generate_video | `LtxAdapter` | LTX-2.3 22B via ComfyUI · port 8188 · native lip-sync |
@@ -302,8 +303,8 @@ VIDEO_ME_CRITIQUE_BASE_URL=http://localhost:11434/v1
 # Language
 VIDEO_ME_TARGET_LANGUAGE=en            # en | hi | both
 
-# Adapter selection (default: comfyui_flux + ltx + fish_s2)
-VIDEO_ME_RENDER_ADAPTER=comfyui_flux   # or: a1111
+# Adapter selection (default: musubi_flux + ltx + fish_s2)
+VIDEO_ME_RENDER_ADAPTER=musubi_flux    # or: comfyui_flux (needs BFL cloud API), a1111
 VIDEO_ME_VIDEO_ADAPTER=ltx             # or: wan
 VIDEO_ME_TTS_ADAPTER=fish_s2           # or: chatterbox
 

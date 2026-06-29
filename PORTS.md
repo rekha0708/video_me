@@ -9,7 +9,7 @@ Complete list of all TCP ports used by the video_me pipeline services and web UI
 | Port | Service | Protocol | Required? | Purpose |
 |------|---------|----------|-----------|---------|
 | **11434** | Ollama | HTTP | ✅ **Always** | LLM + VLM (qwen3.6:35b) for all text/image/video stages |
-| **8188** | ComfyUI | HTTP/WebSocket | ✅ **Default** | Flux 2.0 Dev image gen + LTX-2.3 22B video gen |
+| **8188** | ComfyUI | HTTP/WebSocket | ✅ **Default** | LTX-2.3 22B video gen (image gen runs via musubi-tuner subprocess, no port) |
 | **8025** | Fish Audio S2 | HTTP | ✅ **Default** | Voice synthesis (EN + HI + 80 languages) |
 | **8765** | Human Approval UI | HTTP | ✅ **Always** | Web UI for storyboard + image approval (shared port) |
 | **8020** | Chatterbox TTS | HTTP | ⚠️ Fallback | Voice synthesis (EN only, `TTS_ADAPTER=chatterbox`) |
@@ -26,7 +26,7 @@ Complete list of all TCP ports used by the video_me pipeline services and web UI
 ```bash
 # 3 required services + 1 approval UI
 11434   # Ollama (LLM + VLM)
-8188    # ComfyUI (Flux 2.0 + LTX-2.3)
+8188    # ComfyUI (LTX-2.3 video; image gen = musubi-tuner subprocess)
 8025    # Fish Audio S2 (TTS)
 8765    # Human approval web UI (storyboard + images)
 ```
@@ -79,15 +79,15 @@ sudo ufw allow 8765/tcp comment "Human approval UI"
 
 ---
 
-### **Port 8188 — ComfyUI (Flux 2.0 + LTX-2.3)**
+### **Port 8188 — ComfyUI (LTX-2.3 video)**
 - **Service:** ComfyUI HTTP + WebSocket API
 - **Models:**
-  - Flux 2.0 Dev (32B) — image generation
   - LTX-2.3 22B distilled — video generation
+  - (Flux 2.0 only if `RENDER_ADAPTER=comfyui_flux` fallback — default image gen is musubi-tuner)
 - **Used by:**
-  - `render_character` — generate character images with LoRA
   - `generate_video` — image-to-video with native lip-sync
-- **Health check:** `GET http://localhost:8188/`
+  - `render_character` only in the `comfyui_flux` fallback (default is the musubi-tuner subprocess)
+- **Health check:** `GET http://localhost:8188/system_stats`
 - **VRAM:** ~20 GB (Flux) + ~44 GB (LTX) = 64 GB (sequential)
 - **Start command:** `python3 /workspace/ComfyUI/main.py --listen 0.0.0.0 --port 8188`
 - **WebSocket:** Used for workflow execution progress updates

@@ -9,12 +9,16 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 
 ---
 
-## Current state (as of 2026-06-27)
+## Current state (as of 2026-06-29)
 
-**Stack upgraded to ComfyUI + Flux 2.0 Dev (image) + LTX-2.3 22B distilled (video, native lip-sync). Plan critique loop + human approval gate added. 313 tests pass ✅.**
+**Stack: Flux 2.0 Dev image via musubi-tuner (local) + LTX-2.3 22B distilled video via ComfyUI (native lip-sync) + Fish Audio S2 (TTS). Plan critique loop + human approval gate added.**
+
+**Default adapter stack is code-enforced in `core/config.py`: `musubi_flux` (image) / `ltx` (video) / `fish_s2` (TTS).** The image stage runs **musubi-tuner** as a subprocess — ComfyUI cannot load Flux 2.0 locally (no Mistral 3 encoder node; the `Flux2*` ComfyUI nodes are paid BFL cloud API), so `comfyui_flux` is a fallback, not the default. ComfyUI (8188) is still required for the **LTX-2.3 video** stage.
+
+**Test status:** 315 tests collected. Local Mac/py3.14 venv: **312 pass / 3 fail** — the 3 are pre-existing stale tests (`test_parse_response_raises_on_invalid_json`: code now repairs invalid JSON via `json_repair` instead of raising). Re-run `pytest` on the target box and record the real number.
 
 - **LLM**: qwen3.6:35b (MoE 35B). Thinking mode disabled via `extra_body={"think": False}` + no `response_format`. `max_tokens=16384`. `json_repair` fallback. Used for all LLM stages including plan critique.
-- **Image generation**: ComfyUI + Flux 2.0 Dev (32B, Nov 2025) + Flux LoRA (replaces A1111 + SD 1.5). Adapter: `ComfyUIFluxAdapter` (port 8188). Most capable open-weight image model.
+- **Image generation**: Flux 2.0 Dev (32B, Nov 2025) + Flux LoRA, run **locally via musubi-tuner** (replaces A1111 + SD 1.5). Default adapter: `MusubiFluxAdapter` (subprocess, no server). `ComfyUIFluxAdapter` (port 8188) is a fallback but ComfyUI can't load Flux 2.0 locally — it needs the paid BFL cloud API / a custom Mistral 3 node.
 - **Video generation**: LTX-2.3 22B distilled v1.1 via ComfyUI (replaces Wan 2.7 resident server). Native audio-video sync in one diffusion pass — MuseTalk stage skipped. Adapter: `LtxAdapter` (port 8188). 8-step distilled: ~1 min/shot (was ~21 min with Wan).
 - **Plan critique loop**: after `plan_shots`, `LlmPlanCritiqueAdapter` scores 5 dimensions (character_fit, scene_achievability, pacing, kids_safety, visual_clarity). All must be ≥ 0.75 to pass. Up to 3 re-plan iterations with specific fix notes injected.
 - **Human approval gate (storyboard)**: after critique passes, web UI at `http://localhost:8765` shows shot table + score bars. Approve → render. Reject + notes → one more re-plan cycle. 2nd rejection → job FAILED. CI bypass: `VIDEO_ME_AUTO_APPROVE_PLAN=true`.
@@ -35,7 +39,7 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 | Phase 2 — Critic loop A2.x | ✅ COMPLETE (code) | Real VLM service needed for real judgment |
 | Plan critique + approval gate | ✅ COMPLETE (code) | — |
 | Image candidate critique + approval | ✅ COMPLETE (code) | — |
-| Track B — LoRAs + voice files | ⚠️ PARTIAL | SD 1.5 LoRAs trained; Flux LoRAs need retraining |
+| Track B — LoRAs + voice files | ❌ INCOMPLETE | `loras/kids_duo_max.safetensors` missing; `kids_duo_zoe.safetensors` is a TEST-ONLY placeholder. Voice WAVs present (bootstrap). Run `python -m scripts.check_track_b`. |
 | Fish Audio S2 TTS (EN + HI) | ✅ COMPLETE (code) | Fish S2 server setup needed |
 | Track D — GPU services | ⚠️ Manual start required | Ollama ✅, ComfyUI needed, Fish Audio S2 needed |
 | Track E — Compliance sign-off | ❌ PENDING | Operator hasn't signed off |
@@ -128,7 +132,8 @@ The stage runner is `core/executor.py:run_stage()`. The Phase 1 DAG is
 | `adapters/analyze_content/llm_adapter.py` | Ollama/OpenAI-compat LLM |
 | `adapters/adapt_script/llm_adapter.py` | Ollama/OpenAI-compat LLM + guardrail injection |
 | `adapters/plan_shots/llm_adapter.py` | Ollama/OpenAI-compat LLM + shot structure derivation |
-| `adapters/render_character/comfyui_flux_adapter.py` | ComfyUI + Flux 2.0 Dev + LoRA (default) |
+| `adapters/render_character/musubi_flux_adapter.py` | musubi-tuner Flux 2.0 local inference (**default**) |
+| `adapters/render_character/comfyui_flux_adapter.py` | ComfyUI + Flux 2.0 Dev + LoRA (fallback; needs BFL cloud API) |
 | `adapters/render_character/diffusion_adapter.py` | AUTOMATIC1111 SD API (fallback) |
 | `adapters/synthesize_voice/fish_s2_adapter.py` | Fish Audio S2 HTTP API (EN + HI, default) |
 | `adapters/synthesize_voice/tts_adapter.py` | Chatterbox TTS HTTP API (EN only, fallback) |
@@ -153,7 +158,7 @@ The stage runner is `core/executor.py:run_stage()`. The Phase 1 DAG is
 | `scripts/check_runtime_readiness.py` | runtime dependency/service/asset readiness check |
 | `scripts/setup_gpu.sh` | one-command GPU-machine setup + validation |
 | `scripts/setup_gpu.py` / `setup.py gpu` | lower-level GPU-machine setup helper |
-| `tests/` | 313 tests across 17 test files; no external services needed (all passing as of 2026-06-25) |
+| `tests/` | 315 tests; no external services needed. Local Mac/py3.14 venv: 312 pass / 3 fail (stale `json_repair` tests — see Current state) |
 | `BUILD_PROGRESS.md` | Full implementation journal + decision log |
 | `Agent.md` | Lead Designer agent charter |
 
@@ -187,7 +192,9 @@ Quick check:
 ```bash
 python -m scripts.check_track_b
 ```
-Current status: `Track B: READY` (real trained LoRAs + bootstrap voice refs in place).
+Current status: `Track B: INCOMPLETE`. `loras/kids_duo_zoe.safetensors` is a TEST-ONLY
+placeholder and `loras/kids_duo_max.safetensors` is missing — train both Flux LoRAs.
+Voice reference WAVs (`voices/kids_duo/{max,zoe}.wav`) are present (gTTS bootstrap).
 
 Temporary placeholder-LoRA render smoke tests are opt-in:
 ```bash
@@ -225,7 +232,8 @@ Do NOT install `perth` (wrong package on PyPI); it must be `resemble-perth`.
 
 **Ollama is in base Linux** (`/usr/local/bin/ollama`) and is WIPED on RunPod pod restart.
 `start_services.sh` detects the missing binary and reinstalls via `curl | sh` before starting.
-Models at `/workspace/ollama/` persist on the network volume (qwen3:14b + qwen2.5:7b + llava:7b).
+Models at `/workspace/ollama/` persist on the network volume. Default model: **qwen3.6:35b**
+(single model for LLM + VLM critique). Rollback: `VIDEO_ME_LLM_MODEL=qwen3:14b`.
 
 `start_services.sh` uses the correct interpreter for each service. Never install
 heavy ML packages into the project `.venv` — keep it lightweight for fast CI.
@@ -240,7 +248,8 @@ All five services must be healthy before `run_pipeline_job()` is called. The exe
 | Service | Default URL | Purpose | Required? |
 |---|---|---|---|
 | Ollama | `http://localhost:11434` | LLM (analyze, adapt, plan, critique_plan) + VLM critique | ✅ Always |
-| ComfyUI | `http://localhost:8188` | Flux 2.0 Dev image gen + LTX-2.3 22B video gen | ✅ Default |
+| musubi-tuner | (subprocess, no port) | Flux 2.0 Dev image gen (render_character) | ✅ Default |
+| ComfyUI | `http://localhost:8188` | LTX-2.3 22B video gen (generate_video) | ✅ Default |
 | Fish Audio S2 | `http://localhost:8025` | TTS (EN + HI) for synthesize_voice | ✅ Default |
 | Chatterbox TTS | `http://localhost:8020` | TTS (EN only, fallback) | ⚠️ `TTS_ADAPTER=chatterbox` only |
 | AUTOMATIC1111 | `http://localhost:7860` | SD 1.5 render_character fallback | ⚠️ `RENDER_ADAPTER=a1111` only |
@@ -348,14 +357,18 @@ VIDEO_ME_DATA_DIR=/data/video_me       # where job work dirs are created
 VIDEO_ME_REVIEW_DIR=/data/review       # where publish output goes
 VIDEO_ME_LORA_DIR=/models/loras        # where LoRA files are
 VIDEO_ME_VOICE_DIR=/data/voices        # where reference WAV files are
-VIDEO_ME_LLM_MODEL=qwen3:14b
+VIDEO_ME_LLM_MODEL=qwen3.6:35b         # also VLM critique; rollback: qwen3:14b
 VIDEO_ME_LLM_BASE_URL=http://localhost:11434/v1
-VIDEO_ME_CRITIQUE_MODEL=llava:7b
+VIDEO_ME_CRITIQUE_MODEL=qwen3.6:35b    # single multimodal model for all critique
 VIDEO_ME_CRITIQUE_BASE_URL=http://localhost:11434/v1
-VIDEO_ME_SD_BASE_URL=http://localhost:7860
-VIDEO_ME_TTS_BASE_URL=http://localhost:8020
-VIDEO_ME_WAN_BASE_URL=http://localhost:8030
-VIDEO_ME_LIPSYNC_BASE_URL=http://localhost:8040
+# Default stack (musubi image + ComfyUI/LTX video + Fish S2 TTS):
+VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188   # ComfyUI (LTX video; also comfyui_flux fallback)
+VIDEO_ME_FISH_S2_BASE_URL=http://localhost:8025
+# Legacy fallback URLs (only when the matching *_ADAPTER override is set):
+# VIDEO_ME_SD_BASE_URL=http://localhost:7860       # a1111
+# VIDEO_ME_TTS_BASE_URL=http://localhost:8020      # chatterbox
+# VIDEO_ME_WAN_BASE_URL=http://localhost:8030      # wan
+# VIDEO_ME_LIPSYNC_BASE_URL=http://localhost:8040  # musetalk
 VIDEO_ME_WHISPER_DEVICE=cpu            # use cuda on GPU
 VIDEO_ME_WHISPER_COMPUTE_TYPE=int8     # use float16 on CUDA
 VIDEO_ME_JOB_STORE=postgres            # use PostgreSQL instead of SQLite

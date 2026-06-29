@@ -1,18 +1,27 @@
-# Automated LoRA Training — Using Your Flux 2.0 Stack
+# LoRA Training Guide — kids_duo (Flux 2.0)
 
-**NEW:** Use your existing Flux 2.0 + qwen3.6:35b setup to generate training images with human-in-the-loop approval!
+Train the Max and Zoe character LoRAs for the `render_character` stage. The default
+render path is **musubi-tuner Flux 2.0**, so train Flux LoRAs (SD 1.5 weights won't work).
+
+> **Status:** `loras/kids_duo_max.safetensors` is missing and `kids_duo_zoe.safetensors`
+> is a TEST-ONLY placeholder — `check_track_b` reports INCOMPLETE until both are trained.
 
 ---
 
 ## 🎯 Overview
 
-Instead of manually generating images in Leonardo.ai, you can now:
+The intended workflow uses your own Flux 2.0 stack to produce training images, then
+kohya `flux_train_network.py` to train the LoRA:
 
-✅ **Use Flux 2.0 base model** (already installed) to generate training images  
-✅ **Use qwen3.6:35b LLM** to refine prompts for optimal Flux output  
+✅ **Flux 2.0 (via musubi-tuner)** generates the training images locally  
+✅ **qwen3.6:35b** refines each prompt for the base model  
 ✅ **Human approval loop** — review each image before saving  
-✅ **Auto-generate captions** — .txt files created automatically  
-✅ **Resume from any point** — pick up where you left off
+✅ **Auto-generated captions** — one `.txt` per image  
+
+> ⚠️ **The `scripts/generate_training_images.py` helper described below is planned and
+> not yet in the repo.** Until it lands, generate training images manually (musubi-tuner,
+> or any external tool such as Leonardo.ai — see "Alternatives" at the end), place them
+> under `assets/kids_duo/training/images/<char>/`, and skip to Step 3 (training).
 
 ---
 
@@ -21,9 +30,8 @@ Instead of manually generating images in Leonardo.ai, you can now:
 Before starting, ensure:
 
 - ✅ GPU setup complete (`bash scripts/setup_gpu.sh` finished)
-- ✅ Services running (`bash scripts/start_services.sh` finished)
-- ✅ ComfyUI + Flux 2.0 responding (`http://localhost:8188`)
-- ✅ Ollama + qwen3.6:35b responding (`http://localhost:11434`)
+- ✅ musubi-tuner + Flux 2.0 weights present (image generation engine)
+- ✅ Ollama + qwen3.6:35b responding (`http://localhost:11434`) for prompt refinement
 
 **Quick check:**
 ```bash
@@ -54,7 +62,7 @@ python scripts/generate_training_images.py --character max --start-from 010
 1. Script reads prompts from `assets/kids_duo/training/max_prompts.txt`
 2. For each prompt:
    - qwen3.6:35b refines prompt for Flux 2.0 compatibility
-   - ComfyUI + Flux 2.0 generates image (base model, no LoRA)
+   - musubi-tuner + Flux 2.0 generates the image (base model, no LoRA)
    - Browser opens at `http://localhost:8765` showing the image
    - You approve ✅ or reject ❌
    - Approved images saved to `assets/kids_duo/training/images/max/`
@@ -162,7 +170,7 @@ python -m scripts.check_track_b
     ↓
 [LLM Refine] ← qwen3.6:35b adapts prompt for Flux 2.0
     ↓          (removes trigger token, adds quality boosters)
-[Flux Generate] ← ComfyUI + Flux 2.0 base model (no LoRA)
+[Flux Generate] ← musubi-tuner + Flux 2.0 base model (no LoRA)
     ↓             ~20 seconds per image
 [Show in Browser] ← http://localhost:8765 approval UI
     ↓
@@ -310,10 +318,8 @@ curl http://localhost:8188/system_stats
    # Should now pass LoRA checks
    ```
 
-3. ✅ **Run end-to-end pipeline test:**
-   ```bash
-   python run_pipeline.py --source-url "YOUR_TEST_VIDEO" --rights-cleared
-   ```
+3. ✅ **Run end-to-end pipeline test** (see CLAUDE.md "Running the pipeline" —
+   call `core.workflow.run_pipeline_job()` / `run_with_critique()`).
 
 4. ✅ **Review output:**
    ```bash
@@ -323,17 +329,34 @@ curl http://localhost:8188/system_stats
 
 ---
 
-## 🎬 You're Ready!
+## 📎 Reference
 
-This automated workflow lets you:
-- ✅ Generate training images using your own Flux 2.0 setup
-- ✅ Review and approve each image before training
-- ✅ Train production-quality Flux 2.0 LoRAs
-- ✅ Use in the video_me pipeline immediately
+### Trigger words & assets
 
-**Start now:**
+| Character | Trigger word | Prompts | Dataset config |
+|---|---|---|---|
+| Max | `kids_duo_max` | `assets/kids_duo/training/max_prompts.txt` | `dataset_max.toml` |
+| Zoe | `kids_duo_zoe` | `assets/kids_duo/training/zoe_prompts.txt` | `dataset_zoe.toml` |
+
+kohya config: `assets/kids_duo/training/kohya_config.toml`. Trained weights go in
+`loras/` as `kids_duo_<name>.safetensors`. Training logs under `training_logs/` are
+git-ignored.
+
+### Alternatives (folded from the former Leonardo.ai guide)
+
+**No local GPU for training?** Generate images with any tool (e.g. Leonardo.ai —
+Leonardo Anime XL, Alchemy on, 768×768, with the shared negative prompt + positive
+suffix from the prompt files), then train on **Replicate**
+([ostris/flux-dev-lora-trainer](https://replicate.com/ostris/flux-dev-lora-trainer)):
+upload a zip of `images/<char>/` (PNGs + caption `.txt`), set `trigger_word=kids_duo_<char>`,
+`steps=1000`, `lora_rank=32`, `learning_rate=0.0004`; download the `.safetensors` into `loras/`.
+
+**Leonardo Custom Model (platform-locked)** is also possible but its trained model can't
+be exported as `.safetensors`; using it would require a new `LeonardoRenderAdapter`
+calling the Leonardo REST API instead of the local render path.
+
+### Verify
+
 ```bash
-python scripts/generate_training_images.py --character max
+python -m scripts.check_track_b   # INCOMPLETE until both LoRAs + voice WAVs exist
 ```
-
-Good luck! 🚀
