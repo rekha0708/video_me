@@ -48,7 +48,7 @@ keep_tokens      = 1
 [[dataset.general.subsets]]
 image_dir         = "/workspace/video_me/assets/kids_duo/training/images/max"
 caption_extension = ".txt"
-num_repeats       = 60
+num_repeats       = 20
 
 [sample_prompt_arguments]
 sample_every_n_epochs = 5

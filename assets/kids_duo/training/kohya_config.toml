@@ -60,7 +60,7 @@ keep_tokens      = 1
 # MAX — point at your generated + curated images folder
 image_dir         = "assets/kids_duo/training/images/max"
 caption_extension = ".txt"
-num_repeats       = 60    # with 20 images: 20 × 30 = 600 steps/epoch → ~6000 total
+num_repeats       = 20    # with 20 images: 20 × 30 = 600 steps/epoch → ~6000 total
 
 # ── For Zoe run: comment above, uncomment below ──
 # [[dataset.general.subsets]]
