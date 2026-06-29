@@ -477,6 +477,7 @@ setup_musubi_tuner() {
   ok "    --text_encoder $te_shard \\"
   ok "    --dataset_config assets/kids_duo/training/musubi_dataset_max.toml \\"
   ok "    --flash_attn --mixed_precision bf16 --fp8_base --fp8_scaled \\"
+  ok "    --optimizer_type adamw --learning_rate 1e-4 \\"
   ok "    --network_module networks.lora_flux_2 --network_dim 32 --network_alpha 16 \\"
   ok "    --max_train_epochs 25 --save_every_n_epochs 5 --seed 42 \\"
   ok "    --output_dir loras/ --output_name kids_duo_max"
