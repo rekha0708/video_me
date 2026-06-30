@@ -31,11 +31,16 @@ transcribe = [
 ]
 llm = [
   "openai>=1.0",
+  "json-repair>=0.44",
   # works with Ollama, vLLM, or any OpenAI-compatible endpoint
 ]
 render = [
   "httpx>=0.27",
   # Stable Diffusion backend (e.g. AUTOMATIC1111) is a separate service; httpx is the HTTP client.
+]
+dashboard = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
 ]
 
 [build-system]

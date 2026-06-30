@@ -974,7 +974,7 @@ async def run_pipeline_job(
     app_config: AppConfig | None = None,
     options: RunOptions | None = None,
     resume_job_id: str | None = None,
-    target_language: str = "en",
+    target_language: str | None = None,
 ) -> Job:
     """
     Full Phase 1 pipeline: URL → review-folder MP4 + metadata sidecar.

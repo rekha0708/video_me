@@ -192,11 +192,11 @@ class LlmAnalyzeAdapter(AnalyzeContent):
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError:
-            from json_repair import repair_json
-            repaired = repair_json(cleaned)
             try:
+                from json_repair import repair_json
+                repaired = repair_json(cleaned)
                 data = json.loads(repaired)
-            except json.JSONDecodeError as exc:
+            except (ImportError, json.JSONDecodeError) as exc:
                 raise RuntimeError(
                     f"LLM returned invalid JSON: {exc}\nRaw (first 500 chars): {raw[:500]}"
                 ) from exc

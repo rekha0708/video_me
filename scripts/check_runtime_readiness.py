@@ -167,20 +167,34 @@ def _service_urls(settings: Settings) -> list[tuple[str, str, bool]]:
 
     # Render backend
     if settings.render_adapter == "comfyui_flux":
-        urls.append(("ComfyUI (Flux.1-dev + LTX)", settings.comfyui_base_url + "/", True))
+        urls.append(("ComfyUI (Flux image)", settings.comfyui_base_url + "/", True))
+    elif settings.render_adapter == "a1111":
+        urls.append(
+            (
+                "AUTOMATIC1111 (render fallback)",
+                _join_url(settings.sd_base_url, "sdapi/v1/sd-models"),
+                True,
+            )
+        )
     else:
-        urls.append(("AUTOMATIC1111 (fallback)", _join_url(settings.sd_base_url, "sdapi/v1/sd-models"), True))
+        # musubi_flux is the default image backend and runs as a local subprocess,
+        # so it does not have an HTTP service to probe here.
+        pass
+
+    # Video backend
+    if settings.video_adapter == "ltx":
+        comfy_url = settings.comfyui_base_url + "/"
+        if not any(url == comfy_url for _, url, _ in urls):
+            urls.append(("ComfyUI (LTX video)", comfy_url, True))
+    elif settings.video_adapter == "wan":
+        urls.append(("Wan image-to-video (fallback)", _join_url(settings.wan_base_url, "health"), True))
+        urls.append(("MuseTalk lip-sync (fallback)", _join_url(settings.lipsync_base_url, "health"), True))
 
     # TTS backend
     if settings.tts_adapter == "fish_s2":
         urls.append(("Fish Audio S2 TTS", _join_url(settings.fish_s2_base_url, "health"), True))
     else:
         urls.append(("Chatterbox TTS (fallback)", _join_url(settings.tts_base_url, "health"), True))
-
-    # Video backend (Wan + MuseTalk only needed when VIDEO_ADAPTER=wan)
-    if settings.video_adapter == "wan":
-        urls.append(("Wan image-to-video (fallback)", _join_url(settings.wan_base_url, "health"), True))
-        urls.append(("MuseTalk lip-sync (fallback)", _join_url(settings.lipsync_base_url, "health"), True))
 
     return urls
 

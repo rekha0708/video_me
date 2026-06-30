@@ -7,6 +7,7 @@ from scripts.check_runtime_readiness import (
     PASS,
     WARN,
     CheckResult,
+    _service_urls,
     check_python_packages,
     check_service_health,
     check_system_tools,
@@ -112,6 +113,30 @@ def test_service_health_can_warn_for_missing_services() -> None:
 
     assert results
     assert all(r.status == WARN for r in results)
+
+
+def test_default_service_urls_use_ltx_comfyui_without_a1111() -> None:
+    urls = _service_urls(
+        Settings(
+            render_adapter="musubi_flux",
+            video_adapter="ltx",
+            tts_adapter="fish_s2",
+        )
+    )
+    names = [name for name, _, _ in urls]
+
+    assert "Ollama LLM/VLM API" in names
+    assert "ComfyUI (LTX video)" in names
+    assert "Fish Audio S2 TTS" in names
+    assert not any("AUTOMATIC1111" in name for name in names)
+
+
+def test_a1111_render_adapter_adds_a1111_service_url() -> None:
+    urls = _service_urls(Settings(render_adapter="a1111", video_adapter="ltx"))
+    names = [name for name, _, _ in urls]
+
+    assert "AUTOMATIC1111 (render fallback)" in names
+    assert "ComfyUI (LTX video)" in names
 
 
 def test_exit_code_for_results_fails_only_on_failures() -> None:

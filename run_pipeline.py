@@ -86,10 +86,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--rights-cleared",
         action="store_true",
-        default=True,
         help=(
             "Assert that the source video is cleared for transformative use. "
             "Pipeline is BLOCKED without this flag."
+        ),
+    )
+    p.add_argument(
+        "--target-language",
+        choices=["en", "hi", "both"],
+        default=None,
+        help=(
+            "Output language for this run. Defaults to VIDEO_ME_TARGET_LANGUAGE "
+            "from config when omitted."
         ),
     )
     p.add_argument(
@@ -221,6 +229,7 @@ async def main() -> int:
                 app_config=config,
                 options=options,
                 resume_job_id=args.resume_job,
+                target_language=args.target_language,
             )
 
     except KeyboardInterrupt:

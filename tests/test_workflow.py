@@ -1,6 +1,7 @@
 """Tests for run_pipeline_job (A1.12) and its private helpers."""
 from contextlib import contextmanager, ExitStack
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -27,7 +28,7 @@ from core.models.content import (
     Storyboard,
 )
 from core.models.guardrails import SourceRights
-from core.models.job import JobStatus
+from core.models.job import Job, JobStatus
 from core.workflow import (
     _concat_audio,
     _generate_shot_video,
@@ -314,6 +315,35 @@ async def test_run_pipeline_job_completes(tmp_path) -> None:
             job = await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
 
     assert job.status == JobStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_job_uses_config_target_language_when_not_overridden(tmp_path) -> None:
+    config = _make_config(tmp_path)
+    config.settings.target_language = "both"
+    observed_languages: list[str] = []
+
+    def fake_context(source_url, rights_cleared, app_config):
+        return SimpleNamespace(
+            job=Job(
+                source_url=source_url,
+                channel_profile_ref=app_config.channel_profile.id,
+                cast_ref=app_config.cast.id,
+                rights_cleared=rights_cleared,
+            )
+        )
+
+    async def fake_single_language_job(ctx, opts):
+        observed_languages.append(opts.language)
+        return ctx.job
+
+    with (
+        patch("core.workflow._make_job_context", new=fake_context),
+        patch("core.workflow._run_single_language_job", new=fake_single_language_job),
+    ):
+        await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
+
+    assert observed_languages == ["en", "hi"]
 
 
 @pytest.mark.asyncio
