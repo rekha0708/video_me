@@ -683,6 +683,31 @@ def create_app(
             autoescape=select_autoescape(["html"]),
         )
 
+        def _b64path(path: str) -> str:
+            """Encode a local file path for the /img/<b64> route (base64url, no padding issues)."""
+            import base64
+            return base64.urlsafe_b64encode(str(path).encode()).decode()
+
+        _jinja_env.filters["b64path"] = _b64path
+
+        @app.get("/img/{path_b64}", include_in_schema=False)
+        def serve_render_image(path_b64: str):
+            import base64
+            from fastapi.responses import FileResponse
+
+            try:
+                decoded = base64.urlsafe_b64decode(path_b64.encode()).decode()
+            except Exception:
+                raise HTTPException(status_code=400, detail="invalid path encoding")
+
+            path = Path(decoded).resolve()
+            data_dir = Path(config.settings.data_dir).resolve()
+            if not path.is_relative_to(data_dir):
+                raise HTTPException(status_code=403, detail="path outside data dir")
+            if not path.is_file():
+                raise HTTPException(status_code=404, detail="image not found")
+            return FileResponse(str(path))
+
         def _render(template_name: str, **ctx_vars: Any):
             from fastapi.responses import HTMLResponse
 

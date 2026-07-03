@@ -35,9 +35,27 @@ stop_matching() {
   kill -9 $pids 2>/dev/null || true
 }
 
+# Belt-and-suspenders for stop_matching(): --reload's reloader process can
+# leak an orphaned child (e.g. a multiprocessing.spawn tracker) that keeps
+# the listening socket but whose cmdline no longer contains "uvicorn
+# services.dashboard_api" — pgrep -f then never finds it, and it silently
+# keeps serving stale code forever on every future restart. Kill by port too.
+stop_port() {
+  local label="$1" port="$2"
+  local pids
+  pids="$(ss -ltnp 2>/dev/null | awk -v p=":$port\$" '$4 ~ p {print $0}' | \
+    grep -oP 'pid=\K[0-9]+' | sort -u)"
+  if [[ -z "$pids" ]]; then
+    return
+  fi
+  warn "$label: killing stray process(es) still bound to port $port: $pids"
+  kill -9 $pids 2>/dev/null || true
+}
+
 log "Stopping dashboard API + worker"
 stop_matching "Dashboard API"    "uvicorn services.dashboard_api"
 stop_matching "Dashboard worker" "python -m services.dashboard_worker"
+stop_port "Dashboard API" "$DASHBOARD_PORT"
 
 cd "$ROOT_DIR"
 

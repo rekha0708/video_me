@@ -24,7 +24,7 @@
         {% for uri in candidates %}
         <div class="candidate-card {% if loop.index0 == vlm_pick %}selected{% endif %}"
              onclick="selectCandidate(this, '{{ shot_id }}', {{ loop.index0 }})">
-          <img src="{{ uri }}" alt="candidate {{ loop.index }}"
+          <img src="/img/{{ uri | b64path }}" alt="candidate {{ loop.index }}"
                onerror="this.style.display='none'">
           <div class="cand-label">
             #{{ loop.index }}{% if loop.index0 == vlm_pick %} ★ VLM{% endif %}
