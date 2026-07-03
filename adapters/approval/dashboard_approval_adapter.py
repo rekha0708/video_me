@@ -40,7 +40,7 @@ def _storyboard_to_payload(storyboard: Any, critique: Any | None) -> dict[str, A
             "shot_id": shot.shot_id,
             "setting": shot.setting,
             "action": shot.action,
-            "character_ids": shot.character_ids,
+            "character_ids": shot.characters_on_screen,
             "duration_sec": shot.duration_sec,
         }
         shots.append(entry)
