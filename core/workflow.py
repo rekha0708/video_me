@@ -333,7 +333,12 @@ def _make_job_context(
     )
 
 
-def _restore_job_context(job_id: str, config: AppConfig) -> _JobContext:
+def _restore_job_context(
+    job_id: str,
+    config: AppConfig,
+    *,
+    approval_overrides: dict | None = None,
+) -> _JobContext:
     """Reconstruct a context for a previously started job (for resume/phase runs).
 
     Loads the job record from the store and points the work_dir at the existing
@@ -363,7 +368,7 @@ def _restore_job_context(job_id: str, config: AppConfig) -> _JobContext:
         job_store=job_store,
         job=job,
         work_dir=work_dir,
-        adapters=_make_adapters(config, work_dir),
+        adapters=_make_adapters(config, work_dir, approval_overrides=approval_overrides),
     )
 
 
@@ -1065,7 +1070,7 @@ async def run_pipeline_job(
         if lang_opts.resume and not resume_job_id:
             raise ValueError("resume=True requires resume_job_id to be set.")
         ctx = (
-            _restore_job_context(resume_job_id, config)
+            _restore_job_context(resume_job_id, config, approval_overrides=approval_overrides)
             if resume_job_id
             else _make_job_context(
                 source_url, rights_cleared, config,
