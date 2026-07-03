@@ -44,7 +44,7 @@ stop_port() {
   local label="$1" port="$2"
   local pids
   pids="$(ss -ltnp 2>/dev/null | awk -v p=":$port\$" '$4 ~ p {print $0}' | \
-    grep -oP 'pid=\K[0-9]+' | sort -u)"
+    { grep -oP 'pid=\K[0-9]+' || true; } | sort -u)"
   if [[ -z "$pids" ]]; then
     return
   fi
