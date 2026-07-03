@@ -15,6 +15,7 @@ class DashboardJobStatus(StrEnum):
     CREATED = "created"
     QUEUED = "queued"
     RUNNING = "running"
+    PENDING_TRANSCRIPT_REVIEW = "pending_transcript_review"
     PENDING_PLAN_APPROVAL = "pending_plan_approval"
     PENDING_IMAGE_APPROVAL = "pending_image_approval"
     PENDING_FINAL_REVIEW = "pending_final_review"
@@ -49,6 +50,7 @@ class DashboardEventLevel(StrEnum):
 
 
 class DashboardApprovalKind(StrEnum):
+    TRANSCRIPT = "transcript"
     PLAN = "plan"
     IMAGES = "images"
     FINAL_PUBLISH = "final_publish"
@@ -102,7 +104,7 @@ class CreateDashboardJobRequest(BaseModel):
     rights_cleared: bool = False
     target_language: Literal["en", "hi", "both"] = "en"
     mode: Literal["standard", "critique"] = "standard"
-    phase: Literal["plan", "render", "assemble", "all", "noop"] = "all"
+    phase: Literal["transcribe", "script_plan", "plan", "render", "assemble", "all", "noop"] = "all"
     run_critique: bool = False
     overrides: DashboardJobOverrides = Field(default_factory=DashboardJobOverrides)
     idempotency_key: str | None = None
@@ -119,6 +121,7 @@ class DashboardJobRecord(BaseModel):
     current_stage: str | None = None
     current_shot_id: str | None = None
     approval_kind: str | None = None
+    completed_phases: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
     queued_at: datetime | None = None
     started_at: datetime | None = None

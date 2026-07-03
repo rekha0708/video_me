@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}video_me{% endblock %} — Dashboard</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<nav class="sidebar">
+  <div class="sidebar-brand">video<span>_me</span></div>
+  <div class="sidebar-nav">
+    <a href="/" class="sidebar-link {% if active == 'jobs' %}active{% endif %}">
+      <span class="icon">⬡</span> Jobs
+    </a>
+    <a href="/health" class="sidebar-link {% if active == 'health' %}active{% endif %}">
+      <span class="icon">◎</span> Health
+    </a>
+    <a href="/api/docs" class="sidebar-link" target="_blank">
+      <span class="icon">⊞</span> API Docs
+    </a>
+  </div>
+  <div class="sidebar-footer">
+    {% if worker %}
+      Worker active<br>
+      <span class="font-mono">{{ worker.worker_id[:24] }}</span>
+    {% else %}
+      <span style="color:#ef4444">No worker running</span>
+    {% endif %}
+  </div>
+</nav>
+
+<div class="main">
+  {% block content %}{% endblock %}
+</div>
+
+<script src="/static/app.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

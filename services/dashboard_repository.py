@@ -93,6 +93,7 @@ class DashboardRepository:
                     current_stage TEXT,
                     current_shot_id TEXT,
                     approval_kind TEXT,
+                    completed_phases_json TEXT NOT NULL DEFAULT '[]',
                     created_at TEXT NOT NULL,
                     queued_at TEXT,
                     started_at TEXT,
@@ -104,6 +105,13 @@ class DashboardRepository:
                 )
                 """
             )
+            # Migrate existing DBs that lack the completed_phases_json column.
+            try:
+                conn.execute(
+                    "ALTER TABLE dashboard_jobs ADD COLUMN completed_phases_json TEXT NOT NULL DEFAULT '[]'"
+                )
+            except Exception:
+                pass  # Column already exists.
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS job_queue (
@@ -313,6 +321,41 @@ class DashboardRepository:
                     _json_dumps(terminal_error) if terminal_error else None,
                     job_id,
                 ),
+            )
+        job = self.get_job(job_id)
+        if job is None:
+            raise KeyError(f"dashboard job not found: {job_id}")
+        return job
+
+    def update_job_phase(self, job_id: str, phase: str) -> DashboardJobRecord:
+        """Advance the job's phase column (used by the /advance endpoint)."""
+        now = utc_now()
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE dashboard_jobs SET phase = ?, updated_at = ? WHERE job_id = ?",
+                (phase, _dt_text(now), job_id),
+            )
+        job = self.get_job(job_id)
+        if job is None:
+            raise KeyError(f"dashboard job not found: {job_id}")
+        return job
+
+    def append_completed_phase(self, job_id: str, phase: str) -> DashboardJobRecord:
+        """Mark a phase as done in the completed_phases list."""
+        now = utc_now()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT completed_phases_json FROM dashboard_jobs WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"dashboard job not found: {job_id}")
+            phases: list[str] = json.loads(row["completed_phases_json"] or "[]")
+            if phase not in phases:
+                phases.append(phase)
+            conn.execute(
+                "UPDATE dashboard_jobs SET completed_phases_json = ?, updated_at = ? WHERE job_id = ?",
+                (_json_dumps(phases), _dt_text(now), job_id),
             )
         job = self.get_job(job_id)
         if job is None:
@@ -662,6 +705,73 @@ class DashboardRepository:
             ).fetchone()
         return self._worker_from_row(row) if row else None
 
+    def complete_queue_action(self, queue_id: str) -> None:
+        now = utc_now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE job_queue
+                SET status = ?, completed_at = ?
+                WHERE queue_id = ?
+                """,
+                (DashboardQueueStatus.COMPLETED.value, _dt_text(now), queue_id),
+            )
+
+    def fail_queue_action(self, queue_id: str, error: dict[str, Any]) -> None:
+        now = utc_now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE job_queue
+                SET status = ?, error_json = ?, completed_at = ?
+                WHERE queue_id = ?
+                """,
+                (
+                    DashboardQueueStatus.FAILED.value,
+                    _json_dumps(error),
+                    _dt_text(now),
+                    queue_id,
+                ),
+            )
+
+    def resolve_approval(
+        self,
+        approval_id: str,
+        *,
+        approved: bool,
+        notes: str = "",
+        picks: dict[str, Any] | None = None,
+        reviewer: str | None = None,
+    ) -> DashboardApprovalRequest:
+        now = utc_now()
+        new_status = DashboardApprovalStatus.APPROVED if approved else DashboardApprovalStatus.REJECTED
+        response = {"approved": approved, "notes": notes}
+        if picks is not None:
+            response["picks"] = picks
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE approval_requests
+                SET status = ?, response_json = ?, decided_at = ?, reviewer = ?
+                WHERE approval_id = ? AND status = ?
+                """,
+                (
+                    new_status.value,
+                    _json_dumps(response),
+                    _dt_text(now),
+                    reviewer,
+                    approval_id,
+                    DashboardApprovalStatus.PENDING.value,
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM approval_requests WHERE approval_id = ?",
+                (approval_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"approval not found: {approval_id}")
+        return self._approval_from_row(row)
+
     def ping(self) -> None:
         with self._connect() as conn:
             conn.execute("SELECT 1").fetchone()
@@ -676,10 +786,11 @@ class DashboardRepository:
             INSERT INTO dashboard_jobs (
                 job_id, source_url, source_kind, status, phase, target_language,
                 rights_cleared, current_stage, current_shot_id, approval_kind,
+                completed_phases_json,
                 created_at, queued_at, started_at, updated_at, last_heartbeat_at,
                 completed_at, terminal_error_json, request_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.job_id,
@@ -692,6 +803,7 @@ class DashboardRepository:
                 job.current_stage,
                 job.current_shot_id,
                 job.approval_kind,
+                _json_dumps(job.completed_phases),
                 _dt_text(job.created_at),
                 _dt_text(job.queued_at),
                 _dt_text(job.started_at),
@@ -774,6 +886,7 @@ class DashboardRepository:
             current_stage=row["current_stage"],
             current_shot_id=row["current_shot_id"],
             approval_kind=row["approval_kind"],
+            completed_phases=_json_loads(row["completed_phases_json"], []),
             created_at=_dt(row["created_at"]) or utc_now(),
             queued_at=_dt(row["queued_at"]),
             started_at=_dt(row["started_at"]),

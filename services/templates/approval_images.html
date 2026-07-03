@@ -1,0 +1,100 @@
+{# Included inside job_detail.html when ap.kind == 'images' #}
+{% set ap = detail.pending_approval %}
+{% set shots_data = ap.request.get('shots', []) %}
+
+<div class="approval-card images">
+  <div class="approval-title">🖼 Image Approval Required</div>
+  <div class="approval-subtitle">
+    Review the VLM-selected candidates and confirm or override per shot.
+  </div>
+
+  <form id="image-approval-form">
+    {% for shot in shots_data %}
+    {% set shot_id = shot.shot_id %}
+    <div style="margin-bottom:24px">
+      <div style="font-weight:600;margin-bottom:6px">
+        {{ shot_id }} — {{ shot.setting | truncate(60) }}
+      </div>
+      <div class="text-muted text-sm" style="margin-bottom:8px">{{ shot.action | truncate(80) }}</div>
+
+      {% set candidates = shot.candidate_uris or [] %}
+      {% set vlm_pick = shot.vlm_winner_index | default(0) | int %}
+
+      <div class="candidates-grid">
+        {% for uri in candidates %}
+        <div class="candidate-card {% if loop.index0 == vlm_pick %}selected{% endif %}"
+             onclick="selectCandidate(this, '{{ shot_id }}', {{ loop.index0 }})">
+          <img src="{{ uri }}" alt="candidate {{ loop.index }}"
+               onerror="this.style.display='none'">
+          <div class="cand-label">
+            #{{ loop.index }}{% if loop.index0 == vlm_pick %} ★ VLM{% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <input type="hidden" id="pick-{{ shot_id }}" name="pick-{{ shot_id }}"
+             value="{{ vlm_pick }}">
+    </div>
+    {% endfor %}
+
+    <div class="approval-actions">
+      <div class="approval-notes">
+        <label>Notes (optional)</label>
+        <textarea id="image-notes" placeholder="Any comments for the team?"></textarea>
+      </div>
+      <button type="button" class="btn btn-success"
+              onclick="decideImages('{{ ap.approval_id }}', '{{ job.job_id }}', true)">
+        ✓ Approve Selections
+      </button>
+      <button type="button" class="btn btn-danger"
+              onclick="decideImages('{{ ap.approval_id }}', '{{ job.job_id }}', false)">
+        ✕ Reject All
+      </button>
+    </div>
+  </form>
+</div>
+
+<script>
+async function decideImages(approvalId, jobId, approved) {
+  const notes = document.getElementById("image-notes").value.trim();
+  if (!approved && !notes) {
+    alert("Please add rejection notes before rejecting.");
+    return;
+  }
+
+  const btns = document.querySelectorAll(".approval-card button");
+  btns.forEach(b => { b.disabled = true; });
+
+  // Collect per-shot picks.
+  const picks = {};
+  document.querySelectorAll("input[id^='pick-']").forEach(inp => {
+    const shotId = inp.id.replace("pick-", "");
+    picks[shotId] = parseInt(inp.value, 10);
+  });
+
+  const endpoint = approved ? `/api/jobs/${jobId}/approve` : `/api/jobs/${jobId}/reject`;
+  const body = approved
+    ? { kind: "images", picks }
+    : { kind: "images", notes };
+
+  try {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      document.getElementById("approval-container").innerHTML =
+        `<div class="alert alert-info">Image decision recorded — ${approved ? "approved ✓" : "rejected ✕"}. Worker will resume shortly.</div>`;
+    } else {
+      const data = await res.json();
+      alert("Error: " + (data.detail?.message || JSON.stringify(data)));
+      btns.forEach(b => { b.disabled = false; });
+    }
+  } catch (err) {
+    alert("Network error: " + err.message);
+    btns.forEach(b => { b.disabled = false; });
+  }
+}
+</script>

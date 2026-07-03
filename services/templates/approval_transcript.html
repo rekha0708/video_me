@@ -1,0 +1,89 @@
+{# Included inside job_detail.html when ap.kind == 'transcript' #}
+{% set ap = detail.pending_approval %}
+{% set segments = ap.request.get('segments', []) %}
+{% set full_text = ap.request.get('full_text', '') %}
+{% set lang = ap.request.get('language', '') %}
+{% set duration = ap.request.get('duration', 0) %}
+
+<div class="approval-card">
+  <div class="approval-title">⚠ Transcript Review Required</div>
+  <div class="approval-subtitle">
+    Iteration {{ ap.iteration }} of 3 — read the transcript and approve, or reject with notes
+    to have the AI correct it.
+    {% if lang %}<span class="text-muted">&nbsp;·&nbsp;lang: {{ lang }}</span>{% endif %}
+    {% if duration %}<span class="text-muted">&nbsp;·&nbsp;{{ "%.0f" | format(duration) }}s</span>{% endif %}
+  </div>
+
+  {% if segments %}
+  <div class="table-wrap" style="max-height:320px;overflow-y:auto;margin-bottom:12px">
+    <table>
+      <thead>
+        <tr><th style="width:70px">Start</th><th style="width:70px">End</th><th>Text</th></tr>
+      </thead>
+      <tbody>
+        {% for seg in segments %}
+        <tr>
+          <td class="td-mono td-muted">{{ "%.1f" | format(seg.start) }}s</td>
+          <td class="td-mono td-muted">{{ "%.1f" | format(seg.end) }}s</td>
+          <td>{{ seg.text }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <div class="approval-actions">
+    <div class="approval-notes">
+      <label>Correction notes (required if rejecting — describe what to fix)</label>
+      <textarea id="transcript-reject-notes"
+                placeholder="e.g. 'Fix speaker at 0:23 — should say Newton not Neutron. The section from 1:10 is about gravity, not gravel.'"></textarea>
+    </div>
+    <button class="btn btn-success"
+            onclick="decideTranscript('{{ ap.approval_id }}', '{{ job.job_id }}', true)">
+      ✓ Approve transcript
+    </button>
+    <button class="btn btn-danger"
+            onclick="decideTranscript('{{ ap.approval_id }}', '{{ job.job_id }}', false)">
+      ✕ Reject — AI will correct
+    </button>
+  </div>
+</div>
+
+<script>
+async function decideTranscript(approvalId, jobId, approved) {
+  const notes = document.getElementById("transcript-reject-notes").value.trim();
+  if (!approved && !notes) {
+    alert("Please add correction notes before rejecting — describe what to fix.");
+    return;
+  }
+
+  const btns = document.querySelectorAll(".approval-card button");
+  btns.forEach(b => { b.disabled = true; });
+
+  const endpoint = approved ? `/api/jobs/${jobId}/approve` : `/api/jobs/${jobId}/reject`;
+  const body = approved
+    ? { kind: "transcript" }
+    : { kind: "transcript", notes };
+
+  try {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      document.getElementById("approval-container").innerHTML = approved
+        ? `<div class="alert alert-info">Transcript approved ✓ — you can now continue to Script+Plan.</div>`
+        : `<div class="alert alert-info">Rejected — AI is correcting the transcript. Page will update shortly.</div>`;
+    } else {
+      const data = await res.json();
+      alert("Error: " + (data.detail?.message || JSON.stringify(data)));
+      btns.forEach(b => { b.disabled = false; });
+    }
+  } catch (err) {
+    alert("Network error: " + err.message);
+    btns.forEach(b => { b.disabled = false; });
+  }
+}
+</script>

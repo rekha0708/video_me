@@ -1,0 +1,271 @@
+{% extends "base.html" %}
+{% set job = detail.job %}
+{% block title %}Job {{ job.job_id }}{% endblock %}
+
+{% block content %}
+{% set status = job.status | string %}
+
+<!-- Stall warning banner (shown by JS when heartbeat is stale) -->
+<div id="stall-banner" class="stall-banner">
+  ⚠ <span class="stall-msg">Worker heartbeat stale — job may be stalled.</span>
+</div>
+
+<!-- Page header -->
+<div class="page-header">
+  <div>
+    <div class="flex items-center gap-8">
+      <a href="/" style="color:var(--muted);text-decoration:none;font-size:13px">← Jobs</a>
+    </div>
+    <div class="flex items-center gap-8 mt-8">
+      <div class="page-title font-mono" style="font-size:17px">{{ job.job_id }}</div>
+      <span id="job-status-badge"
+            class="badge badge-{{ status }}{% if status == 'running' %} pulse{% endif %}">
+        {{ status | replace('_', ' ') }}
+      </span>
+    </div>
+    <div class="page-subtitle">
+      {{ job.source_url | truncate(72) }} &nbsp;·&nbsp; phase: {{ job.phase }}
+      &nbsp;·&nbsp; lang: {{ job.target_language }}
+      {% if job.current_stage %}
+        &nbsp;·&nbsp; stage: <span id="current-stage">{{ job.current_stage }}</span>
+      {% endif %}
+    </div>
+  </div>
+
+  {% set terminal = status in ['completed','failed','blocked','cancelled'] %}
+  {% if not terminal %}
+  <button class="btn btn-danger btn-sm" onclick="cancelJob('{{ job.job_id }}', this)">Cancel job</button>
+  {% endif %}
+</div>
+
+<!-- ── Phase Stepper ─────────────────────────────────────────────────── -->
+{#
+  Shows the macro-level phase progression for phased jobs (not noop/all).
+  State per node is derived from:
+    - job.completed_phases: phases already done
+    - job.phase: current phase
+    - job.status: current status (running/completed/pending_*/failed)
+#}
+{% set phased_modes = ['transcribe','script_plan','render','assemble'] %}
+{% if job.phase in phased_modes or job.phase == 'all' %}
+{% set phase_labels = [
+  ('transcribe',  'Transcribe'),
+  ('script_plan', 'Script + Plan'),
+  ('render',      'Render'),
+  ('assemble',    'Assemble'),
+] %}
+{% set completed_phases = job.completed_phases %}
+<div class="card" style="padding:16px 20px">
+  <div class="phase-stepper">
+    {% for phase_key, phase_label in phase_labels %}
+      {% if phase_key in completed_phases %}
+        {% set ps = 'done' %}
+        {% set icon = '✓' %}
+      {% elif phase_key == job.phase and status in ['running','pending_transcript_review','pending_plan_approval','pending_image_approval','pending_final_review'] %}
+        {% set ps = 'active' %}
+        {% set icon = '⟳' %}
+      {% elif phase_key == job.phase and status == 'completed' %}
+        {% set ps = 'done' %}
+        {% set icon = '✓' %}
+      {% elif phase_key == job.phase and status in ['failed','blocked'] %}
+        {% set ps = 'failed' %}
+        {% set icon = '✕' %}
+      {% else %}
+        {% set ps = 'pending' %}
+        {% set icon = '·' %}
+      {% endif %}
+      <div class="phase-step phase-step-{{ ps }}">
+        <div class="phase-dot">{{ icon }}</div>
+        <div class="phase-label">{{ phase_label }}</div>
+      </div>
+      {% if not loop.last %}
+      <div class="phase-arrow {% if phase_key in completed_phases %}phase-arrow-done{% endif %}">→</div>
+      {% endif %}
+    {% endfor %}
+  </div>
+
+  {# Continue button — show when current phase is COMPLETED and there is a next phase #}
+  {% set next_phase_map = {'transcribe': 'Script + Plan', 'script_plan': 'Render', 'render': 'Assemble'} %}
+  {% if status == 'completed' and job.phase in next_phase_map %}
+  <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+    <button class="btn btn-primary" id="advance-btn"
+            onclick="advancePhase('{{ job.job_id }}', this)">
+      Continue to {{ next_phase_map[job.phase] }} →
+    </button>
+    <span class="text-muted" style="margin-left:10px;font-size:13px">
+      Phase '{{ job.phase }}' is done. Click to queue the next phase on this job.
+    </span>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- Root element for JS initialisation -->
+<div id="job-detail-root"
+     data-job-id="{{ job.job_id }}"
+     data-status="{{ status }}"
+     data-last-heartbeat="{{ job.last_heartbeat_at.isoformat() if job.last_heartbeat_at else '' }}">
+</div>
+
+<!-- ── Approval card ─────────────────────────────────────────────────── -->
+{% if detail.pending_approval and detail.pending_approval.status.value == 'pending' %}
+{% set ap = detail.pending_approval %}
+<div id="approval-container">
+{% if ap.kind.value == 'transcript' %}
+  {% include "approval_transcript.html" %}
+{% elif ap.kind.value == 'plan' %}
+  {% include "approval_plan.html" %}
+{% elif ap.kind.value == 'images' %}
+  {% include "approval_images.html" %}
+{% endif %}
+</div>
+{% else %}
+<div id="approval-container" style="display:none"></div>
+{% endif %}
+
+<!-- ── Terminal error ───────────────────────────────────────────────── -->
+{% if job.terminal_error %}
+<div class="alert alert-error">
+  <strong>{{ job.terminal_error.get('code', 'ERROR') }}</strong>
+  — {{ job.terminal_error.get('message', '') }}
+</div>
+{% endif %}
+
+<!-- ── Stage timeline ───────────────────────────────────────────────── -->
+{# Only show stages relevant to the chosen phase. #}
+{% set all_stages = [
+  ('fetch_media','Fetch'),('transcribe','Transcribe'),('analyze_content','Analyze'),
+  ('adapt_script','Script'),('plan_shots','Plan'),('render_character','Render'),
+  ('synthesize_voice','Voice'),('generate_video','Video'),
+  ('assemble_video','Assemble'),('publish','Publish')
+] %}
+{% if job.phase == 'transcribe' %}
+  {% set pipeline_stages = [('fetch_media','Fetch'),('transcribe','Transcribe'),('analyze_content','Analyze')] %}
+{% elif job.phase == 'script_plan' %}
+  {% set pipeline_stages = [('adapt_script','Script'),('plan_shots','Plan')] %}
+{% elif job.phase == 'render' %}
+  {% set pipeline_stages = [('render_character','Render'),('synthesize_voice','Voice'),('generate_video','Video')] %}
+{% elif job.phase == 'assemble' %}
+  {% set pipeline_stages = [('assemble_video','Assemble'),('publish','Publish')] %}
+{% else %}
+  {% set pipeline_stages = all_stages %}
+{% endif %}
+
+{% if job.phase != 'noop' %}
+<div class="card">
+  <div class="card-title">Stage Timeline</div>
+  <div class="timeline">
+    {% set completed_stages = detail.events | selectattr('event_type','equalto','stage_completed') | map(attribute='stage_name') | list %}
+    {% set failed_stages    = detail.events | selectattr('event_type','equalto','stage_failed')    | map(attribute='stage_name') | list %}
+    {% set started_stages   = detail.events | selectattr('event_type','equalto','stage_started')   | map(attribute='stage_name') | list %}
+
+    {% for stage_id, stage_label in pipeline_stages %}
+      {% if stage_id in completed_stages %}
+        {% set step_class = 'done' %}
+        {% set icon = '✓' %}
+      {% elif stage_id in failed_stages %}
+        {% set step_class = 'failed' %}
+        {% set icon = '✕' %}
+      {% elif stage_id == job.current_stage or stage_id in started_stages %}
+        {% set step_class = 'running' %}
+        {% set icon = '…' %}
+      {% else %}
+        {% set step_class = '' %}
+        {% set icon = '·' %}
+      {% endif %}
+    <div class="tl-step {{ step_class }}" data-stage-id="{{ stage_id }}">
+      <div class="tl-dot">{{ icon }}</div>
+      <div class="tl-label">{{ stage_label }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- ── Events feed ──────────────────────────────────────────────────── -->
+<div class="card">
+  <div class="flex justify-between items-center" style="margin-bottom:14px">
+    <div class="card-title mt-0">Events</div>
+    <span class="text-muted text-sm">Live — SSE with polling fallback</span>
+  </div>
+  <div id="events-feed" class="events-feed">
+    {% for ev in detail.events %}
+    <div class="ev-row">
+      <span class="ev-time">{{ ev.created_at.strftime('%H:%M:%S') if ev.created_at else '' }}</span>
+      <span class="ev-level ev-level-{{ ev.level.value if ev.level else 'info' }}">
+        {{ (ev.level.value if ev.level else 'info') | upper }}
+      </span>
+      <span class="ev-msg">{{ ev.message }}</span>
+      {% if ev.stage_name %}<span class="ev-stage">{{ ev.stage_name }}</span>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- ── Artifacts ────────────────────────────────────────────────────── -->
+{% if detail.job.job_id %}
+{% set artifacts = [] %}
+{% if artifacts %}
+<div class="card">
+  <div class="card-title">Artifacts</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Kind</th><th>Stage</th><th>URI</th><th>Size</th></tr>
+      </thead>
+      <tbody>
+        {% for a in artifacts %}
+        <tr>
+          <td>{{ a.kind.value }}</td>
+          <td class="td-muted">{{ a.stage_name or '—' }}</td>
+          <td class="td-mono td-muted">{{ a.uri | truncate(50) }}</td>
+          <td class="td-muted">{{ (a.size_bytes // 1024) ~ ' KB' if a.size_bytes else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function cancelJob(jobId, btn) {
+  if (!confirm("Cancel this job?\n\nThe worker will stop after the current stage finishes.")) return;
+  btn.disabled = true;
+  btn.textContent = "Cancelling…";
+  try {
+    const res = await fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
+    if (res.ok) { setTimeout(() => location.reload(), 600); }
+    else { btn.disabled = false; btn.textContent = "Cancel job"; }
+  } catch (_) { btn.disabled = false; btn.textContent = "Cancel job"; }
+}
+
+async function advancePhase(jobId, btn) {
+  const label = btn.textContent;
+  if (!confirm(`Queue the next phase for job ${jobId}?\n\nThe worker will pick it up shortly.`)) return;
+  btn.disabled = true;
+  btn.textContent = "Queuing…";
+  try {
+    const res = await fetch(`/api/jobs/${jobId}/advance`, { method: "POST" });
+    if (res.ok) {
+      const data = await res.json();
+      btn.textContent = `Queued: ${data.to_phase} ✓`;
+      setTimeout(() => location.reload(), 800);
+    } else {
+      const data = await res.json();
+      alert("Error: " + (data.detail?.message || JSON.stringify(data)));
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  } catch (err) {
+    alert("Network error: " + err.message);
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+{% block title %}Jobs{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Jobs</div>
+    <div class="page-subtitle">Pipeline runs — most recent first</div>
+  </div>
+  <button class="btn btn-primary" onclick="document.getElementById('new-job-modal').style.display='flex'">
+    + New Job
+  </button>
+</div>
+
+<!-- New job modal -->
+<div id="new-job-modal" style="display:{% if show_new_form %}flex{% else %}none{% endif %};
+     position:fixed;inset:0;background:rgba(0,0,0,.45);
+     align-items:center;justify-content:center;z-index:999;">
+  <div class="card" style="width:520px;max-width:95vw;margin:0;">
+    <div class="card-title">New Pipeline Job</div>
+    <form method="post" action="/api/jobs" id="new-job-form"
+          data-submit-label="Submitting…"
+          onsubmit="submitNewJob(event)">
+
+      <div class="form-row">
+        <label>Source URL</label>
+        <input type="url" name="source_url" id="nj-url" required
+               placeholder="https://www.youtube.com/watch?v=…">
+        <div class="form-hint">YouTube, TikTok, Instagram, or any yt-dlp-supported URL.</div>
+      </div>
+
+      <div class="form-row">
+        <label>Phase</label>
+        <select name="phase" id="nj-phase" onchange="updatePhaseHint(this.value)">
+          <option value="noop">noop — smoke test only (no pipeline)</option>
+          <option value="transcribe">transcribe — fetch → transcribe → analyze content</option>
+          <option value="script_plan">script + plan — adapt script → plan shots → approval  ⟵ needs transcribe</option>
+          <option value="render">render — render images → voice → video per shot  ⟵ needs script+plan</option>
+          <option value="assemble">assemble — concat shots → final video  ⟵ needs render</option>
+          <option value="all" selected>all — full pipeline (end-to-end)</option>
+        </select>
+        <div class="form-hint" id="phase-hint"></div>
+      </div>
+
+      <div class="form-row">
+        <label>Language</label>
+        <select name="target_language" id="nj-lang">
+          <option value="en" selected>English</option>
+          <option value="hi">Hindi</option>
+          <option value="both">Both (EN + HI)</option>
+        </select>
+      </div>
+
+      <div class="form-row">
+        <label class="checkbox-row">
+          <input type="checkbox" name="rights_cleared" id="nj-rights">
+          I confirm this source is cleared for transformative use
+        </label>
+        <div class="form-hint">Required for any non-noop phase.</div>
+      </div>
+
+      <div id="nj-error" class="alert alert-error" style="display:none"></div>
+
+      <div class="flex gap-8 mt-16">
+        <button type="submit" class="btn btn-primary" id="nj-submit">Submit</button>
+        <button type="button" class="btn btn-outline"
+                onclick="document.getElementById('new-job-modal').style.display='none'">
+          Cancel
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  {% if jobs %}
+  <div id="jobs-list-root"
+       data-has-running="{{ 'true' if jobs | selectattr('status', 'in', ['created','running','queued','cancel_requested','pending_plan_approval','pending_image_approval','pending_final_review','stalled']) | list else 'false' }}">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Job ID</th>
+          <th>Status</th>
+          <th>Phase</th>
+          <th>Source</th>
+          <th>Stage</th>
+          <th>Created</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="jobs-tbody">
+        {% for job in jobs %}
+        <tr data-job-id="{{ job.job_id }}">
+          <td class="td-mono">
+            <a href="/jobs/{{ job.job_id }}" class="row-link">{{ job.job_id }}</a>
+          </td>
+          <td class="td-job-status">
+            <span class="badge badge-{{ job.status }}{% if job.status == 'running' %} pulse{% endif %}">
+              {{ job.status | replace('_', ' ') }}
+            </span>
+          </td>
+          <td class="td-muted">{{ job.phase }}</td>
+          <td class="td-muted truncate" style="max-width:220px"
+              title="{{ job.source_url }}">{{ job.source_url }}</td>
+          <td class="td-muted td-stage">{{ job.current_stage or '—' }}</td>
+          <td class="td-muted">{{ job.created_at.strftime('%m-%d %H:%M') if job.created_at else '—' }}</td>
+          <td>
+            <a href="/jobs/{{ job.job_id }}" class="btn btn-outline btn-sm">View</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  </div>
+  {% else %}
+  <p class="text-muted" style="text-align:center;padding:40px 0">
+    No jobs yet. Click <strong>+ New Job</strong> to start the pipeline.
+  </p>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const PHASE_HINTS = {
+  "noop":        "Runs a mock pipeline in-memory — no services needed. Good for testing the worker.",
+  "transcribe":  "Downloads the video, transcribes audio, and analyzes content. Review the transcript before proceeding.",
+  "script_plan": "Adapts the transcript into a Max & Zoe script, plans shots, and asks for your approval. Requires a completed 'transcribe' job for the same URL.",
+  "render":      "Renders character images (Flux LoRA), synthesizes voice (Fish S2), and generates video per shot. Requires a completed 'script+plan' job.",
+  "assemble":    "Concatenates rendered shots into a final video and publishes. Requires a completed 'render' job.",
+  "all":         "Full end-to-end pipeline — all stages in sequence.",
+};
+
+function updatePhaseHint(phase) {
+  const el = document.getElementById("phase-hint");
+  if (el) el.textContent = PHASE_HINTS[phase] || "";
+}
+
+async function submitNewJob(e) {
+  e.preventDefault();
+  const errEl = document.getElementById("nj-error");
+  errEl.style.display = "none";
+  const btn = document.getElementById("nj-submit");
+  btn.disabled = true;
+  btn.textContent = "Submitting…";
+
+  const body = {
+    source: { kind: "url", url: document.getElementById("nj-url").value.trim() },
+    rights_cleared: document.getElementById("nj-rights").checked,
+    target_language: document.getElementById("nj-lang").value,
+    phase: document.getElementById("nj-phase").value,
+  };
+
+  try {
+    const res = await fetch("/api/jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      // FastAPI 422 returns {detail: [{loc, msg, type}, ...]};
+      // our own errors return {detail: {code, message}}.
+      let msg;
+      if (Array.isArray(data.detail)) {
+        msg = data.detail.map(e => {
+          const field = e.loc ? e.loc.slice(1).join(".") : "";
+          return field ? `${field}: ${e.msg}` : e.msg;
+        }).join("\n");
+      } else {
+        msg = data.detail?.message || JSON.stringify(data.detail) || "Unknown error";
+      }
+      errEl.textContent = msg;
+      errEl.style.display = "block";
+      btn.disabled = false;
+      btn.textContent = "Submit";
+      return;
+    }
+    // Redirect to job detail page.
+    window.location.href = "/jobs/" + data.job_id;
+  } catch (err) {
+    errEl.textContent = "Network error: " + err.message;
+    errEl.style.display = "block";
+    btn.disabled = false;
+    btn.textContent = "Submit";
+  }
+}
+</script>
+{% endblock %}

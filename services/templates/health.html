@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Health{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">System Health</div>
+    <div class="page-subtitle">Runtime dependencies and GPU services</div>
+  </div>
+  <button class="btn btn-outline btn-sm" onclick="location.reload()">↺ Refresh</button>
+</div>
+
+{% if worker %}
+<div class="card">
+  <div class="card-title">Worker</div>
+  <div class="check-row">
+    <span class="check-name">{{ worker.worker_id }}</span>
+    <span class="check-detail">
+      {{ worker.hostname or '' }}
+      {% if worker.current_job_id %} · running {{ worker.current_job_id }}{% endif %}
+    </span>
+    {% set age = (now - worker.last_heartbeat_at).total_seconds() if worker.last_heartbeat_at else 9999 %}
+    <span class="check-status-{% if age < 120 %}ok{% else %}warn{% endif %}">
+      {% if age < 120 %}ONLINE{% else %}STALE ({{ age | int }}s){% endif %}
+    </span>
+  </div>
+</div>
+{% else %}
+<div class="alert alert-warn">No worker heartbeat — start the worker with <code>python -m services.dashboard_worker</code></div>
+{% endif %}
+
+<div class="card">
+  <div class="card-title">Readiness Checks</div>
+  {% for result in results %}
+  {% set st = result.status | lower %}
+  <div class="check-row">
+    <span class="check-name">{{ result.name }}</span>
+    <span class="check-detail">{{ result.detail or '' }}</span>
+    <span class="check-status-{% if st == 'ok' %}ok{% elif st == 'warn' %}warn{% else %}fail{% endif %}">
+      {{ result.status }}
+    </span>
+  </div>
+  {% endfor %}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Auto-refresh every 30s so services appearing after startup show up.
+setTimeout(() => location.reload(), 30000);
+</script>
+{% endblock %}

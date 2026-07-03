@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import secrets
 from datetime import datetime, timezone
@@ -9,7 +10,9 @@ from typing import Any, Callable
 from core.config import AppConfig, load_app_config
 from core.models.dashboard import (
     CreateDashboardJobRequest,
+    DashboardApprovalStatus,
     DashboardJobStatus,
+    DashboardQueueAction,
 )
 from scripts.check_runtime_readiness import (
     CheckResult,
@@ -17,6 +20,13 @@ from scripts.check_runtime_readiness import (
     collect_readiness_results,
 )
 from services.dashboard_repository import DashboardRepository
+
+_TERMINAL_STATUSES = {
+    DashboardJobStatus.COMPLETED,
+    DashboardJobStatus.FAILED,
+    DashboardJobStatus.BLOCKED,
+    DashboardJobStatus.CANCELLED,
+}
 
 
 def _utc_now() -> datetime:
@@ -60,7 +70,7 @@ def create_app(
     """
 
     try:
-        from fastapi import Depends, FastAPI, HTTPException, Request, status
+        from fastapi import Depends, FastAPI, Header, HTTPException, status
     except ImportError as exc:  # pragma: no cover - exercised only without extras
         raise RuntimeError(
             "Dashboard API requires FastAPI. Install with `pip install -e \".[dashboard]\"`."
@@ -71,13 +81,15 @@ def create_app(
 
     app = FastAPI(title="video_me Dashboard API", version="0.1.0")
 
-    def require_write_auth(request: Request) -> None:
+    def require_write_auth(
+        authorization: str | None = Header(default=None),
+    ) -> None:
         token = os.getenv("VIDEO_ME_DASHBOARD_TOKEN")
         if not token:
             return
-        auth = request.headers.get("authorization", "")
-        expected = f"Bearer {token}"
-        if not secrets.compare_digest(auth, expected):
+        if authorization is None or not secrets.compare_digest(
+            authorization, f"Bearer {token}"
+        ):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={
@@ -176,10 +188,10 @@ def create_app(
 
     @app.post("/api/jobs")
     def create_job(
-        request: CreateDashboardJobRequest,
+        body: CreateDashboardJobRequest,
         _: None = Depends(require_write_auth),
     ) -> dict[str, Any]:
-        if not request.rights_cleared and request.phase != "noop":
+        if not body.rights_cleared and body.phase != "noop":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
@@ -189,7 +201,7 @@ def create_app(
                 },
             )
 
-        job, queue_item = repo.create_queued_job(request)
+        job, queue_item = repo.create_queued_job(body)
         return _base_response(
             {
                 "job_id": job.job_id,
@@ -281,5 +293,288 @@ def create_app(
         job = repo.update_job_status(job_id, DashboardJobStatus.CANCEL_REQUESTED)
         repo.record_event(job_id, "cancel_requested", "Cancellation requested from dashboard API.")
         return _base_response({"job_id": job.job_id, "status": job.status.value})
+
+    # ------------------------------------------------------------------
+    # D5 — Approval endpoints
+    # ------------------------------------------------------------------
+
+    @app.get("/api/jobs/{job_id}/approval")
+    def get_job_approval(job_id: str) -> dict[str, Any]:
+        if repo.get_job(job_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "JOB_NOT_FOUND", "message": f"Job not found: {job_id}",
+                        "retryable": False},
+            )
+        approval = repo.get_pending_approval(job_id)
+        if approval is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "NO_PENDING_APPROVAL",
+                        "message": "No pending approval for this job.",
+                        "retryable": False},
+            )
+        return _base_response(approval.model_dump(mode="json"))
+
+    @app.post("/api/jobs/{job_id}/approve")
+    def approve_job(
+        job_id: str,
+        body: dict[str, Any],
+        _: None = Depends(require_write_auth),
+    ) -> dict[str, Any]:
+        if repo.get_job(job_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "JOB_NOT_FOUND", "message": f"Job not found: {job_id}",
+                        "retryable": False},
+            )
+        approval = repo.get_pending_approval(job_id)
+        if approval is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "NO_PENDING_APPROVAL",
+                        "message": "No pending approval to approve.",
+                        "retryable": False},
+            )
+        if approval.status != DashboardApprovalStatus.PENDING:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "ALREADY_DECIDED",
+                        "message": f"Approval already {approval.status.value}.",
+                        "retryable": False},
+            )
+        reviewer: str | None = body.get("reviewer")
+        picks: dict[str, Any] | None = body.get("picks")
+        resolved = repo.resolve_approval(
+            approval.approval_id, approved=True, picks=picks, reviewer=reviewer
+        )
+        repo.record_event(job_id, "approval_granted", "Operator approved from dashboard.",
+                          payload={"approval_id": resolved.approval_id})
+        return _base_response({"approval_id": resolved.approval_id, "status": resolved.status.value})
+
+    @app.post("/api/jobs/{job_id}/reject")
+    def reject_job(
+        job_id: str,
+        body: dict[str, Any],
+        _: None = Depends(require_write_auth),
+    ) -> dict[str, Any]:
+        if repo.get_job(job_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "JOB_NOT_FOUND", "message": f"Job not found: {job_id}",
+                        "retryable": False},
+            )
+        approval = repo.get_pending_approval(job_id)
+        if approval is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "NO_PENDING_APPROVAL",
+                        "message": "No pending approval to reject.",
+                        "retryable": False},
+            )
+        if approval.status != DashboardApprovalStatus.PENDING:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "ALREADY_DECIDED",
+                        "message": f"Approval already {approval.status.value}.",
+                        "retryable": False},
+            )
+        notes: str = body.get("notes", "")
+        reviewer: str | None = body.get("reviewer")
+        resolved = repo.resolve_approval(
+            approval.approval_id, approved=False, notes=notes, reviewer=reviewer
+        )
+        repo.record_event(job_id, "approval_rejected", f"Operator rejected: {notes}",
+                          payload={"approval_id": resolved.approval_id, "notes": notes})
+        return _base_response({"approval_id": resolved.approval_id, "status": resolved.status.value})
+
+    # ------------------------------------------------------------------
+    # Phase advancement
+    # ------------------------------------------------------------------
+
+    _PHASE_SEQUENCE = ["transcribe", "script_plan", "render", "assemble"]
+
+    @app.post("/api/jobs/{job_id}/advance")
+    def advance_job_phase(
+        job_id: str,
+        _: None = Depends(require_write_auth),
+    ) -> dict[str, Any]:
+        """Re-queue the same job for the next phase (e.g. transcribe → script_plan)."""
+        job = repo.get_job(job_id)
+        if job is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "JOB_NOT_FOUND", "message": f"Job not found: {job_id}",
+                        "retryable": False},
+            )
+        if job.status != DashboardJobStatus.COMPLETED:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "JOB_NOT_COMPLETE",
+                    "message": f"Job must be in 'completed' status to advance (current: {job.status.value}).",
+                    "retryable": False,
+                },
+            )
+        try:
+            idx = _PHASE_SEQUENCE.index(job.phase)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "NO_NEXT_PHASE",
+                    "message": f"Phase '{job.phase}' is not part of the phase sequence or has no next phase.",
+                    "retryable": False,
+                },
+            )
+        if idx >= len(_PHASE_SEQUENCE) - 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "NO_NEXT_PHASE",
+                    "message": f"Phase '{job.phase}' is the last phase — nothing to advance to.",
+                    "retryable": False,
+                },
+            )
+        next_phase = _PHASE_SEQUENCE[idx + 1]
+
+        # Build updated request payload with the new phase.
+        new_request = {**job.request, "phase": next_phase}
+
+        # Update the job record's phase + re-queue.
+        repo.update_job_phase(job_id, next_phase)
+        repo.update_job_status(job_id, DashboardJobStatus.QUEUED)
+        queue_item = repo.enqueue_action(
+            job_id,
+            DashboardQueueAction.RESUME,
+            payload=new_request,
+        )
+        repo.record_event(
+            job_id,
+            "phase_advanced",
+            f"Job advanced from '{job.phase}' to '{next_phase}'.",
+            payload={"from_phase": job.phase, "to_phase": next_phase, "queue_id": queue_item.queue_id},
+        )
+        return _base_response({
+            "job_id": job_id,
+            "from_phase": job.phase,
+            "to_phase": next_phase,
+            "queue_id": queue_item.queue_id,
+            "status": DashboardJobStatus.QUEUED.value,
+        })
+
+    # ------------------------------------------------------------------
+    # D4 + D7 — SSE live event stream
+    # ------------------------------------------------------------------
+
+    @app.get("/api/jobs/{job_id}/stream")
+    async def stream_job_events(
+        job_id: str,
+        after_event_id: int = 0,
+    ):
+        import asyncio as _asyncio
+
+        from fastapi.responses import StreamingResponse
+
+        if repo.get_job(job_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "JOB_NOT_FOUND", "message": f"Job not found: {job_id}",
+                        "retryable": False},
+            )
+
+        async def _generate():
+            last_id = after_event_id
+            idle_ticks = 0
+            while True:
+                events = repo.list_events(job_id, after_event_id=last_id, limit=50)
+                for ev in events:
+                    data = json.dumps(ev.model_dump(mode="json"), default=str)
+                    yield f"data: {data}\n\n"
+                    last_id = ev.event_id
+                    idle_ticks = 0
+                job_rec = repo.get_job(job_id)
+                if job_rec and job_rec.status in _TERMINAL_STATUSES:
+                    # Send final status event then close the stream.
+                    final = json.dumps({"status": job_rec.status.value}, default=str)
+                    yield f"event: done\ndata: {final}\n\n"
+                    return
+                idle_ticks += 1
+                if idle_ticks % 15 == 0:  # every ~30 s (2 s × 15) keep connection alive
+                    yield ": keepalive\n\n"
+                await _asyncio.sleep(2)
+
+        return StreamingResponse(
+            _generate(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # D4 — Browser UI routes (Jinja2 templates)
+    # ------------------------------------------------------------------
+
+    _templates_dir = Path(__file__).parent / "templates"
+    _static_dir = Path(__file__).parent / "static"
+
+    try:
+        from jinja2 import Environment, FileSystemLoader, select_autoescape
+        from starlette.staticfiles import StaticFiles
+
+        _static_dir.mkdir(parents=True, exist_ok=True)
+        _templates_dir.mkdir(parents=True, exist_ok=True)
+
+        if _static_dir.exists():
+            app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
+        _jinja_env = Environment(
+            loader=FileSystemLoader(str(_templates_dir)),
+            autoescape=select_autoescape(["html"]),
+        )
+
+        def _render(template_name: str, **ctx_vars: Any):
+            from fastapi.responses import HTMLResponse
+
+            tmpl = _jinja_env.get_template(template_name)
+            html = tmpl.render(**ctx_vars)
+            return HTMLResponse(content=html)
+
+        @app.get("/", include_in_schema=False)
+        def ui_jobs_list():
+            jobs = repo.list_jobs(limit=100)
+            worker_hb = repo.latest_worker_heartbeat()
+            return _render("jobs_list.html", jobs=jobs, worker=worker_hb)
+
+        @app.get("/jobs/new", include_in_schema=False)
+        def ui_new_job():
+            return _render("jobs_list.html", jobs=[], worker=None, show_new_form=True)
+
+        @app.get("/jobs/{job_id}", include_in_schema=False)
+        def ui_job_detail(job_id: str):
+            detail = repo.get_job_detail(job_id, event_limit=200)
+            if detail is None:
+                from fastapi.responses import HTMLResponse
+                return HTMLResponse("<h1>Job not found</h1>", status_code=404)
+            return _render("job_detail.html", detail=detail)
+
+        @app.get("/health", include_in_schema=False)
+        def ui_health():
+            results = collect_readiness_results(
+                config,
+                code_test=True,
+                skip_services=False,
+                allow_missing_services=True,
+                timeout=3.0,
+            )
+            worker_hb = repo.latest_worker_heartbeat()
+            return _render("health.html", results=results, worker=worker_hb, now=_utc_now())
+
+    except ImportError:
+        # jinja2 / starlette not installed — UI routes silently unavailable.
+        pass
 
     return app

@@ -1,0 +1,99 @@
+{# Included inside job_detail.html when ap.kind == 'plan' #}
+{% set ap = detail.pending_approval %}
+{% set scores = ap.request.get('scores', {}) %}
+
+<div class="approval-card">
+  <div class="approval-title">⚠ Plan Approval Required</div>
+  <div class="approval-subtitle">
+    Iteration {{ ap.iteration }} — review the storyboard and approve or reject with notes.
+  </div>
+
+  {% if scores %}
+  <div style="margin-bottom:16px">
+    {% for key, val in scores.items() %}
+    {% set pct = (val * 100) | int %}
+    {% set bar_class = 'fail' if val < 0.6 else ('warn' if val < 0.75 else '') %}
+    <div class="score-bar-row">
+      <span class="score-bar-label">{{ key | replace('_',' ') }}</span>
+      <div class="score-bar-track">
+        <div class="score-bar-fill {{ bar_class }}" style="width:{{ pct }}%"></div>
+      </div>
+      <span class="score-val">{{ '%.2f' | format(val) }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% set shots = ap.request.get('shots', []) %}
+  {% if shots %}
+  <div class="table-wrap" style="max-height:280px;overflow-y:auto;margin-bottom:12px">
+    <table>
+      <thead>
+        <tr>
+          <th>Shot</th><th>Setting</th><th>Action</th><th>Chars</th><th>Dur</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for shot in shots %}
+        <tr>
+          <td class="td-mono">{{ shot.shot_id }}</td>
+          <td>{{ shot.setting | truncate(40) }}</td>
+          <td>{{ shot.action  | truncate(55) }}</td>
+          <td class="td-muted">{{ shot.character_ids | join(', ') }}</td>
+          <td class="td-muted">{{ shot.duration_sec }}s</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <div class="approval-actions">
+    <div class="approval-notes">
+      <label>Rejection notes (required if rejecting)</label>
+      <textarea id="plan-reject-notes" placeholder="What should be changed?"></textarea>
+    </div>
+    <button class="btn btn-success" onclick="decidePlan('{{ ap.approval_id }}', '{{ job.job_id }}', true)">
+      ✓ Approve
+    </button>
+    <button class="btn btn-danger" onclick="decidePlan('{{ ap.approval_id }}', '{{ job.job_id }}', false)">
+      ✕ Reject
+    </button>
+  </div>
+</div>
+
+<script>
+async function decidePlan(approvalId, jobId, approved) {
+  const notes = document.getElementById("plan-reject-notes").value.trim();
+  if (!approved && !notes) {
+    alert("Please add rejection notes before rejecting.");
+    return;
+  }
+
+  const btns = document.querySelectorAll(".approval-card button");
+  btns.forEach(b => { b.disabled = true; });
+
+  const endpoint = approved ? `/api/jobs/${jobId}/approve` : `/api/jobs/${jobId}/reject`;
+  const body = approved ? { kind: "plan" } : { kind: "plan", notes };
+
+  try {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      // Hide the card and show a confirmation.
+      document.getElementById("approval-container").innerHTML =
+        `<div class="alert alert-info">Decision recorded — ${approved ? "approved ✓" : "rejected ✕"}. Worker will resume shortly.</div>`;
+    } else {
+      const data = await res.json();
+      alert("Error: " + (data.detail?.message || JSON.stringify(data)));
+      btns.forEach(b => { b.disabled = false; });
+    }
+  } catch (err) {
+    alert("Network error: " + err.message);
+    btns.forEach(b => { b.disabled = false; });
+  }
+}
+</script>
