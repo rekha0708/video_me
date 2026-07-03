@@ -28,8 +28,11 @@ training_logs/
 assets/kids_duo/training/cache/
 
 # Downloaded source videos — large binaries, not committed.
-downloads/*.mp4
-downloads/*.mkv
-downloads/*.webm
-downloads/*.avi
-downloads/*.mov
+# downloads/*.mp4
+# downloads/*.mkv
+# downloads/*.webm
+# downloads/*.avi
+# downloads/*.mov
+
+# ignore the claude settings file, which contains the API key
+.claude/settings.local.json
