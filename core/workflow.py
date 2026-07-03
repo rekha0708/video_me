@@ -393,9 +393,11 @@ async def _render_shot_candidates(
     """Phase A: render N candidates for one shot, critique them, return the winner.
 
     Runs render_character (N images) then VLM image critique.
-    Resume: if all candidate PNGs already exist, skips render and re-runs critique.
+    Resume: if all candidate PNGs and a cached critique result already exist,
+    skips both render and critique (the VLM call is a real, non-trivial cost —
+    ~20-40s per shot — that would otherwise redo on every retry/resume).
     """
-    from core.models.capabilities import ImageCritiqueRequest, ImageSet
+    from core.models.capabilities import ImageCritiqueRequest, ImageCritiqueResult, ImageSet
 
     opts = options or RunOptions()
     member_map = {m.id: m for m in cast.members}
@@ -409,6 +411,11 @@ async def _render_shot_candidates(
     # Count expected candidates from the adapter's num_images setting
     num_candidates = getattr(adapters.render, "_num_images", 1)
     existing_pngs = sorted(render_dir.glob("render_??.png"))
+    critique_path = work_dir / "critique" / f"{shot.shot_id}.json"
+
+    if opts.resume and len(existing_pngs) >= num_candidates and critique_path.exists():
+        logger.info("Skipping render_character + image_critique for %s (cached)", shot.shot_id)
+        return ImageCritiqueResult.model_validate_json(critique_path.read_text())
 
     if opts.resume and len(existing_pngs) >= num_candidates:
         logger.info("Skipping render_character for %s (all %d candidates exist)",
@@ -433,6 +440,8 @@ async def _render_shot_candidates(
             cast_descriptor=speaker.visual_descriptor,
         )
     )
+    critique_path.parent.mkdir(parents=True, exist_ok=True)
+    critique_path.write_text(critique.model_dump_json())
     return critique
 
 
