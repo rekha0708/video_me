@@ -13,12 +13,10 @@ build/
 *.egg-info/
 
 # Track B generated/runtime assets.
-# Final LoRAs are tracked via Git LFS (see .gitattributes).
-# Intermediate checkpoints and smoke-test weights are excluded.
-loras/*-step*.safetensors
-loras/*-step*.pt
-loras/*-step*.ckpt
-loras/*_smoke.safetensors
+# LoRA weights are local training output — kept out of git entirely (large binaries).
+loras/*.safetensors
+loras/*.pt
+loras/*.ckpt
 # Voice reference files — tracked in git (small WAVs, ~1 MB each).
 # Exclude any large generated/session audio that lands here.
 voices/**/*.flac
