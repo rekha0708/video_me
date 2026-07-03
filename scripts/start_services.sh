@@ -56,6 +56,31 @@ wait_for() {
   return 1
 }
 
+# ── System tools (ffmpeg, yt-dlp) ────────────────────────────────────────────
+# These are installed into base Linux and wiped on RunPod pod restart.
+# Reinstall if missing — fast (~10s) since apt cache is warm on fresh pods.
+log "System tools (ffmpeg, yt-dlp)"
+TOOLS_MISSING=0
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  warn "ffmpeg missing — reinstalling via apt-get..."
+  apt-get install -y --no-install-recommends ffmpeg curl 2>/dev/null || \
+    sudo apt-get install -y --no-install-recommends ffmpeg curl
+  ok "ffmpeg reinstalled: $(ffmpeg -version 2>&1 | head -1)"
+  TOOLS_MISSING=1
+else
+  ok "ffmpeg present: $(ffmpeg -version 2>&1 | head -1)"
+fi
+
+if ! command -v yt-dlp >/dev/null 2>&1; then
+  warn "yt-dlp missing — reinstalling..."
+  curl -fsSL "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" \
+    -o /usr/local/bin/yt-dlp && chmod +x /usr/local/bin/yt-dlp
+  ok "yt-dlp reinstalled: $(yt-dlp --version 2>&1 | head -1)"
+  TOOLS_MISSING=1
+else
+  ok "yt-dlp present: $(yt-dlp --version 2>&1 | head -1)"
+fi
+
 # ── Ollama ────────────────────────────────────────────────────────────────────
 # Ollama is installed into base Linux which is WIPED on RunPod pod restart.
 # Re-install if the binary is missing (models at /workspace/ollama persist fine).
