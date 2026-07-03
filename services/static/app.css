@@ -177,6 +177,7 @@ tr:last-child td { border-bottom: none; }
 tr:hover td { background: var(--gray-lt); }
 .td-muted { color: var(--muted); font-size: 12px; }
 .td-mono  { font-family: "SF Mono", "Fira Code", monospace; font-size: 12px; }
+.td-wrap  { white-space: normal; max-width: 320px; }
 a.row-link { color: var(--blue); text-decoration: none; font-weight: 500; }
 a.row-link:hover { text-decoration: underline; }
 

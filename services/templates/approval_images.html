@@ -13,9 +13,9 @@
     {% set shot_id = shot.shot_id %}
     <div style="margin-bottom:24px">
       <div style="font-weight:600;margin-bottom:6px">
-        {{ shot_id }} — {{ shot.setting | truncate(60) }}
+        {{ shot_id }} — {{ shot.setting }}
       </div>
-      <div class="text-muted text-sm" style="margin-bottom:8px">{{ shot.action | truncate(80) }}</div>
+      <div class="text-muted text-sm" style="margin-bottom:8px">{{ shot.action }}</div>
 
       {% set candidates = shot.candidate_uris or [] %}
       {% set vlm_pick = shot.vlm_winner_index | default(0) | int %}
