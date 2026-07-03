@@ -950,22 +950,30 @@ def _collect_existing_shot_artifacts(
 ) -> tuple[list[VideoClip], list[AudioTrack]]:
     """Reconstruct clip/audio lists from files written by a previous render phase.
 
-    Raises RuntimeError for any shot whose synced.mp4 is missing.
+    Checks both possible completion markers, since which one exists depends on
+    the video adapter: native-lipsync adapters (LTX) write video/<shot_id>/clip.mp4
+    and skip lip_sync entirely; non-native adapters (Wan) go through a separate
+    lip_sync stage and write synced/<shot_id>/synced.mp4.
+
+    Raises RuntimeError for any shot where neither marker is present.
     """
     member_map = {m.id: m for m in cast.members}
     clips: list[VideoClip] = []
     audios: list[AudioTrack] = []
     for shot in storyboard.shots:
+        native_path = work_dir / "video" / shot.shot_id / "clip.mp4"
         synced_path = work_dir / "synced" / shot.shot_id / "synced.mp4"
-        if not synced_path.exists():
+        video_path = native_path if native_path.exists() else synced_path
+        if not video_path.exists():
             raise RuntimeError(
-                f"Phase 'assemble' requires synced.mp4 for all shots, "
-                f"but '{synced_path}' is missing. Run --phase render first."
+                f"Phase 'assemble' requires a completed video for all shots, "
+                f"but neither '{native_path}' nor '{synced_path}' exists. "
+                f"Run --phase render first."
             )
         speaker_id = shot.characters_on_screen[0]
         audio_files = sorted((work_dir / "audio" / speaker_id).glob("*.wav"))
-        audio_uri = str(audio_files[0]) if audio_files else str(synced_path)
-        clips.append(VideoClip(uri=str(synced_path), duration_sec=shot.duration_sec))
+        audio_uri = str(audio_files[0]) if audio_files else str(video_path)
+        clips.append(VideoClip(uri=str(video_path), duration_sec=shot.duration_sec))
         audios.append(AudioTrack(uri=audio_uri, duration_sec=shot.duration_sec))
     return clips, audios
 
