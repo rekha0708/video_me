@@ -23,10 +23,42 @@
           onsubmit="submitNewJob(event)">
 
       <div class="form-row">
-        <label>Source URL</label>
-        <input type="url" name="source_url" id="nj-url" required
+        <label>Source</label>
+        <div style="display:flex;gap:16px">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="radio" name="source_kind" value="url" checked
+                   onchange="toggleSourceMode('url')"> Web URL
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="radio" name="source_kind" value="file"
+                   onchange="toggleSourceMode('file')"> Local File
+          </label>
+        </div>
+      </div>
+
+      <div class="form-row" id="nj-url-row">
+        <label>URL</label>
+        <input type="text" id="nj-url"
                placeholder="https://www.youtube.com/watch?v=…">
         <div class="form-hint">YouTube, TikTok, Instagram, or any yt-dlp-supported URL.</div>
+      </div>
+
+      <div class="form-row" id="nj-file-row" style="display:none">
+        <label>Directory</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="text" id="nj-file-dir-input" style="flex:1;font-family:monospace;font-size:12px"
+                 placeholder="/workspace/downloads"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();loadLocalVideos();}"
+                 onblur="loadLocalVideos()">
+          <button type="button" class="btn btn-outline" style="padding:4px 10px"
+                  onclick="loadLocalVideos()" title="Refresh file list">↺</button>
+        </div>
+        <div class="form-hint" id="nj-file-dir-hint"></div>
+
+        <label style="margin-top:10px">Local Video</label>
+        <select id="nj-file" style="width:100%">
+          <option value="">— select a file —</option>
+        </select>
       </div>
 
       <div class="form-row">
@@ -138,6 +170,47 @@ function updatePhaseHint(phase) {
   if (el) el.textContent = PHASE_HINTS[phase] || "";
 }
 
+function toggleSourceMode(mode) {
+  document.getElementById("nj-url-row").style.display = mode === "url" ? "" : "none";
+  document.getElementById("nj-file-row").style.display = mode === "file" ? "" : "none";
+  if (mode === "file") loadLocalVideos();
+}
+
+async function loadLocalVideos() {
+  const sel = document.getElementById("nj-file");
+  const hint = document.getElementById("nj-file-dir-hint");
+  const dirInput = document.getElementById("nj-file-dir-input");
+  const customDir = dirInput.value.trim();
+  const url = customDir ? "/api/local-videos?dir=" + encodeURIComponent(customDir) : "/api/local-videos";
+  sel.innerHTML = '<option value="">Loading…</option>';
+  try {
+    const resp = await fetch(url);
+    const data = await resp.json();
+    // Sync the input to the resolved path (expands ~ etc.) on first load
+    if (!customDir) dirInput.value = data.dir;
+    if (data.error) {
+      hint.textContent = data.error;
+      hint.style.color = "var(--color-error, #e53e3e)";
+      sel.innerHTML = '<option value="">—</option>';
+      return;
+    }
+    hint.textContent = data.videos.length + " video(s) found";
+    hint.style.color = "";
+    if (!data.videos.length) {
+      sel.innerHTML = '<option value="">No video files found</option>';
+      return;
+    }
+    sel.innerHTML = '<option value="">— select a file —</option>' +
+      data.videos.map(v =>
+        `<option value="${v.uri}">${v.name} (${v.size_mb} MB)</option>`
+      ).join("");
+  } catch (e) {
+    sel.innerHTML = '<option value="">Error loading files</option>';
+    hint.textContent = e.message;
+    hint.style.color = "var(--color-error, #e53e3e)";
+  }
+}
+
 async function submitNewJob(e) {
   e.preventDefault();
   const errEl = document.getElementById("nj-error");
@@ -146,8 +219,28 @@ async function submitNewJob(e) {
   btn.disabled = true;
   btn.textContent = "Submitting…";
 
+  const sourceKind = document.querySelector('input[name="source_kind"]:checked').value;
+  let sourceUrl = "";
+  if (sourceKind === "url") {
+    sourceUrl = document.getElementById("nj-url").value.trim();
+    if (!sourceUrl) {
+      errEl.textContent = "Source URL is required.";
+      errEl.style.display = "block";
+      btn.disabled = false; btn.textContent = "Submit";
+      return;
+    }
+  } else {
+    sourceUrl = document.getElementById("nj-file").value;
+    if (!sourceUrl) {
+      errEl.textContent = "Select a local video file.";
+      errEl.style.display = "block";
+      btn.disabled = false; btn.textContent = "Submit";
+      return;
+    }
+  }
+
   const body = {
-    source: { kind: "url", url: document.getElementById("nj-url").value.trim() },
+    source: { kind: sourceKind, url: sourceUrl },
     rights_cleared: document.getElementById("nj-rights").checked,
     target_language: document.getElementById("nj-lang").value,
     phase: document.getElementById("nj-phase").value,

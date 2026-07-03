@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     lora_dir: Path = Path("loras")
     voice_dir: Path = Path("voices")
     review_dir: Path = Path("review")
+    local_video_dir: Path = Path("/workspace/downloads")
     llm_model: str = "qwen3.6:35b"
     llm_base_url: str = "http://localhost:11434/v1"
     llm_api_key: str = "ollama"

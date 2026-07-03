@@ -187,6 +187,29 @@ def create_app(
             }
         )
 
+    _VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
+
+    @app.get("/api/local-videos")
+    def list_local_videos(dir: str | None = None) -> dict[str, Any]:
+        if dir:
+            video_dir = Path(dir).expanduser().resolve()
+        else:
+            video_dir = config.settings.local_video_dir.expanduser().resolve()
+        if not video_dir.exists():
+            return _base_response({"videos": [], "dir": str(video_dir), "error": "Directory not found"})
+        if not video_dir.is_dir():
+            return _base_response({"videos": [], "dir": str(video_dir), "error": "Path is not a directory"})
+        videos = []
+        for f in sorted(video_dir.iterdir()):
+            if f.is_file() and f.suffix.lower() in _VIDEO_EXTENSIONS:
+                stat = f.stat()
+                videos.append({
+                    "name": f.name,
+                    "uri": f"file://{f}",
+                    "size_mb": round(stat.st_size / 1_048_576, 1),
+                })
+        return _base_response({"videos": videos, "dir": str(video_dir)})
+
     @app.post("/api/jobs")
     def create_job(
         body: CreateDashboardJobRequest,
