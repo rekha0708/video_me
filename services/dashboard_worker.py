@@ -218,6 +218,7 @@ class DashboardWorker:
             rights_cleared=req.rights_cleared,
             app_config=self.config,
             options=options,
+            resume_job_id=job_id if resume else None,
             approval_overrides=approval_overrides,
         )
 

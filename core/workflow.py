@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as _dc_replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -1054,12 +1054,9 @@ async def run_pipeline_job(
     # For multi-language runs, execute sequentially and return the last job.
     last_job: Job | None = None
     for lang in languages:
-        lang_opts = RunOptions(
-            phase=(options.phase if options else "all"),
-            resume=(options.resume if options else False),
-            only_shot=(options.only_shot if options else None),
-            language=lang,
-        )
+        # Copy all fields from caller options (preserves stage_hook, error_hook, etc.)
+        # and override language only.
+        lang_opts = _dc_replace(options or RunOptions(), language=lang)
         if lang_opts.resume and not resume_job_id:
             raise ValueError("resume=True requires resume_job_id to be set.")
         ctx = (
