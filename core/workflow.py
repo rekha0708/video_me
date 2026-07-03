@@ -3,7 +3,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from core.config import AppConfig, load_app_config
 from core.executor import StageError, check_rights, run_stage
@@ -63,6 +63,7 @@ class RunOptions:
     only_shot: str | None = None
     language: str = "en"
     stage_hook: Callable[[str, str], None] | None = None
+    error_hook: Callable[[str, Exception], Any] | None = None
 
 logger = logging.getLogger(__name__)
 
@@ -759,6 +760,7 @@ async def _run_to_assembled_video(
         return await run_stage(
             name, capability, request, job, artifact_store, job_store,
             stage_hook=opts.stage_hook,
+            error_hook=opts.error_hook,
         )
 
     # ── Plan phase ────────────────────────────────────────────────────────────
@@ -919,6 +921,7 @@ async def _run_to_assembled_video(
         ),
         job, artifact_store, job_store,
         stage_hook=opts.stage_hook,
+        error_hook=opts.error_hook,
     )
 
     return script, final_video

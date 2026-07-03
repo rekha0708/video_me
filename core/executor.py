@@ -1,5 +1,6 @@
 import logging
 from collections.abc import Callable
+from inspect import isawaitable
 from typing import Any
 
 from pydantic import BaseModel
@@ -37,6 +38,7 @@ async def run_stage(
     job_store: JobRepository,
     *,
     stage_hook: Callable[[str, str], None] | None = None,
+    error_hook: Callable[[str, Exception], Any] | None = None,
 ) -> Any:
     """
     Run one pipeline stage: health-check → invoke capability → persist artifact → update job.
@@ -55,19 +57,40 @@ async def run_stage(
 
     health = await capability.health()
     if health.status == "down":
+        exc = StageError(stage_name, f"Adapter '{adapter_name}' is down: {health.reason}")
+        log_event(logger, "stage_failed", level=logging.ERROR,
+                  job_id=job.job_id, stage=stage_name, adapter=adapter_name,
+                  error=type(exc).__name__, message=str(exc))
         if stage_hook:
             try:
                 stage_hook(stage_name, "stage_failed")
             except Exception:
                 pass
-        raise StageError(stage_name, f"Adapter '{adapter_name}' is down: {health.reason}")
+        if error_hook:
+            try:
+                result = error_hook(stage_name, exc)
+                if isawaitable(result):
+                    await result
+            except Exception:
+                pass
+        raise exc
 
     try:
         result = await capability.run(request)
-    except Exception:
+    except Exception as exc:
+        log_event(logger, "stage_failed", level=logging.ERROR,
+                  job_id=job.job_id, stage=stage_name, adapter=adapter_name,
+                  error=type(exc).__name__, message=str(exc))
         if stage_hook:
             try:
                 stage_hook(stage_name, "stage_failed")
+            except Exception:
+                pass
+        if error_hook:
+            try:
+                result = error_hook(stage_name, exc)
+                if isawaitable(result):
+                    await result
             except Exception:
                 pass
         raise

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 from core.models.dashboard import DashboardJobStatus
@@ -81,6 +82,52 @@ _TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_job_errors",
+            "description": (
+                "Return only ERROR-level events for the current job, with full payload including "
+                "stack traces. Call this first when the user asks why a job failed."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Number of error events to return (max 20, default 10)",
+                    }
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_service_log",
+            "description": (
+                "Read the last N lines of a service log file. Useful when a stage fails with a "
+                "service error (e.g. ComfyUI HTTP 500, Fish S2 crash). "
+                "Services: ollama, comfyui, fish_s2, wan, musetalk, a1111, chatterbox."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "service": {
+                        "type": "string",
+                        "enum": ["ollama", "comfyui", "fish_s2", "wan", "musetalk", "a1111", "chatterbox"],
+                        "description": "Which service log to read.",
+                    },
+                    "lines": {
+                        "type": "integer",
+                        "description": "Number of trailing log lines to return (default 50, max 200).",
+                    },
+                },
+                "required": ["service"],
+            },
+        },
+    },
 ]
 
 _TERMINAL_STATUSES = {"completed", "failed", "blocked", "cancelled"}
@@ -119,6 +166,8 @@ def _build_system_prompt(job_id: str, repo: DashboardRepository) -> str:
         f"  Source: {src}{error_block}\n\n"
         f"Recent events (last 5):\n{event_lines}\n\n"
         "You have tools to read live job state and take actions.\n"
+        "When asked why a job failed: call get_job_errors() first — it returns full stack traces.\n"
+        "When a stage failure mentions a service (ComfyUI, Fish S2, Ollama): call get_service_log() to see the raw service output.\n"
         "For cancel_job: always ask the user to confirm explicitly before calling it.\n"
         "Keep responses concise and reference actual event messages when diagnosing failures."
     )
@@ -156,6 +205,7 @@ async def _execute_tool(
                     "level": e.level.value,
                     "stage_name": e.stage_name,
                     "message": e.message,
+                    "payload": e.payload,
                     "created_at": e.created_at.isoformat() if e.created_at else None,
                 }
                 for e in events
@@ -206,6 +256,38 @@ async def _execute_tool(
             "Cancellation requested via Pipeline Assistant.",
         )
         return {"result": "Cancellation requested. Worker will stop within ~30 seconds."}
+
+    if name == "get_job_errors":
+        limit = min(int(args.get("limit", 10)), 20)
+        events = repo.get_error_events(job_id, limit=limit)
+        return {
+            "error_events": [
+                {
+                    "event_type": e.event_type,
+                    "stage_name": e.stage_name,
+                    "message": e.message,
+                    "payload": e.payload,
+                    "created_at": e.created_at.isoformat() if e.created_at else None,
+                }
+                for e in events
+            ]
+        }
+
+    if name == "get_service_log":
+        service = args.get("service", "")
+        n_lines = min(int(args.get("lines", 50)), 200)
+        workspace = Path(
+            __import__("os").environ.get("WORKSPACE", "/workspace")
+        )
+        log_path = workspace / "logs" / f"{service}.log"
+        if not log_path.exists():
+            return {"error": f"Log file not found: {log_path}"}
+        try:
+            text = log_path.read_text(errors="replace")
+            tail = "\n".join(text.splitlines()[-n_lines:])
+            return {"service": service, "log_path": str(log_path), "lines": tail}
+        except OSError as exc:
+            return {"error": f"Could not read {log_path}: {exc}"}
 
     return {"error": f"Unknown tool: {name}"}
 

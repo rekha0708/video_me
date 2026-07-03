@@ -15,6 +15,7 @@ import logging
 import os
 import signal
 import socket
+import traceback as _traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -205,6 +206,7 @@ class DashboardWorker:
             phase=phase,
             resume=resume,
             stage_hook=self._make_stage_hook(job_id),
+            error_hook=self._make_error_hook(job_id),
         )
 
         self.repo.record_event(
@@ -459,8 +461,29 @@ class DashboardWorker:
         self.repo.fail_queue_action(queue_id, {"code": "CANCELLED", "message": "Operator cancelled."})
         logger.info("Job %s cancelled.", job_id)
 
+    def _make_error_hook(self, job_id: str):
+        """Return an async callback that records a stage_failed event with full traceback."""
+        async def hook(stage_name: str, exc: Exception) -> None:
+            self.repo.record_event(
+                job_id,
+                "stage_failed",
+                f"{type(exc).__name__}: {exc}",
+                level=DashboardEventLevel.ERROR,
+                stage_name=stage_name,
+                payload={
+                    "code": type(exc).__name__,
+                    "message": str(exc),
+                    "traceback": _traceback.format_exc(),
+                },
+            )
+        return hook
+
     def _handle_failure(self, job_id: str, queue_id: str, exc: Exception) -> None:
-        error: dict[str, Any] = {"code": type(exc).__name__, "message": str(exc)}
+        error: dict[str, Any] = {
+            "code": type(exc).__name__,
+            "message": str(exc),
+            "traceback": _traceback.format_exc(),
+        }
         self.repo.update_job_status(
             job_id,
             DashboardJobStatus.FAILED,

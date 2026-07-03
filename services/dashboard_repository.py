@@ -540,6 +540,26 @@ class DashboardRepository:
             ).fetchall()
         return [self._event_from_row(row) for row in rows]
 
+    def get_error_events(
+        self,
+        job_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[DashboardEvent]:
+        """Return only ERROR-level events for a job, most recent first."""
+        limit = max(1, min(limit, 100))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM job_events
+                WHERE job_id = ? AND level = 'error'
+                ORDER BY event_id DESC
+                LIMIT ?
+                """,
+                (job_id, limit),
+            ).fetchall()
+        return [self._event_from_row(row) for row in rows]
+
     # ------------------------------------------------------------------
     # Approvals and artifacts
     # ------------------------------------------------------------------

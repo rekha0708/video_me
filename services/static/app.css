@@ -345,6 +345,12 @@ textarea:focus {
 .ev-level-debug   { color: var(--muted); }
 .ev-msg { flex: 1; word-break: break-word; }
 .ev-stage { color: var(--muted); flex-shrink: 0; font-size: 11px; }
+.ev-has-detail { cursor: pointer; }
+.ev-has-detail:hover { background: var(--surface2); }
+.ev-toggle { margin-left: auto; font-size: 10px; color: var(--muted); flex-shrink: 0; }
+.ev-detail { display: none; padding: 6px 12px 8px; background: var(--surface2); border-bottom: 1px solid var(--border); }
+.ev-detail-open { display: block; }
+.ev-detail pre { margin: 0; font-size: 11px; white-space: pre-wrap; word-break: break-all; color: var(--text); }
 
 /* ── Approval card ───────────────────────────────────────────────────── */
 

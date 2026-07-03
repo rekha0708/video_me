@@ -11,6 +11,7 @@ def log_event(
     logger: logging.Logger,
     event: str,
     *,
+    level: int = logging.INFO,
     job_id: str | None = None,
     stage: str | None = None,
     adapter: str | None = None,
@@ -23,5 +24,5 @@ def log_event(
         "adapter": adapter,
         **fields,
     }
-    logger.info(json.dumps({key: value for key, value in payload.items() if value is not None}, default=str))
+    logger.log(level, json.dumps({key: value for key, value in payload.items() if value is not None}, default=str))
 

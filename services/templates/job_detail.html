@@ -190,14 +190,23 @@
   </div>
   <div id="events-feed" class="events-feed">
     {% for ev in detail.events %}
-    <div class="ev-row">
+    {% set has_payload = ev.payload and ev.payload | length > 0 %}
+    {% set is_error = (ev.level.value if ev.level else 'info') == 'error' %}
+    <div class="ev-row{% if has_payload %} ev-has-detail{% endif %}"
+         {% if has_payload %}onclick="toggleEvDetail(this)"{% endif %}>
       <span class="ev-time">{{ ev.created_at.strftime('%H:%M:%S') if ev.created_at else '' }}</span>
       <span class="ev-level ev-level-{{ ev.level.value if ev.level else 'info' }}">
         {{ (ev.level.value if ev.level else 'info') | upper }}
       </span>
       <span class="ev-msg">{{ ev.message }}</span>
       {% if ev.stage_name %}<span class="ev-stage">{{ ev.stage_name }}</span>{% endif %}
+      {% if has_payload %}<span class="ev-toggle">{{ '▼' if is_error else '▶' }}</span>{% endif %}
     </div>
+    {% if has_payload %}
+    <div class="ev-detail{% if is_error %} ev-detail-open{% endif %}">
+      <pre>{{ ev.payload | tojson(indent=2) }}</pre>
+    </div>
+    {% endif %}
     {% endfor %}
   </div>
 </div>
@@ -233,6 +242,14 @@
 
 {% block scripts %}
 <script>
+function toggleEvDetail(row) {
+  const detail = row.nextElementSibling;
+  if (!detail || !detail.classList.contains('ev-detail')) return;
+  const open = detail.classList.toggle('ev-detail-open');
+  const toggle = row.querySelector('.ev-toggle');
+  if (toggle) toggle.textContent = open ? '▼' : '▶';
+}
+
 async function cancelJob(jobId, btn) {
   if (!confirm("Cancel this job?\n\nThe worker will stop after the current stage finishes.")) return;
   btn.disabled = true;
