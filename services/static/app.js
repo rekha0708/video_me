@@ -334,3 +334,211 @@ function selectCandidate(card, shotId, idx) {
   const input = document.getElementById(`pick-${shotId}`);
   if (input) input.value = idx;
 }
+
+// ---------------------------------------------------------------------------
+// Chat drawer — Pipeline Assistant
+// ---------------------------------------------------------------------------
+
+let _chatJobId = null;
+let _chatStreaming = false;
+
+function _getChatJobId() {
+  const el = document.querySelector("[data-job-id]");
+  return el ? el.dataset.jobId : null;
+}
+
+function openChatDrawer() {
+  const drawer = document.getElementById("chat-drawer");
+  if (!drawer) return;
+  drawer.style.display = "flex";
+
+  // Push main content right so job pane stays fully visible
+  const main = document.querySelector(".main");
+  if (main) main.style.marginLeft = "360px";
+
+  _chatJobId = _getChatJobId();
+  const label = document.getElementById("chat-job-label");
+  if (label) {
+    if (_chatJobId) {
+      const short = _chatJobId.length > 26 ? _chatJobId.slice(0, 26) + "…" : _chatJobId;
+      label.textContent = short;
+      label.title = _chatJobId;
+    } else {
+      label.textContent = "no job selected";
+      label.title = "";
+    }
+  }
+
+  if (_chatJobId) {
+    loadChatHistory(_chatJobId);
+  } else {
+    const msgs = document.getElementById("chat-messages");
+    if (msgs) msgs.innerHTML = '<div class="chat-empty">Open a job to start chatting about it.</div>';
+  }
+  setTimeout(() => {
+    const input = document.getElementById("chat-input");
+    if (input) input.focus();
+  }, 80);
+}
+
+function closeChatDrawer() {
+  const drawer = document.getElementById("chat-drawer");
+  if (drawer) drawer.style.display = "none";
+  // Restore main content width
+  const main = document.querySelector(".main");
+  if (main) main.style.marginLeft = "";
+}
+
+async function loadChatHistory(jobId) {
+  const msgs = document.getElementById("chat-messages");
+  if (!msgs) return;
+  try {
+    const res = await fetch(`/api/jobs/${jobId}/chat/history`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const history = data.messages || [];
+    msgs.innerHTML = "";
+    if (history.length === 0) {
+      msgs.innerHTML = '<div class="chat-empty">Ask me anything about this job…</div>';
+      return;
+    }
+    history.forEach((m) => _appendChatBubble(m.role, m.content, false));
+  } catch (_) {}
+}
+
+function _appendChatBubble(role, content, streaming) {
+  const msgs = document.getElementById("chat-messages");
+  if (!msgs) return null;
+  const empty = msgs.querySelector(".chat-empty");
+  if (empty) empty.remove();
+
+  const bubble = document.createElement("div");
+  bubble.className = `chat-msg chat-msg--${role}`;
+  if (streaming) bubble.dataset.streaming = "true";
+  bubble.textContent = content || "";
+  msgs.appendChild(bubble);
+  msgs.scrollTop = msgs.scrollHeight;
+  return bubble;
+}
+
+function _appendToken(token) {
+  const msgs = document.getElementById("chat-messages");
+  if (!msgs) return;
+  const streaming = msgs.querySelector(".chat-msg[data-streaming='true']");
+  if (!streaming) return;
+  streaming.textContent += token;
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function _appendToolBadge(name, result) {
+  const msgs = document.getElementById("chat-messages");
+  if (!msgs) return;
+  const badge = document.createElement("div");
+  badge.className = "chat-tool-badge";
+  badge.textContent = `⚙ ${name}`;
+  badge.title = JSON.stringify(result, null, 2);
+  msgs.appendChild(badge);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function _finalizeStreaming() {
+  const msgs = document.getElementById("chat-messages");
+  if (!msgs) return;
+  const streaming = msgs.querySelector(".chat-msg[data-streaming='true']");
+  if (streaming) streaming.removeAttribute("data-streaming");
+}
+
+async function sendChatMessage() {
+  if (!_chatJobId || _chatStreaming) return;
+  const input = document.getElementById("chat-input");
+  const sendBtn = document.getElementById("chat-send-btn");
+  if (!input || !sendBtn) return;
+
+  const message = input.value.trim();
+  if (!message) return;
+
+  input.value = "";
+  _chatStreaming = true;
+  sendBtn.disabled = true;
+
+  _appendChatBubble("user", message, false);
+  const assistantBubble = _appendChatBubble("assistant", "", true);
+
+  try {
+    const res = await fetch(`/api/jobs/${_chatJobId}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    });
+
+    if (!res.ok || !res.body) {
+      if (assistantBubble) assistantBubble.textContent = "Error: could not reach assistant.";
+      _finalizeStreaming();
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE chunks are separated by \n\n
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() || "";
+
+      for (const chunk of chunks) {
+        if (!chunk.startsWith("data: ")) continue;
+        try {
+          const payload = JSON.parse(chunk.slice(6));
+          if (payload.type === "token") {
+            _appendToken(payload.content);
+          } else if (payload.type === "tool_call") {
+            _appendToolBadge(payload.name, payload.result);
+          } else if (payload.type === "done") {
+            _finalizeStreaming();
+          } else if (payload.type === "error") {
+            if (assistantBubble) assistantBubble.textContent = `Error: ${payload.message}`;
+            _finalizeStreaming();
+          }
+        } catch (_) {}
+      }
+    }
+  } catch (err) {
+    if (assistantBubble) assistantBubble.textContent = `Error: ${err.message}`;
+  } finally {
+    _chatStreaming = false;
+    sendBtn.disabled = false;
+    _finalizeStreaming();
+    input.focus();
+  }
+}
+
+async function clearChatHistory() {
+  if (!_chatJobId) return;
+  try {
+    await fetch(`/api/jobs/${_chatJobId}/chat/history`, { method: "DELETE" });
+    const msgs = document.getElementById("chat-messages");
+    if (msgs) msgs.innerHTML = '<div class="chat-empty">Ask me anything about this job…</div>';
+  } catch (_) {}
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("chat-toggle-btn")?.addEventListener("click", openChatDrawer);
+  document.getElementById("chat-close-btn")?.addEventListener("click", closeChatDrawer);
+  document.getElementById("chat-overlay")?.addEventListener("click", closeChatDrawer);
+  document.getElementById("chat-send-btn")?.addEventListener("click", sendChatMessage);
+
+  const chatInput = document.getElementById("chat-input");
+  if (chatInput) {
+    chatInput.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        sendChatMessage();
+      }
+    });
+  }
+});

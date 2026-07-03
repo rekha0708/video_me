@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     critique_model: str = "qwen3.6:35b"
     critique_base_url: str = "http://localhost:11434/v1"
     critique_api_key: str = "ollama"
+    chat_model: str = "qwen3.6:35b"
+    chat_base_url: str = "http://localhost:11434/v1"
+    chat_api_key: str = "ollama"
     # --- render_character backend ("a1111", "comfyui_flux", or "musubi_flux") ---
     render_adapter: Literal["a1111", "comfyui_flux", "musubi_flux"] = "musubi_flux"
     sd_base_url: str = "http://localhost:7860"       # AUTOMATIC1111 (kept for fallback)

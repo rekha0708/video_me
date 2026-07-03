@@ -254,7 +254,7 @@ def _stage_results():
 
 
 def _make_run_stage(results: dict):
-    async def _run_stage(stage_name, capability, request, job, artifact_store, job_store):
+    async def _run_stage(stage_name, capability, request, job, artifact_store, job_store, **_kw):
         return results[stage_name]
     return _run_stage
 
@@ -262,7 +262,7 @@ def _make_run_stage(results: dict):
 def _make_run_stage_with_critiques(verdicts: list[str], call_order: list[str] | None = None):
     critique_index = 0
 
-    async def _run_stage(stage_name, capability, request, job, artifact_store, job_store):
+    async def _run_stage(stage_name, capability, request, job, artifact_store, job_store, **_kw):
         nonlocal critique_index
         if call_order is not None:
             call_order.append(stage_name)
@@ -323,7 +323,7 @@ async def test_run_pipeline_job_uses_config_target_language_when_not_overridden(
     config.settings.target_language = "both"
     observed_languages: list[str] = []
 
-    def fake_context(source_url, rights_cleared, app_config):
+    def fake_context(source_url, rights_cleared, app_config, **kwargs):
         return SimpleNamespace(
             job=Job(
                 source_url=source_url,
@@ -351,7 +351,7 @@ async def test_run_pipeline_job_job_is_running_when_stages_start(tmp_path) -> No
     config = _make_config(tmp_path)
     observed_statuses: list[str] = []
 
-    async def spy_run_stage(stage_name, capability, request, job, *args):
+    async def spy_run_stage(stage_name, capability, request, job, *args, **_kw):
         observed_statuses.append(str(job.status))
         return _stage_results()[stage_name]
 
@@ -392,7 +392,7 @@ async def test_run_pipeline_job_stage_error_sets_failed(tmp_path) -> None:
     config = _make_config(tmp_path)
     mock_job_store = MagicMock()
 
-    async def failing_run_stage(stage_name, capability, request, job, *args):
+    async def failing_run_stage(stage_name, capability, request, job, *args, **_kw):
         if stage_name == "analyze_content":
             raise StageError("analyze_content", "LLM timeout")
         return _stage_results()[stage_name]
@@ -415,7 +415,7 @@ async def test_run_pipeline_job_generic_exception_sets_failed(tmp_path) -> None:
     config = _make_config(tmp_path)
     mock_job_store = MagicMock()
 
-    async def exploding_run_stage(stage_name, capability, request, job, *args):
+    async def exploding_run_stage(stage_name, capability, request, job, *args, **_kw):
         if stage_name == "transcribe":
             raise ValueError("unexpected crash")
         return _stage_results()[stage_name]
@@ -438,7 +438,7 @@ async def test_stage_call_order(tmp_path) -> None:
     config = _make_config(tmp_path)
     call_order: list[str] = []
 
-    async def recording_run_stage(stage_name, capability, request, job, *args):
+    async def recording_run_stage(stage_name, capability, request, job, *args, **_kw):
         call_order.append(stage_name)
         return _stage_results()[stage_name]
 
@@ -500,7 +500,7 @@ async def test_assemble_receives_all_synced_clips(tmp_path) -> None:
     results = {**_stage_results(), "plan_shots": _two_shot_storyboard()}
     assemble_request_captured = {}
 
-    async def recording_run_stage(stage_name, capability, request, job, *args):
+    async def recording_run_stage(stage_name, capability, request, job, *args, **_kw):
         if stage_name == "assemble_video":
             assemble_request_captured["request"] = request
         return results[stage_name]
@@ -538,7 +538,7 @@ async def test_publish_gets_script_learning_objective(tmp_path) -> None:
     config = _make_config(tmp_path)
     publish_request_captured = {}
 
-    async def recording_run_stage(stage_name, capability, request, job, *args):
+    async def recording_run_stage(stage_name, capability, request, job, *args, **_kw):
         if stage_name == "publish":
             publish_request_captured["request"] = request
         return _stage_results()[stage_name]

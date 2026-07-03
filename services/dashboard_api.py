@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from core.config import AppConfig, load_app_config
 from core.models.dashboard import (
+    ChatRequest,
     CreateDashboardJobRequest,
     DashboardApprovalStatus,
     DashboardJobStatus,
@@ -462,6 +463,53 @@ def create_app(
             "queue_id": queue_item.queue_id,
             "status": DashboardJobStatus.QUEUED.value,
         })
+
+    # ------------------------------------------------------------------
+    # Chat — Pipeline Assistant (per-job, persisted in SQLite)
+    # ------------------------------------------------------------------
+
+    @app.post("/api/jobs/{job_id}/chat")
+    async def chat_with_job(job_id: str, body: ChatRequest):
+        if repo.get_job(job_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "JOB_NOT_FOUND", "message": f"Job not found: {job_id}",
+                        "retryable": False},
+            )
+        from fastapi.responses import StreamingResponse
+        from services.chat_service import chat_stream
+
+        return StreamingResponse(
+            chat_stream(job_id, body.message, repo, config.settings),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
+    @app.get("/api/jobs/{job_id}/chat/history")
+    def get_chat_history(job_id: str):
+        if repo.get_job(job_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "JOB_NOT_FOUND", "message": f"Job not found: {job_id}",
+                        "retryable": False},
+            )
+        messages = repo.get_chat_history(job_id, limit=50)
+        return _base_response({"messages": [m.model_dump(mode="json") for m in messages]})
+
+    @app.delete("/api/jobs/{job_id}/chat/history")
+    def clear_chat_history(job_id: str, _: None = Depends(require_write_auth)):
+        if repo.get_job(job_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "JOB_NOT_FOUND", "message": f"Job not found: {job_id}",
+                        "retryable": False},
+            )
+        repo.clear_chat_history(job_id)
+        return _base_response({"cleared": True})
 
     # ------------------------------------------------------------------
     # D4 + D7 — SSE live event stream

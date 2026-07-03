@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel
@@ -34,21 +35,42 @@ async def run_stage(
     job: Job,
     artifact_store: ArtifactStore,
     job_store: JobRepository,
+    *,
+    stage_hook: Callable[[str, str], None] | None = None,
 ) -> Any:
     """
     Run one pipeline stage: health-check → invoke capability → persist artifact → update job.
 
     Returns the capability result so the caller can thread it into the next stage.
     Raises StageError on adapter health failure; propagates adapter exceptions otherwise.
+    stage_hook(stage_name, event_type) is called on started/completed/failed if provided.
     """
     adapter_name = getattr(capability, "name", "unknown")
     log_event(logger, "stage_started", job_id=job.job_id, stage=stage_name, adapter=adapter_name)
+    if stage_hook:
+        try:
+            stage_hook(stage_name, "stage_started")
+        except Exception:
+            pass
 
     health = await capability.health()
     if health.status == "down":
+        if stage_hook:
+            try:
+                stage_hook(stage_name, "stage_failed")
+            except Exception:
+                pass
         raise StageError(stage_name, f"Adapter '{adapter_name}' is down: {health.reason}")
 
-    result = await capability.run(request)
+    try:
+        result = await capability.run(request)
+    except Exception:
+        if stage_hook:
+            try:
+                stage_hook(stage_name, "stage_failed")
+            except Exception:
+                pass
+        raise
 
     payload = (
         result.model_dump(mode="json")
@@ -62,4 +84,9 @@ async def run_stage(
     job_store.save_job(job)
 
     log_event(logger, "stage_completed", job_id=job.job_id, stage=stage_name, adapter=adapter_name)
+    if stage_hook:
+        try:
+            stage_hook(stage_name, "stage_completed")
+        except Exception:
+            pass
     return result

@@ -10,7 +10,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import uuid
+
 from core.models.dashboard import (
+    ChatMessage,
+    ChatRole,
     CreateDashboardJobRequest,
     DashboardApprovalKind,
     DashboardApprovalRequest,
@@ -201,6 +205,23 @@ class DashboardRepository:
                     started_at TEXT NOT NULL,
                     last_heartbeat_at TEXT NOT NULL
                 )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chat_messages (
+                    message_id TEXT PRIMARY KEY,
+                    job_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_chat_messages_job
+                ON chat_messages (job_id, created_at)
                 """
             )
 
@@ -771,6 +792,56 @@ class DashboardRepository:
         if row is None:
             raise KeyError(f"approval not found: {approval_id}")
         return self._approval_from_row(row)
+
+    # ------------------------------------------------------------------
+    # Chat messages
+    # ------------------------------------------------------------------
+
+    def save_chat_message(self, job_id: str, role: str, content: str) -> ChatMessage:
+        now = utc_now()
+        msg = ChatMessage(
+            message_id=str(uuid.uuid4()),
+            job_id=job_id,
+            role=ChatRole(role),
+            content=content,
+            created_at=now,
+        )
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO chat_messages (message_id, job_id, role, content, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (msg.message_id, msg.job_id, msg.role.value, msg.content, _dt_text(now)),
+            )
+        return msg
+
+    def get_chat_history(self, job_id: str, *, limit: int = 50) -> list[ChatMessage]:
+        limit = max(1, min(limit, 200))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM chat_messages
+                WHERE job_id = ?
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (job_id, limit),
+            ).fetchall()
+        return [
+            ChatMessage(
+                message_id=row["message_id"],
+                job_id=row["job_id"],
+                role=ChatRole(row["role"]),
+                content=row["content"],
+                created_at=_dt(row["created_at"]) or utc_now(),
+            )
+            for row in rows
+        ]
+
+    def clear_chat_history(self, job_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM chat_messages WHERE job_id = ?", (job_id,))
 
     def ping(self) -> None:
         with self._connect() as conn:

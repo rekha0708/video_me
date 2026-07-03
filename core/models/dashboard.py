@@ -201,3 +201,20 @@ class DashboardJobDetail(BaseModel):
     queue: list[DashboardQueueItem] = Field(default_factory=list)
     events: list[DashboardEvent] = Field(default_factory=list)
     pending_approval: DashboardApprovalRequest | None = None
+
+
+class ChatRole(StrEnum):
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+class ChatMessage(BaseModel):
+    message_id: str
+    job_id: str
+    role: ChatRole
+    content: str
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)

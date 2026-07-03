@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}video_me{% endblock %} — Dashboard</title>
-  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/app.css?v=4">
 </head>
 <body>
 
@@ -20,6 +20,9 @@
     <a href="/api/docs" class="sidebar-link" target="_blank">
       <span class="icon">⊞</span> API Docs
     </a>
+    <button class="sidebar-link sidebar-chat-btn" id="chat-toggle-btn" onclick="openChatDrawer()" title="Pipeline Assistant">
+      <span class="icon">💬</span> Chat
+    </button>
   </div>
   <div class="sidebar-footer">
     {% if worker %}
@@ -35,7 +38,27 @@
   {% block content %}{% endblock %}
 </div>
 
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=4"></script>
 {% block scripts %}{% endblock %}
+
+<!-- Chat drawer — slides in from left next to sidebar -->
+<div class="chat-drawer" id="chat-drawer" style="display:none">
+  <div class="chat-drawer-header">
+    <div class="chat-drawer-title-group">
+      <span class="chat-drawer-title">Pipeline Assistant</span>
+      <span class="chat-job-label" id="chat-job-label">no job selected</span>
+    </div>
+    <button class="chat-close-btn" id="chat-close-btn" onclick="closeChatDrawer()" title="Close">✕</button>
+  </div>
+  <div class="chat-messages" id="chat-messages">
+    <div class="chat-empty">Open a job to start chatting about it.</div>
+  </div>
+  <div class="chat-input-row">
+    <textarea id="chat-input" placeholder="Why did this job fail? (Ctrl+Enter to send)" rows="2"></textarea>
+    <button class="btn btn-primary" id="chat-send-btn">Send</button>
+  </div>
+</div>
+<div class="chat-overlay" id="chat-overlay" style="display:none"></div>
+
 </body>
 </html>

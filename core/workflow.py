@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -39,7 +40,7 @@ from core.storage import (
     create_job_store,
 )
 
-Phase = Literal["plan", "render", "assemble", "all"]
+Phase = Literal["transcribe", "script_plan", "plan", "render", "assemble", "all"]
 
 
 @dataclass
@@ -47,10 +48,12 @@ class RunOptions:
     """Controls which stages run and whether completed stages are skipped.
 
     phase:
-      "plan"     — fetch → transcribe → analyze → adapt → plan_shots, then stop.
-      "render"   — shot loop only (render + voice + video + lip_sync for each shot).
-      "assemble" — assemble_video → publish only.
-      "all"      — full pipeline (default).
+      "transcribe" — fetch → transcribe → analyze_content, then stop (saves artifacts).
+      "script_plan"— load cached transcribe artifacts, then adapt_script → plan_shots + approval.
+      "plan"       — fetch → transcribe → analyze → adapt → plan_shots + approval, then stop.
+      "render"     — shot loop only (render + voice + video + lip_sync for each shot).
+      "assemble"   — assemble_video → publish only.
+      "all"        — full pipeline (default).
     resume:      skip stages whose artifact JSON already exists on disk.
     only_shot:   in the shot loop, process only this shot ID (e.g. "s01").
     language:    BCP-47 language code for this run — "en" or "hi".
@@ -59,6 +62,7 @@ class RunOptions:
     resume: bool = False
     only_shot: str | None = None
     language: str = "en"
+    stage_hook: Callable[[str, str], None] | None = None
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +192,12 @@ def _make_tts_adapter(s, work_dir: Path):
     )
 
 
-def _make_adapters(config: AppConfig, work_dir: Path) -> _Adapters:
+def _make_adapters(
+    config: AppConfig,
+    work_dir: Path,
+    *,
+    approval_overrides: dict | None = None,
+) -> _Adapters:
     """Instantiate all Phase 1 adapters with job-scoped work directories."""
     from adapters.adapt_script.llm_adapter import LlmAdaptScriptAdapter
     from adapters.analyze_content.llm_adapter import LlmAnalyzeAdapter
@@ -234,7 +243,7 @@ def _make_adapters(config: AppConfig, work_dir: Path) -> _Adapters:
             base_url=s.llm_base_url,
             api_key=s.llm_api_key,
         ),
-        approval=WebApprovalAdapter(
+        approval=(approval_overrides or {}).get("approval") or WebApprovalAdapter(
             work_dir=work_dir,
             port=s.approval_port,
             timeout_hours=s.approval_timeout_hours,
@@ -246,7 +255,7 @@ def _make_adapters(config: AppConfig, work_dir: Path) -> _Adapters:
             api_key=s.image_critique_api_key,
             feedback_log_dir=s.feedback_log_dir,
         ),
-        image_approval=ImageApprovalAdapter(
+        image_approval=(approval_overrides or {}).get("image_approval") or ImageApprovalAdapter(
             work_dir=work_dir,
             feedback_log_path=Path(s.feedback_log_dir) / "critique_feedback.jsonl",
             port=s.approval_port,            # same port — gates run sequentially
@@ -288,6 +297,8 @@ def _make_job_context(
     source_url: str,
     rights_cleared: bool,
     config: AppConfig,
+    *,
+    approval_overrides: dict | None = None,
 ) -> _JobContext:
     """Create stores, job record, work directory, and adapters for one run."""
     settings = config.settings
@@ -313,7 +324,7 @@ def _make_job_context(
         job_store=job_store,
         job=job,
         work_dir=work_dir,
-        adapters=_make_adapters(config, work_dir),
+        adapters=_make_adapters(config, work_dir, approval_overrides=approval_overrides),
     )
 
 
@@ -745,35 +756,58 @@ async def _run_to_assembled_video(
             if cached is not None:
                 logger.info("Resuming: skipping stage '%s' (artifact exists)", name)
                 return cached
-        return await run_stage(name, capability, request, job, artifact_store, job_store)
+        return await run_stage(
+            name, capability, request, job, artifact_store, job_store,
+            stage_hook=opts.stage_hook,
+        )
 
     # ── Plan phase ────────────────────────────────────────────────────────────
     skip_plan = opts.phase == "render" or opts.phase == "assemble"
+    # script_plan resumes from cached transcribe/analyze artifacts — force resume for those stages.
+    resume_head = opts.phase == "script_plan"
 
     if not skip_plan:
-        # 1. fetch_media
-        fetch_result = await _stage(
-            "fetch_media", adapters.fetch_media,
-            FetchMediaRequest(source_url=job.source_url),
-            FetchMediaResult,
-        )
+        if resume_head:
+            # script_plan: load artifacts saved by a previous "transcribe" phase run.
+            fetch_result = _load_artifact(job.job_id, "fetch_media", FetchMediaResult, artifact_store)
+            transcribe_result = _load_artifact(job.job_id, "transcribe", TranscribeResult, artifact_store)
+            metadata = _load_artifact(job.job_id, "analyze_content", ContentMetadata, artifact_store)
+            if fetch_result is None or transcribe_result is None or metadata is None:
+                raise FileNotFoundError(
+                    f"Phase 'script_plan' requires artifacts from a completed 'transcribe' phase "
+                    f"for job '{job.job_id}'. Run the transcribe phase first."
+                )
+        else:
+            # 1. fetch_media
+            fetch_result = await _stage(
+                "fetch_media", adapters.fetch_media,
+                FetchMediaRequest(source_url=job.source_url),
+                FetchMediaResult,
+            )
 
-        # 2. transcribe
-        transcribe_result = await _stage(
-            "transcribe", adapters.transcribe,
-            TranscribeRequest(audio_uri=fetch_result.audio_uri),
-            TranscribeResult,
-        )
+            # 2. transcribe
+            transcribe_result = await _stage(
+                "transcribe", adapters.transcribe,
+                TranscribeRequest(audio_uri=fetch_result.audio_uri),
+                TranscribeResult,
+            )
 
-        # 3. analyze_content
-        metadata = await _stage(
-            "analyze_content", adapters.analyze,
-            AnalyzeRequest(
-                transcript=transcribe_result,
-                channel_profile=config.channel_profile,
-            ),
-            ContentMetadata,
-        )
+            # 3. analyze_content
+            metadata = await _stage(
+                "analyze_content", adapters.analyze,
+                AnalyzeRequest(
+                    transcript=transcribe_result,
+                    channel_profile=config.channel_profile,
+                ),
+                ContentMetadata,
+            )
+
+        # Stop here for "transcribe" phase — artifacts are saved, human can review.
+        if opts.phase == "transcribe":
+            logger.info("Phase 'transcribe' complete — stopping after analyze_content.")
+            job.status = JobStatus.COMPLETED
+            job_store.save_job(job)
+            return None, None  # type: ignore[return-value]
 
         # 4. rights gate
         check_rights(job)
@@ -805,8 +839,8 @@ async def _run_to_assembled_video(
             opts=opts,
         )
 
-        if opts.phase == "plan":
-            logger.info("Phase 'plan' complete — stopping before render loop.")
+        if opts.phase in ("plan", "script_plan"):
+            logger.info("Phase '%s' complete — stopping before render loop.", opts.phase)
             job.status = JobStatus.COMPLETED
             job_store.save_job(job)
             return script, None  # type: ignore[return-value]
@@ -884,6 +918,7 @@ async def _run_to_assembled_video(
             disclosure_label_required=config.channel_profile.disclosure_label_required,
         ),
         job, artifact_store, job_store,
+        stage_hook=opts.stage_hook,
     )
 
     return script, final_video
@@ -921,6 +956,8 @@ async def _publish_candidate(
     ctx: _JobContext,
     script: Script,
     final_video: FinalVideo,
+    *,
+    stage_hook: Callable[[str, str], None] | None = None,
 ) -> None:
     """Publish an assembled candidate to the manual review folder."""
     await run_stage(
@@ -933,6 +970,7 @@ async def _publish_candidate(
             learning_objective_summary=script.learning_objective.success_phrase,
         ),
         ctx.job, ctx.artifact_store, ctx.job_store,
+        stage_hook=stage_hook,
     )
 
 
@@ -941,6 +979,8 @@ async def _critique_candidate(
     script: Script,
     final_video: FinalVideo,
     attempt: int,
+    *,
+    stage_hook: Callable[[str, str], None] | None = None,
 ) -> CritiqueResult:
     """Run and persist one critique attempt."""
     return await run_stage(
@@ -954,6 +994,7 @@ async def _critique_candidate(
         ctx.job,
         ctx.artifact_store,
         ctx.job_store,
+        stage_hook=stage_hook,
     )
 
 
@@ -975,6 +1016,7 @@ async def run_pipeline_job(
     options: RunOptions | None = None,
     resume_job_id: str | None = None,
     target_language: str | None = None,
+    approval_overrides: dict | None = None,
 ) -> Job:
     """
     Full Phase 1 pipeline: URL → review-folder MP4 + metadata sidecar.
@@ -1020,7 +1062,9 @@ async def run_pipeline_job(
         ctx = (
             _restore_job_context(resume_job_id, config)
             if resume_job_id
-            else _make_job_context(source_url, rights_cleared, config)
+            else _make_job_context(
+                source_url, rights_cleared, config, approval_overrides=approval_overrides
+            )
         )
         last_job = await _run_single_language_job(ctx, lang_opts)
 
@@ -1036,7 +1080,7 @@ async def _run_single_language_job(ctx: "_JobContext", opts: RunOptions) -> Job:
         if final_video is None:
             # phase="plan" or phase="render" — no video to publish, already marked complete
             return job
-        await _publish_candidate(ctx, script, final_video)
+        await _publish_candidate(ctx, script, final_video, stage_hook=opts.stage_hook)
 
         job.status = JobStatus.COMPLETED
         ctx.job_store.save_job(job)
