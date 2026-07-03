@@ -268,7 +268,12 @@ class LtxAdapter(GenerateVideo):
                 data={"type": "input", "subfolder": "audio"},
             )
         resp.raise_for_status()
-        return resp.json()["name"]
+        data = resp.json()
+        # LoadAudio resolves files as "<subfolder>/<name>" — the bare name alone
+        # only works for files uploaded to input/'s root (no subfolder), which
+        # is not the case here since we explicitly upload into input/audio/.
+        subfolder = data.get("subfolder", "")
+        return f"{subfolder}/{data['name']}" if subfolder else data["name"]
 
     async def _submit_prompt(self, client, workflow: dict) -> str:
         resp = await client.post(

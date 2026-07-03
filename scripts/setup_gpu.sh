@@ -398,6 +398,28 @@ setup_comfyui() {
     ok "LTX-2.3 already at $ltx_model"
   fi
 
+  # ── LTX-AV Gemma-3 text encoder (~8.8 GB) ───────────────────────────────
+  # Required by the LTXAVTextEncoderLoader node (assets/comfyui_workflows/ltx_i2v.json).
+  # This node is hardcoded to a Gemma-3 tokenizer regardless of which file is
+  # passed in — any other text encoder (e.g. t5xxl) fails with "invalid tokenizer".
+  local ltx_text_encoder="$models_dir/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors"
+  if [[ ! -f "$ltx_text_encoder" ]]; then
+    log "Downloading LTX-AV Gemma-3 text encoder (~8.8 GB)"
+    run hf download Comfy-Org/ltx-2 \
+        split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors \
+        --local-dir "$models_dir/text_encoders" \
+        ${HF_TOKEN:+--token "$HF_TOKEN"}
+    # hf download preserves the split_files/text_encoders/ subpath — flatten it.
+    if [[ -f "$models_dir/text_encoders/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors" ]]; then
+      run mv "$models_dir/text_encoders/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors" \
+          "$ltx_text_encoder"
+      run rm -rf "$models_dir/text_encoders/split_files"
+    fi
+    ok "LTX-AV Gemma-3 text encoder downloaded to $ltx_text_encoder"
+  else
+    ok "LTX-AV Gemma-3 text encoder already at $ltx_text_encoder"
+  fi
+
   # Symlink project LoRA dir into ComfyUI's loras folder
   local lora_link="$models_dir/loras/kids_duo"
   local lora_src="$ROOT_DIR/loras"

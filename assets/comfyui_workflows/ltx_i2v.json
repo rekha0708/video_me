@@ -7,81 +7,227 @@
     "_meta": {"title": "__IMAGE__"}
   },
   "2": {
-    "class_type": "LTXVModelLoader",
+    "class_type": "CheckpointLoaderSimple",
     "inputs": {
-      "model": "ltx-2.3-22b-distilled-1.1.safetensors"
+      "ckpt_name": "ltx-2.3-22b-distilled-1.1.safetensors"
     },
-    "_meta": {"title": "Load LTX Model"}
+    "_meta": {"title": "Load LTX Checkpoint"}
   },
   "3": {
+    "class_type": "LTXAVTextEncoderLoader",
+    "inputs": {
+      "text_encoder": "gemma_3_12B_it_fp4_mixed.safetensors",
+      "ckpt_name": "ltx-2.3-22b-distilled-1.1.safetensors",
+      "device": "default"
+    },
+    "_meta": {"title": "Load LTX Text Encoder"}
+  },
+  "4": {
     "class_type": "CLIPTextEncode",
     "inputs": {
       "text": "A character performing an action in a scene",
-      "clip": ["2", 1]
+      "clip": ["3", 0]
     },
     "_meta": {"title": "__PROMPT__"}
   },
-  "4": {
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "blurry, low quality, deformed, distorted, static",
+      "clip": ["3", 0]
+    },
+    "_meta": {"title": "Negative Prompt"}
+  },
+  "6": {
+    "class_type": "LTXVConditioning",
+    "inputs": {
+      "positive": ["4", 0],
+      "negative": ["5", 0],
+      "frame_rate": 24.0
+    },
+    "_meta": {"title": "Combine Conditioning"}
+  },
+  "7": {
+    "class_type": "EmptyLTXVLatentVideo",
+    "inputs": {
+      "width": 480,
+      "height": 832,
+      "length": 121,
+      "batch_size": 1
+    },
+    "_meta": {"title": "__FRAMES__"}
+  },
+  "8": {
+    "class_type": "LTXVImgToVideoConditionOnly",
+    "inputs": {
+      "vae": ["2", 2],
+      "image": ["1", 0],
+      "latent": ["7", 0],
+      "strength": 1.0
+    },
+    "_meta": {"title": "Image Condition Video Latent"}
+  },
+  "9": {
     "class_type": "LoadAudio",
     "inputs": {
       "audio": "dialogue.wav"
     },
     "_meta": {"title": "__AUDIO__"}
   },
-  "5": {
-    "class_type": "LTXVConditioning",
+  "10": {
+    "class_type": "LTXVAudioVAELoader",
     "inputs": {
-      "length": 121,
-      "width": 1024,
-      "height": 576,
-      "positive": ["3", 0],
-      "negative": ["3", 0],
-      "image": ["1", 0],
-      "audio": ["4", 0]
+      "ckpt_name": "ltx-2.3-22b-distilled-1.1.safetensors"
     },
-    "_meta": {"title": "__FRAMES__"}
+    "_meta": {"title": "Load LTX Audio VAE"}
   },
-  "6": {
+  "11": {
+    "class_type": "LTXVAudioVAEEncode",
+    "inputs": {
+      "audio": ["9", 0],
+      "audio_vae": ["10", 0]
+    },
+    "_meta": {"title": "Encode Reference Audio"}
+  },
+  "12": {
+    "class_type": "LTXVSetAudioRefTokens",
+    "inputs": {
+      "positive": ["6", 0],
+      "negative": ["6", 1],
+      "audio_latent": ["11", 0]
+    },
+    "_meta": {"title": "Set Lip-Sync Audio Reference"}
+  },
+  "13": {
+    "class_type": "LTXVEmptyLatentAudio",
+    "inputs": {
+      "frames_number": 121,
+      "frame_rate": 24,
+      "batch_size": 1,
+      "audio_vae": ["10", 0]
+    },
+    "_meta": {"title": "Empty Audio Latent Slot"}
+  },
+  "14": {
+    "class_type": "LTXVConcatAVLatent",
+    "inputs": {
+      "video_latent": ["8", 0],
+      "audio_latent": ["13", 0]
+    },
+    "_meta": {"title": "Joint AV Latent"}
+  },
+  "15": {
+    "class_type": "LTXVScheduler",
+    "inputs": {
+      "steps": 8,
+      "max_shift": 2.05,
+      "base_shift": 0.95,
+      "stretch": true,
+      "terminal": 0.1,
+      "latent": ["14", 0]
+    },
+    "_meta": {"title": "__STEPS__"}
+  },
+  "16": {
     "class_type": "RandomNoise",
     "inputs": {
       "noise_seed": 54321
     },
     "_meta": {"title": "__SEED__"}
   },
-  "7": {
-    "class_type": "LTXVScheduler",
+  "17": {
+    "class_type": "GuiderParameters",
     "inputs": {
-      "steps": 8,
-      "denoise": 1.0
+      "modality": "AUDIO",
+      "cfg": 7.0,
+      "stg": 1.0,
+      "perturb_attn": true,
+      "rescale": 0.7,
+      "modality_scale": 3.0,
+      "skip_step": 0,
+      "cross_attn": true
     },
-    "_meta": {"title": "__STEPS__"}
+    "_meta": {"title": "Audio Guider Params"}
   },
-  "8": {
-    "class_type": "LTXVSampler",
+  "18": {
+    "class_type": "GuiderParameters",
+    "inputs": {
+      "modality": "VIDEO",
+      "cfg": 3.0,
+      "stg": 1.0,
+      "perturb_attn": true,
+      "rescale": 0.9,
+      "modality_scale": 3.0,
+      "skip_step": 0,
+      "cross_attn": true,
+      "parameters": ["17", 0]
+    },
+    "_meta": {"title": "Video Guider Params"}
+  },
+  "19": {
+    "class_type": "MultimodalGuider",
     "inputs": {
       "model": ["2", 0],
-      "conditioning": ["5", 0],
-      "noise": ["6", 0],
-      "sigmas": ["7", 0]
+      "positive": ["12", 0],
+      "negative": ["12", 1],
+      "parameters": ["18", 0],
+      "skip_blocks": "28"
     },
-    "_meta": {"title": "LTX Sampler"}
+    "_meta": {"title": "AV Guider"}
   },
-  "9": {
-    "class_type": "LTXVVAEDecode",
+  "20": {
+    "class_type": "KSamplerSelect",
     "inputs": {
-      "samples": ["8", 0],
-      "vae": ["2", 2]
+      "sampler_name": "euler"
     },
-    "_meta": {"title": "VAE Decode"}
+    "_meta": {"title": "Sampler Choice"}
   },
-  "10": {
-    "class_type": "VHSVideoCombine",
+  "21": {
+    "class_type": "SamplerCustomAdvanced",
     "inputs": {
-      "frame_rate": 24,
-      "images": ["9", 0],
-      "audio": ["4", 0],
+      "noise": ["16", 0],
+      "guider": ["19", 0],
+      "sampler": ["20", 0],
+      "sigmas": ["15", 0],
+      "latent_image": ["14", 0]
+    },
+    "_meta": {"title": "Run Sampler"}
+  },
+  "22": {
+    "class_type": "LTXVSeparateAVLatent",
+    "inputs": {
+      "av_latent": ["21", 0]
+    },
+    "_meta": {"title": "Split AV Latent"}
+  },
+  "23": {
+    "class_type": "LTXVTiledVAEDecode",
+    "inputs": {
+      "vae": ["2", 2],
+      "latents": ["22", 0],
+      "horizontal_tiles": 2,
+      "vertical_tiles": 2,
+      "overlap": 6,
+      "last_frame_fix": false
+    },
+    "_meta": {"title": "Decode Video Frames"}
+  },
+  "24": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": ["23", 0],
+      "audio": ["9", 0],
+      "fps": 24.0
+    },
+    "_meta": {"title": "Mux Video + Reference Audio"}
+  },
+  "25": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": ["24", 0],
       "filename_prefix": "video_me_ltx",
-      "format": "video/h264-mp4"
+      "format": "mp4",
+      "codec": "h264"
     },
     "_meta": {"title": "Save Video"}
   }

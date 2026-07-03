@@ -186,3 +186,98 @@ the code fix is wrong — don't trust `curl` 200s alone as proof the *new*
 process is answering.
 
 **Status:** ✅ Fixed and verified.
+
+### 10. LTX-Video generation: stale workflow graph + missing model files
+
+**Symptom:** after approving images, `generate_video` fails with
+`HTTPStatusError 400` from `http://localhost:8188/prompt`.
+
+**Root cause — three layers, compounding:**
+1. `ComfyUI-LTXVideo`'s custom nodes failed to *import* at ComfyUI startup
+   (`ImportError: cannot import name 'pad' from
+   kornia.geometry.transform.pyramid` — installed `kornia==0.8.3` removed a
+   function the node package still imports). So `LTXVModelLoader` didn't
+   exist in the node registry at all yet.
+2. Even with that fixed, `LTXVModelLoader`, `LTXVSampler`, `LTXVVAEDecode`,
+   and `VHSVideoCombine` — all four nodes our checked-in
+   `assets/comfyui_workflows/ltx_i2v.json` depends on — no longer exist.
+   `setup_gpu.sh` does `git pull --ff-only` on this repo every setup, and
+   it's auto-synced with upstream frequently (`git log` showed near-weekly
+   "Automated PR" commits); the node graph has evolved substantially since
+   our workflow was written, including a completely new architecture:
+   `LTXVConcatAVLatent`/`LTXVSeparateAVLatent` (joint audio+video latent,
+   sampled together in one pass — this *is* the "native lip-sync" feature),
+   plus 6+ specialized samplers replacing the old single `LTXVSampler`.
+3. The actual LTX-2.3 model checkpoint (46 GB) had never been downloaded —
+   fixed by running the (already-present, never-executed) download step
+   from `setup_gpu.sh`.
+
+**Fix — rebuilt `ltx_i2v.json` from scratch**, cross-referencing:
+   - `kornia==0.7.1` installed system-wide (has the missing `pad` function;
+     `0.8.x` removed it).
+   - The official `ComfyUI-LTXVideo/example_workflows/2.3/` reference
+     workflows (UI-graph format — manually traced `nodes`/`links` to
+     reconstruct the API/`class_type` format our adapter submits).
+   - `LTX-2.3_ICLoRA_Lipdub_Two_Stage_Distilled.json` specifically, to find
+     the *audio-conditioning* mechanism (`LTXVAudioVAEEncode` →
+     `LTXVSetAudioRefTokens`) that syncs generation to an existing audio
+     track — the plain T2V/I2V examples only self-generate audio from the
+     text prompt, which wouldn't sync to our pre-generated Fish-S2 dialogue.
+   - `CheckpointLoaderSimple` (outputs `[MODEL, CLIP, VAE]`) replaces
+     `LTXVModelLoader` with an identical 3-output signature — no rewiring
+     needed elsewhere.
+   - `LTXAVTextEncoderLoader` turned out to be **hardcoded to a Gemma-3
+     tokenizer** regardless of which file is passed as `text_encoder` —
+     tried `t5xxl_fp8_e4m3fn.safetensors` first (already on disk, no
+     download needed) and got `ValueError: invalid tokenizer` from deep
+     inside `comfy/text_encoders/lt.py`. Downloaded the actual required file,
+     `gemma_3_12B_it_fp4_mixed.safetensors` (8.8 GB, `Comfy-Org/ltx-2` on
+     HF) — added this download step to `setup_gpu.sh` alongside the
+     existing LTX checkpoint download.
+   - `ClownSampler_Beta` (used in the reference's fast-path sampler) belongs
+     to a third-party node pack we don't have installed — substituted the
+     standard, always-available `KSamplerSelect` (`sampler_name="euler"`)
+     instead; `MultimodalGuider`/`SamplerCustomAdvanced` don't care which
+     concrete sampler algorithm is plugged in.
+   - Skipped decoding the model's *generated* audio latent entirely — used
+     our original clean Fish-S2 `.wav` directly as `CreateVideo`'s audio
+     input, so the final soundtrack never passes through a lossy
+     regenerate/decode round-trip. The audio latent is still needed as an
+     empty placeholder slot (`LTXVEmptyLatentAudio`) to satisfy
+     `LTXVConcatAVLatent`'s joint-latent requirement, even though its
+     decoded output is discarded.
+   - Validated directly against ComfyUI's `/prompt` endpoint before ever
+     running a real job — this is a far faster feedback loop than a full
+     dashboard job cycle (instant `node_errors` on a bad wire-up, vs.
+     minutes to reach the same stage through the real pipeline). First
+     attempt (t5xxl) validated cleanly but failed at actual node execution
+     (tokenizer mismatch) — fixed and re-validated; second attempt
+     completed successfully end-to-end producing a real playable
+     480×832 h264/aac MP4.
+
+**Status:** ✅ Fixed and verified via direct ComfyUI submission (real GPU
+inference, valid output MP4). Found one more bug when the real job hit it
+(see #11 below) — the direct-submission test didn't exercise the adapter's
+own upload code path, only a manually-built prompt.
+
+### 11. LTX audio upload dropped its subfolder, `LoadAudio` couldn't find the file
+
+**Symptom:** running the real job through the fixed workflow (#10) hit a new
+400: `Custom validation failed for node: audio - Invalid audio file:
+e3befa6476c1.wav`.
+
+**Root cause:** `ltx_adapter.py`'s `_upload_audio()` uploads to ComfyUI with
+`subfolder="audio"` (so the physical file lands at `input/audio/<name>`),
+but only returned `resp.json()["name"]` (the bare filename) — discarding
+`resp.json()["subfolder"]`. The workflow's `LoadAudio` node then referenced
+just `"e3befa6476c1.wav"`, which ComfyUI resolves relative to `input/`'s
+root, not `input/audio/` — file not found, rejected as invalid.
+`_upload_image()` doesn't have this bug since it never sets a subfolder in
+the first place (uploads to `input/`'s root, where the bare name is correct).
+
+**Fix:** `_upload_audio()` now returns `f"{subfolder}/{name}"` when a
+subfolder is present, matching the same `"subfolder/filename"` convention
+already used for images with subfolders (verified directly against
+ComfyUI's actual upload response shape via a raw `curl`).
+
+**Status:** ✅ Fixed. Re-running the real job to confirm.
