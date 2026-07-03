@@ -182,6 +182,19 @@
 </div>
 {% endif %}
 
+<!-- ── Transcript ────────────────────────────────────────────────────── -->
+{% set show_transcript = 'transcribe' in (job.completed_phases or []) or (job.phase == 'transcribe' and status == 'completed') %}
+{% if show_transcript %}
+<div class="card" id="transcript-card">
+  <div class="flex justify-between items-center" style="margin-bottom:10px">
+    <div class="card-title mt-0">Transcript</div>
+    <button class="btn btn-sm" style="font-size:12px;padding:3px 10px"
+            onclick="toggleTranscript(this)">Show</button>
+  </div>
+  <div id="transcript-body" style="display:none"></div>
+</div>
+{% endif %}
+
 <!-- ── Events feed ──────────────────────────────────────────────────── -->
 <div class="card">
   <div class="flex justify-between items-center" style="margin-bottom:14px">
@@ -242,6 +255,40 @@
 
 {% block scripts %}
 <script>
+async function toggleTranscript(btn) {
+  const body = document.getElementById('transcript-body');
+  const open = body.style.display === 'none';
+  btn.textContent = open ? 'Hide' : 'Show';
+  body.style.display = open ? 'block' : 'none';
+  if (open && !body.dataset.loaded) {
+    body.innerHTML = '<p class="text-muted" style="font-size:13px;padding:6px 0">Loading…</p>';
+    const jobId = document.getElementById('job-detail-root')?.dataset.jobId;
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/transcript`);
+      const data = await res.json();
+      const t = data.transcript;
+      if (!t || !t.segments?.length) {
+        body.innerHTML = '<p class="text-muted" style="font-size:13px;padding:6px 0">No transcript data available yet.</p>';
+        return;
+      }
+      const lang = t.language ? `<span class="text-muted" style="font-size:12px">lang: ${t.language}</span>` : '';
+      const dur = t.duration ? `<span class="text-muted" style="font-size:12px;margin-left:10px">${t.duration}s</span>` : '';
+      const rows = t.segments.map(s =>
+        `<tr><td class="td-mono td-muted">${s.start.toFixed(1)}s</td><td class="td-mono td-muted">${s.end.toFixed(1)}s</td><td>${s.text}</td></tr>`
+      ).join('');
+      body.innerHTML = `
+        <div style="margin-bottom:8px">${lang}${dur}</div>
+        <div class="table-wrap" style="max-height:340px;overflow-y:auto">
+          <table><thead><tr><th style="width:64px">Start</th><th style="width:64px">End</th><th>Text</th></tr></thead>
+          <tbody>${rows}</tbody></table>
+        </div>`;
+      body.dataset.loaded = '1';
+    } catch (err) {
+      body.innerHTML = `<p class="text-muted" style="font-size:13px;color:var(--red)">Error: ${err.message}</p>`;
+    }
+  }
+}
+
 function toggleEvDetail(row) {
   const detail = row.nextElementSibling;
   if (!detail || !detail.classList.contains('ev-detail')) return;

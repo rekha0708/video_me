@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from core.config import AppConfig, load_app_config
+from core.storage import create_artifact_store
 from core.models.dashboard import (
     ChatRequest,
     CreateDashboardJobRequest,
@@ -79,6 +80,7 @@ def create_app(
 
     config = config_loader()
     repo = repository or _make_repository(config)
+    artifact_store = create_artifact_store(config.settings)
 
     app = FastAPI(title="video_me Dashboard API", version="0.1.0")
 
@@ -299,6 +301,29 @@ def create_app(
         return _base_response(
             {"items": [artifact.model_dump(mode="json") for artifact in artifacts]}
         )
+
+    @app.get("/api/jobs/{job_id}/transcript")
+    def get_transcript(job_id: str) -> dict[str, Any]:
+        if repo.get_job(job_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "JOB_NOT_FOUND", "message": f"Job not found: {job_id}", "retryable": False},
+            )
+        data = artifact_store.get_json(job_id, "transcribe")
+        if data is None:
+            return _base_response({"transcript": None, "message": "Transcript artifact not yet available."})
+        segments = data.get("segments", [])
+        return _base_response({
+            "transcript": {
+                "language": data.get("language", ""),
+                "full_text": data.get("full_text", ""),
+                "duration": round(segments[-1]["end"], 1) if segments else 0,
+                "segments": [
+                    {"start": s["start"], "end": s["end"], "text": s["text"]}
+                    for s in segments
+                ],
+            }
+        })
 
     @app.post("/api/jobs/{job_id}/cancel")
     def cancel_job(
