@@ -299,6 +299,7 @@ def _make_job_context(
     rights_cleared: bool,
     config: AppConfig,
     *,
+    job_id: str | None = None,
     approval_overrides: dict | None = None,
 ) -> _JobContext:
     """Create stores, job record, work directory, and adapters for one run."""
@@ -306,12 +307,15 @@ def _make_job_context(
     artifact_store = create_artifact_store(settings)
     job_store = create_job_store(settings)
 
-    job = Job(
+    job_kwargs: dict[str, Any] = dict(
         source_url=source_url,
         channel_profile_ref=config.channel_profile.id,
         cast_ref=config.cast.id,
         rights_cleared=rights_cleared,
     )
+    if job_id:
+        job_kwargs["job_id"] = job_id
+    job = Job(**job_kwargs)
     job.status = JobStatus.RUNNING
     job_store.save_job(job)
     log_event(logger, "job_started", job_id=job.job_id, source_url=source_url)
@@ -1018,6 +1022,7 @@ async def run_pipeline_job(
     app_config: AppConfig | None = None,
     options: RunOptions | None = None,
     resume_job_id: str | None = None,
+    job_id: str | None = None,
     target_language: str | None = None,
     approval_overrides: dict | None = None,
 ) -> Job:
@@ -1063,7 +1068,9 @@ async def run_pipeline_job(
             _restore_job_context(resume_job_id, config)
             if resume_job_id
             else _make_job_context(
-                source_url, rights_cleared, config, approval_overrides=approval_overrides
+                source_url, rights_cleared, config,
+                job_id=job_id,
+                approval_overrides=approval_overrides,
             )
         )
         last_job = await _run_single_language_job(ctx, lang_opts)
