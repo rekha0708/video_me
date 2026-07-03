@@ -203,9 +203,57 @@
   <div class="flex justify-between items-center" style="margin-bottom:10px">
     <div class="card-title mt-0">Transcript</div>
     <button class="btn btn-sm" style="font-size:12px;padding:3px 10px"
-            onclick="toggleTranscript(this)">Show</button>
+            onclick="toggleArtifactCard('transcript', this)">Show</button>
   </div>
   <div id="transcript-body" style="display:none"></div>
+</div>
+{% endif %}
+
+<!-- ── Script / Storyboard / Rendered Images / Final Video ─────────────── -->
+{% set phase_order = ['transcribe', 'script_plan', 'render', 'assemble'] %}
+{% set completed_set = job.completed_phases or [] %}
+{% set current_idx = phase_order.index(job.phase) if job.phase in phase_order else -1 %}
+{% set show_script = 'script_plan' in completed_set or current_idx >= 1 %}
+{% set show_renders = 'render' in completed_set or current_idx >= 2 %}
+{% set show_video = 'assemble' in completed_set or current_idx >= 3 %}
+
+{% if show_script %}
+<div class="card" id="script-card">
+  <div class="flex justify-between items-center" style="margin-bottom:10px">
+    <div class="card-title mt-0">Script</div>
+    <button class="btn btn-sm" style="font-size:12px;padding:3px 10px"
+            onclick="toggleArtifactCard('script', this)">Show</button>
+  </div>
+  <div id="script-body" style="display:none"></div>
+</div>
+
+<div class="card" id="plan-card">
+  <div class="flex justify-between items-center" style="margin-bottom:10px">
+    <div class="card-title mt-0">Storyboard / Plan</div>
+    <button class="btn btn-sm" style="font-size:12px;padding:3px 10px"
+            onclick="toggleArtifactCard('plan', this)">Show</button>
+  </div>
+  <div id="plan-body" style="display:none"></div>
+</div>
+{% endif %}
+
+{% if show_renders %}
+<div class="card" id="renders-card">
+  <div class="flex justify-between items-center" style="margin-bottom:10px">
+    <div class="card-title mt-0">Rendered Images</div>
+    <button class="btn btn-sm" style="font-size:12px;padding:3px 10px"
+            onclick="toggleArtifactCard('renders', this)">Show</button>
+  </div>
+  <div id="renders-body" style="display:none"></div>
+</div>
+{% endif %}
+
+{% if show_video %}
+<div class="card" id="video-card">
+  <div class="card-title mt-0" style="margin-bottom:10px">Final Video</div>
+  <div id="video-body">
+    <p class="text-muted" style="font-size:13px">Loading…</p>
+  </div>
 </div>
 {% endif %}
 
@@ -269,8 +317,81 @@
 
 {% block scripts %}
 <script>
-async function toggleTranscript(btn) {
-  const body = document.getElementById('transcript-body');
+const ARTIFACT_RENDERERS = {
+  transcript: (data) => {
+    const t = data.transcript;
+    if (!t || !t.segments?.length) return '<p class="text-muted" style="font-size:13px;padding:6px 0">No transcript data available yet.</p>';
+    const lang = t.language ? `<span class="text-muted" style="font-size:12px">lang: ${t.language}</span>` : '';
+    const dur = t.duration ? `<span class="text-muted" style="font-size:12px;margin-left:10px">${t.duration}s</span>` : '';
+    const rows = t.segments.map(s =>
+      `<tr><td class="td-mono td-muted">${s.start.toFixed(1)}s</td><td class="td-mono td-muted">${s.end.toFixed(1)}s</td><td>${s.text}</td></tr>`
+    ).join('');
+    return `
+      <div style="margin-bottom:8px">${lang}${dur}</div>
+      <div class="table-wrap" style="max-height:340px;overflow-y:auto">
+        <table><thead><tr><th style="width:64px">Start</th><th style="width:64px">End</th><th>Text</th></tr></thead>
+        <tbody>${rows}</tbody></table>
+      </div>`;
+  },
+  script: (data) => {
+    const s = data.script;
+    if (!s || !s.scenes?.length) return '<p class="text-muted" style="font-size:13px;padding:6px 0">Script not yet available.</p>';
+    const obj = s.learning_objective || {};
+    const header = obj.success_phrase
+      ? `<div class="text-muted" style="font-size:12px;margin-bottom:10px">Learning objective: "${obj.success_phrase}"</div>` : '';
+    const scenes = s.scenes.map((scene, i) => {
+      const lines = (scene.lines || []).map(l =>
+        `<div style="margin:4px 0"><span class="td-mono" style="color:var(--blue);font-size:12px">${l.speaker}:</span> ${l.text}</div>`
+      ).join('');
+      return `
+        <div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--border)">
+          <div style="font-weight:600;font-size:13px;margin-bottom:4px">Scene ${i + 1} — ${scene.setting}</div>
+          ${lines}
+        </div>`;
+    }).join('');
+    return `${header}<div style="max-height:400px;overflow-y:auto">${scenes}</div>
+      ${s.caption_text ? `<div class="text-muted" style="font-size:12px;margin-top:8px">Caption: ${s.caption_text}</div>` : ''}`;
+  },
+  plan: (data) => {
+    const shots = data.plan?.shots;
+    if (!shots?.length) return '<p class="text-muted" style="font-size:13px;padding:6px 0">Storyboard not yet available.</p>';
+    const rows = shots.map(sh =>
+      `<tr><td class="td-mono">${sh.shot_id}</td><td>${sh.setting}</td><td>${sh.action}</td>
+        <td class="td-muted">${(sh.characters_on_screen || []).join(', ')}</td>
+        <td class="td-muted">${sh.duration_sec}s</td></tr>`
+    ).join('');
+    return `
+      <div class="table-wrap" style="max-height:400px;overflow-y:auto">
+        <table><thead><tr><th>Shot</th><th>Setting</th><th>Action</th><th>Chars</th><th>Dur</th></tr></thead>
+        <tbody>${rows}</tbody></table>
+      </div>`;
+  },
+  renders: (data) => {
+    const shots = data.shots;
+    if (!shots?.length) return '<p class="text-muted" style="font-size:13px;padding:6px 0">No rendered images yet.</p>';
+    return shots.map(sh => {
+      if (!sh.candidate_paths_b64?.length) {
+        return `<div style="margin-bottom:16px"><div style="font-weight:600;margin-bottom:6px">${sh.shot_id} — ${sh.setting}</div>
+          <p class="text-muted" style="font-size:12px">No images rendered yet.</p></div>`;
+      }
+      const cards = sh.candidate_paths_b64.map((p, i) => `
+        <div class="candidate-card${i === sh.winner_index ? ' selected' : ''}">
+          <img src="/img/${p}" alt="candidate ${i}" loading="lazy" onerror="this.style.display='none'">
+          <div class="cand-label">#${i + 1}${i === sh.winner_index ? ' ★ picked' : ''}</div>
+        </div>`).join('');
+      return `
+        <div style="margin-bottom:20px">
+          <div style="font-weight:600;margin-bottom:2px">${sh.shot_id} — ${sh.setting}</div>
+          <div class="text-muted text-sm" style="margin-bottom:8px">${sh.action}</div>
+          <div class="candidates-grid">${cards}</div>
+          ${sh.reasoning ? `<div class="text-muted" style="font-size:12px;margin-top:6px">${sh.reasoning}</div>` : ''}
+        </div>`;
+    }).join('');
+  },
+};
+
+async function toggleArtifactCard(kind, btn) {
+  const body = document.getElementById(`${kind}-body`);
   const open = body.style.display === 'none';
   btn.textContent = open ? 'Hide' : 'Show';
   body.style.display = open ? 'block' : 'none';
@@ -278,29 +399,38 @@ async function toggleTranscript(btn) {
     body.innerHTML = '<p class="text-muted" style="font-size:13px;padding:6px 0">Loading…</p>';
     const jobId = document.getElementById('job-detail-root')?.dataset.jobId;
     try {
-      const res = await fetch(`/api/jobs/${jobId}/transcript`);
+      const res = await fetch(`/api/jobs/${jobId}/${kind}`);
       const data = await res.json();
-      const t = data.transcript;
-      if (!t || !t.segments?.length) {
-        body.innerHTML = '<p class="text-muted" style="font-size:13px;padding:6px 0">No transcript data available yet.</p>';
-        return;
-      }
-      const lang = t.language ? `<span class="text-muted" style="font-size:12px">lang: ${t.language}</span>` : '';
-      const dur = t.duration ? `<span class="text-muted" style="font-size:12px;margin-left:10px">${t.duration}s</span>` : '';
-      const rows = t.segments.map(s =>
-        `<tr><td class="td-mono td-muted">${s.start.toFixed(1)}s</td><td class="td-mono td-muted">${s.end.toFixed(1)}s</td><td>${s.text}</td></tr>`
-      ).join('');
-      body.innerHTML = `
-        <div style="margin-bottom:8px">${lang}${dur}</div>
-        <div class="table-wrap" style="max-height:340px;overflow-y:auto">
-          <table><thead><tr><th style="width:64px">Start</th><th style="width:64px">End</th><th>Text</th></tr></thead>
-          <tbody>${rows}</tbody></table>
-        </div>`;
+      body.innerHTML = ARTIFACT_RENDERERS[kind](data);
       body.dataset.loaded = '1';
     } catch (err) {
       body.innerHTML = `<p class="text-muted" style="font-size:13px;color:var(--red)">Error: ${err.message}</p>`;
     }
   }
+}
+
+async function loadVideoCard() {
+  const body = document.getElementById('video-body');
+  if (!body) return;
+  const jobId = document.getElementById('job-detail-root')?.dataset.jobId;
+  try {
+    const res = await fetch(`/api/jobs/${jobId}/video`);
+    const data = await res.json();
+    if (!data.available) {
+      body.innerHTML = '<p class="text-muted" style="font-size:13px">Final video not assembled yet.</p>';
+      return;
+    }
+    body.innerHTML = `
+      <video controls preload="metadata" style="max-width:360px;width:100%;border-radius:8px;display:block">
+        <source src="/img/${data.path_b64}" type="video/mp4">
+        Your browser does not support video playback.
+      </video>`;
+  } catch (err) {
+    body.innerHTML = `<p class="text-muted" style="font-size:13px;color:var(--red)">Error: ${err.message}</p>`;
+  }
+}
+if (document.getElementById('video-card')) {
+  loadVideoCard();
 }
 
 function toggleEvDetail(row) {

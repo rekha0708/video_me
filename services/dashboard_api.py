@@ -325,6 +325,100 @@ def create_app(
             }
         })
 
+    @app.get("/api/jobs/{job_id}/script")
+    def get_script(job_id: str) -> dict[str, Any]:
+        if repo.get_job(job_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "JOB_NOT_FOUND", "message": f"Job not found: {job_id}", "retryable": False},
+            )
+        data = artifact_store.get_json(job_id, "adapt_script")
+        if data is None:
+            return _base_response({"script": None, "message": "Script not yet available."})
+        return _base_response({
+            "script": {
+                "mode": data.get("mode", ""),
+                "learning_objective": data.get("learning_objective", {}),
+                "caption_text": data.get("caption_text", ""),
+                "scenes": data.get("scenes", []),
+            }
+        })
+
+    @app.get("/api/jobs/{job_id}/plan")
+    def get_plan(job_id: str) -> dict[str, Any]:
+        if repo.get_job(job_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "JOB_NOT_FOUND", "message": f"Job not found: {job_id}", "retryable": False},
+            )
+        data = artifact_store.get_json(job_id, "plan_shots")
+        if data is None:
+            return _base_response({"plan": None, "message": "Storyboard not yet available."})
+        return _base_response({"plan": {"shots": data.get("shots", [])}})
+
+    @app.get("/api/jobs/{job_id}/renders")
+    def get_renders(job_id: str) -> dict[str, Any]:
+        import base64
+
+        if repo.get_job(job_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "JOB_NOT_FOUND", "message": f"Job not found: {job_id}", "retryable": False},
+            )
+        storyboard_data = artifact_store.get_json(job_id, "plan_shots")
+        if storyboard_data is None:
+            return _base_response({"shots": [], "message": "Storyboard not yet available."})
+
+        work_dir = Path(config.settings.data_dir) / "jobs" / job_id
+        shots_out: list[dict[str, Any]] = []
+        for shot in storyboard_data.get("shots", []):
+            shot_id = shot.get("shot_id", "")
+            speakers = shot.get("characters_on_screen") or []
+            speaker_id = speakers[0] if speakers else None
+
+            candidate_uris: list[str] = []
+            if speaker_id:
+                render_dir = work_dir / "renders" / speaker_id
+                candidate_uris = [
+                    base64.urlsafe_b64encode(str(p).encode()).decode()
+                    for p in sorted(render_dir.glob("render_??.png"))
+                ]
+
+            winner_index = None
+            reasoning = ""
+            critique_path = work_dir / "critique" / f"{shot_id}.json"
+            if critique_path.exists():
+                critique_data = json.loads(critique_path.read_text())
+                winner_index = critique_data.get("winner_index")
+                reasoning = critique_data.get("overall_reasoning", "")
+
+            shots_out.append({
+                "shot_id": shot_id,
+                "speaker": speaker_id,
+                "setting": shot.get("setting", ""),
+                "action": shot.get("action", ""),
+                "candidate_paths_b64": candidate_uris,
+                "winner_index": winner_index,
+                "reasoning": reasoning,
+            })
+        return _base_response({"shots": shots_out})
+
+    @app.get("/api/jobs/{job_id}/video")
+    def get_video(job_id: str) -> dict[str, Any]:
+        import base64
+
+        if repo.get_job(job_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "JOB_NOT_FOUND", "message": f"Job not found: {job_id}", "retryable": False},
+            )
+        work_dir = Path(config.settings.data_dir) / "jobs" / job_id
+        video_path = work_dir / "assembled" / "final.mp4"
+        if not video_path.exists():
+            return _base_response({"available": False})
+        encoded = base64.urlsafe_b64encode(str(video_path).encode()).decode()
+        return _base_response({"available": True, "path_b64": encoded})
+
     @app.post("/api/jobs/{job_id}/cancel")
     def cancel_job(
         job_id: str,
