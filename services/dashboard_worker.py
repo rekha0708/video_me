@@ -349,8 +349,8 @@ class DashboardWorker:
         deadline = datetime.now(timezone.utc) + timedelta(hours=self._TRANSCRIPT_REVIEW_TIMEOUT_HOURS)
         while datetime.now(timezone.utc) < deadline:
             await asyncio.sleep(self._TRANSCRIPT_REVIEW_POLL_INTERVAL)
-            current = self.repo.get_pending_approval(job_id)
-            if current is None or current.approval_id != approval_id:
+            current = self.repo.get_approval(approval_id)
+            if current is None:
                 continue
             if current.status == DashboardApprovalStatus.APPROVED:
                 return (True, "")

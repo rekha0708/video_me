@@ -616,6 +616,20 @@ class DashboardRepository:
             ).fetchone()
         return self._approval_from_row(row) if row else None
 
+    def get_approval(self, approval_id: str) -> DashboardApprovalRequest | None:
+        """Fetch a specific approval request regardless of its status.
+
+        Unlike get_pending_approval(), this does not filter on status=pending —
+        callers polling for a decision on an approval they created need to see
+        it flip to approved/rejected, not have it disappear from the query.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM approval_requests WHERE approval_id = ?",
+                (approval_id,),
+            ).fetchone()
+        return self._approval_from_row(row) if row else None
+
     def record_artifact(
         self,
         job_id: str,

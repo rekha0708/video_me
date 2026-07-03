@@ -124,7 +124,7 @@ class DashboardPlanApprovalAdapter:
         while _utc_now() < deadline:
             await asyncio.sleep(self._poll_interval)
 
-            current = self._repo.get_pending_approval(self._job_id)
+            current = self._repo.get_approval(approval.approval_id)
             if current is None:
                 # Approval was removed (shouldn't happen in normal flow).
                 continue

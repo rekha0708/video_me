@@ -1,0 +1,18 @@
+---
+name: feedback-dashboard-worker
+description: Dashboard worker operational gotchas — restart-after-pull, approval-polling bug class, retry endpoint
+metadata:
+  type: feedback
+---
+
+**The dashboard worker (`services.dashboard_worker`) never auto-reloads.** Unlike the API server (`--reload`), it's a plain long-running process — a `git pull` or local code edit has zero effect on it until it's killed and relaunched. Always run `bash scripts/restart_dashboard.sh` after pulling or editing anything under `core/`, `adapters/`, or `services/dashboard_*.py`. **Restarting the worker orphans ANY job it's currently handling** — mid-stage (rendering) or mid-poll (waiting on an approval), doesn't matter, both leave the job's queue action stuck `status=claimed` with no reclaim mechanism (see below). Only restart the worker when nothing is actively running/pending, or accept you'll need the manual DB-reset recovery.
+
+**Only touched `services/dashboard_api.py` or a template?** Don't restart the worker at all — the API server already has `--reload` and picks it up automatically. Only restart the worker for changes under `core/`, `adapters/`, or `services/dashboard_worker.py` itself.
+
+**Why:** [[project_video_me]] — confirmed 2026-07-03 when a pulled fix for phase-chaining sat unused for ~5 minutes because the already-running worker kept executing pre-pull code, and again later the same day when an unnecessary worker restart (for an API-only change) orphaned a job sitting at `pending_image_approval`.
+
+**If a restart doesn't seem to take effect, check for a zombie holding the port before assuming the fix is wrong.** `--reload`'s reloader can leak an orphaned child (e.g. a `multiprocessing.spawn` tracker) that keeps the listening socket but whose cmdline no longer contains `"uvicorn services.dashboard_api"` — `pgrep -f` in `stop_matching()` then never finds it, and it silently keeps serving stale code forever, while new start attempts fail in the background with `[Errno 98] Address already in use` (curl still gets 200s — from the zombie). Check `ss -ltnp | grep <port>` for the actual PID. `scripts/restart_dashboard.sh` now also kills by port (`stop_port()`) as a second layer, but if you ever bypass that script and restart manually, check for this.
+
+**Approval polling had a real bug class, now fixed**: `DashboardRepository.get_pending_approval(job_id)` filters `WHERE status='pending'` in SQL — the instant an approval is resolved (approved/rejected), it vanishes from that query. Three separate poll loops used to call this to check for a decision on an approval they'd already created (`dashboard_approval_adapter.py`, `dashboard_image_approval_adapter.py`, `dashboard_worker.py`'s transcript review gate) — meaning a resolved approval was invisible to the poller, and the job hung silently until a 4h timeout. Fixed by adding `get_approval(approval_id)` (fetches by ID regardless of status) and switching all three loops to it. If you add a new approval gate, poll with `get_approval(approval_id)`, never `get_pending_approval`.
+
+**Retry endpoint**: `POST /api/jobs/{id}/retry` re-queues a `failed` job for the SAME phase (not the next one, unlike `/advance`). Works because `script_plan`/`render`/`assemble` already skip any stage whose artifact JSON exists on disk — so retry picks up right after the last stage that actually succeeded, it doesn't redo the whole phase. Only accepts `status=failed`; a job orphaned by a worker restart (stuck in `pending_*_approval` or `running` with no live task) needs a manual DB reset first (bump `queue_id` via `enqueue_action` + `update_job_status(QUEUED)`), there's no self-service recovery for that yet.
