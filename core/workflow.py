@@ -424,7 +424,6 @@ async def _render_shot_candidates(
             )
         )
 
-    # Store candidate URIs on the critique result so the approval gate can serve them.
     shot_prompt = f"{speaker.name} ({speaker.visual_descriptor}) in {shot.setting}; action: {shot.action}"
     critique = await adapters.image_critique.run(
         ImageCritiqueRequest(
@@ -434,8 +433,6 @@ async def _render_shot_candidates(
             cast_descriptor=speaker.visual_descriptor,
         )
     )
-    # Attach candidate list so the approval adapter can serve them.
-    critique.candidate_uris = render_result.images  # type: ignore[attr-defined]
     return critique
 
 

@@ -40,19 +40,15 @@ def _build_request_payload(req: ImageApprovalRequest) -> dict[str, Any]:
             "shot_id": getattr(shot, "shot_id", ""),
             "setting": getattr(shot, "setting", ""),
             "action": getattr(shot, "action", ""),
-            "candidate_uris": critique.candidate_scores
-            and [s.uri for s in critique.candidate_scores]
-            or [],
+            "candidate_uris": critique.candidate_uris,
             "vlm_winner_index": critique.winner_index,
             "vlm_winner_uri": critique.winner_uri,
             "overall_reasoning": critique.overall_reasoning,
             "candidate_scores": [
                 {
-                    "uri": s.uri,
-                    "character_likeness": s.character_likeness,
-                    "scene_match": s.scene_match,
-                    "composition": s.composition,
-                    "overall": s.overall,
+                    "candidate_index": s.candidate_index,
+                    "scores": s.scores,
+                    "reasoning": s.reasoning,
                 }
                 for s in (critique.candidate_scores or [])
             ],
@@ -114,7 +110,7 @@ class DashboardImageApprovalAdapter:
         while _utc_now() < deadline:
             await asyncio.sleep(self._poll_interval)
 
-            current = self._repo.get_pending_approval(self._job_id)
+            current = self._repo.get_approval(approval.approval_id)
             if current is None:
                 continue
 
@@ -134,9 +130,9 @@ class DashboardImageApprovalAdapter:
                         shot_id = getattr(shot, "shot_id", str(shot_idx))
                         if shot_id in raw_picks:
                             chosen_idx = int(raw_picks[shot_id])
-                            scores = critique.candidate_scores or []
-                            if 0 <= chosen_idx < len(scores):
-                                approved_uris[shot_idx] = scores[chosen_idx].uri
+                            uris = critique.candidate_uris or []
+                            if 0 <= chosen_idx < len(uris):
+                                approved_uris[shot_idx] = uris[chosen_idx]
                                 if chosen_idx != critique.winner_index:
                                     overrides[shot_id] = chosen_idx
 

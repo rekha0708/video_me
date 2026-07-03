@@ -202,7 +202,9 @@ class VlmImageCritiqueAdapter(CritiqueImages):
                 data = json.loads(repair_json(cleaned))
             except Exception:
                 logger.warning("image_critique: could not parse VLM response — defaulting to candidate 0")
-                return ImageCritiqueResult(winner_index=0, winner_uri=candidate_uris[0])
+                return ImageCritiqueResult(
+                    winner_index=0, winner_uri=candidate_uris[0], candidate_uris=candidate_uris
+                )
 
         winner_index = int(data.get("winner_index", 0))
         winner_index = max(0, min(winner_index, len(candidate_uris) - 1))
@@ -219,6 +221,7 @@ class VlmImageCritiqueAdapter(CritiqueImages):
         return ImageCritiqueResult(
             winner_index=winner_index,
             winner_uri=candidate_uris[winner_index],
+            candidate_uris=candidate_uris,
             candidate_scores=candidate_scores,
             overall_reasoning=data.get("overall_reasoning", ""),
         )

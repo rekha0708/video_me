@@ -143,6 +143,7 @@ class ImageCritiqueRequest(BaseModel):
 class ImageCritiqueResult(BaseModel):
     winner_index: int         # 0-based into candidate_uris
     winner_uri: str
+    candidate_uris: list[str] = Field(default_factory=list)  # so approval gates can serve all candidates
     candidate_scores: list[ImageCandidateScore] = Field(default_factory=list)
     overall_reasoning: str = ""
 
