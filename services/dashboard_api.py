@@ -512,6 +512,57 @@ def create_app(
             "status": DashboardJobStatus.QUEUED.value,
         })
 
+    @app.post("/api/jobs/{job_id}/retry")
+    def retry_job(
+        job_id: str,
+        _: None = Depends(require_write_auth),
+    ) -> dict[str, Any]:
+        """Re-queue a failed job for the SAME phase it was on.
+
+        script_plan/render/assemble already resume from cached per-stage
+        artifacts (see core/workflow.py's `_stage()` helper), so re-queuing
+        the same phase skips whatever already succeeded and picks up again
+        at the stage that failed — it does not restart the phase from
+        scratch.
+        """
+        job = repo.get_job(job_id)
+        if job is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "JOB_NOT_FOUND", "message": f"Job not found: {job_id}",
+                        "retryable": False},
+            )
+        if job.status != DashboardJobStatus.FAILED:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "JOB_NOT_FAILED",
+                    "message": f"Job must be in 'failed' status to retry (current: {job.status.value}).",
+                    "retryable": False,
+                },
+            )
+
+        retry_request = {**job.request, "phase": job.phase}
+
+        repo.update_job_status(job_id, DashboardJobStatus.QUEUED)
+        queue_item = repo.enqueue_action(
+            job_id,
+            DashboardQueueAction.RESUME,
+            payload=retry_request,
+        )
+        repo.record_event(
+            job_id,
+            "job_retried",
+            f"Job re-queued for phase '{job.phase}' after failure.",
+            payload={"phase": job.phase, "queue_id": queue_item.queue_id},
+        )
+        return _base_response({
+            "job_id": job_id,
+            "phase": job.phase,
+            "queue_id": queue_item.queue_id,
+            "status": DashboardJobStatus.QUEUED.value,
+        })
+
     # ------------------------------------------------------------------
     # Chat — Pipeline Assistant (per-job, persisted in SQLite)
     # ------------------------------------------------------------------

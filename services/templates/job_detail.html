@@ -97,6 +97,20 @@
     </span>
   </div>
   {% endif %}
+
+  {# Retry button — show when the current phase FAILED; re-queues the same phase,
+     which resumes from cached per-stage artifacts instead of starting over. #}
+  {% if status == 'failed' %}
+  <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+    <button class="btn btn-primary" id="retry-btn"
+            onclick="retryJob('{{ job.job_id }}', this)">
+      ↻ Retry phase '{{ job.phase }}'
+    </button>
+    <span class="text-muted" style="margin-left:10px;font-size:13px">
+      Re-queues this job for the same phase — stages that already completed are skipped.
+    </span>
+  </div>
+  {% endif %}
 </div>
 {% endif %}
 
@@ -318,6 +332,30 @@ async function advancePhase(jobId, btn) {
     if (res.ok) {
       const data = await res.json();
       btn.textContent = `Queued: ${data.to_phase} ✓`;
+      setTimeout(() => location.reload(), 800);
+    } else {
+      const data = await res.json();
+      alert("Error: " + (data.detail?.message || JSON.stringify(data)));
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  } catch (err) {
+    alert("Network error: " + err.message);
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+async function retryJob(jobId, btn) {
+  const label = btn.textContent;
+  if (!confirm(`Retry job ${jobId}?\n\nStages that already completed in this phase will be skipped.`)) return;
+  btn.disabled = true;
+  btn.textContent = "Queuing…";
+  try {
+    const res = await fetch(`/api/jobs/${jobId}/retry`, { method: "POST" });
+    if (res.ok) {
+      const data = await res.json();
+      btn.textContent = `Queued: ${data.phase} ✓`;
       setTimeout(() => location.reload(), 800);
     } else {
       const data = await res.json();
