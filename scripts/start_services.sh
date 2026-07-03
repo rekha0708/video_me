@@ -23,6 +23,11 @@ WORKSPACE="${WORKSPACE:-/workspace}"
 LOG_DIR="$WORKSPACE/logs"
 mkdir -p "$LOG_DIR"
 
+log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
+ok()  { printf '\033[0;32m  ✓ %s\033[0m\n' "$*"; }
+warn(){ printf '\033[0;33m  ! %s\033[0m\n' "$*"; }
+die() { printf '\033[0;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
+
 # ── Claude Code memory symlink ────────────────────────────────────────────────
 # /root/ is wiped on pod restart. Recreate the symlink so Claude Code memory
 # points at the persistent copy in /workspace/video_me/.claude/memory/.
@@ -36,11 +41,6 @@ if [[ ! -L "$CLAUDE_MEM_LINK" || "$(readlink "$CLAUDE_MEM_LINK")" != "$CLAUDE_ME
 else
   ok "Claude Code memory symlink OK"
 fi
-
-log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
-ok()  { printf '\033[0;32m  ✓ %s\033[0m\n' "$*"; }
-warn(){ printf '\033[0;33m  ! %s\033[0m\n' "$*"; }
-die() { printf '\033[0;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
 wait_for() {
   local name="$1" url="$2" tries="${3:-15}"
