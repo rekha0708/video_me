@@ -81,6 +81,43 @@ else
   ok "yt-dlp present: $(yt-dlp --version 2>&1 | head -1)"
 fi
 
+# Launches a background service; if it crashes immediately (import-time errors
+# surface in ~1-2s, long model loads don't), grep its own traceback for the
+# missing module, install it with the given pip, and retry once. This is a
+# generic safety net for individual packages that go missing from a venv or
+# system Python between pod restarts — seen so far with ComfyUI/sqlalchemy and
+# Fish S2 + Wan2.2/click, but the next one won't necessarily have the same name.
+launch_with_self_heal() {
+  local name="$1" log_file="$2"; shift 2
+  local -a pip_cmd=()
+  while [[ "$1" != "--" ]]; do pip_cmd+=("$1"); shift; done
+  shift # drop the --
+
+  "$@" >"$log_file" 2>&1 &
+  local pid=$!
+  sleep 3
+  if kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+
+  local missing
+  missing="$(grep -oP "ModuleNotFoundError: No module named '\K[^']+" "$log_file" 2>/dev/null | tail -1 || true)"
+  if [[ -z "$missing" ]]; then
+    return 0  # crashed for some other reason — let wait_for's timeout report it
+  fi
+
+  warn "$name crashed on missing module '$missing' — installing via '${pip_cmd[*]}' and retrying once"
+  "${pip_cmd[@]}" install -q "$missing" || warn "pip install $missing failed"
+  "$@" >"$log_file" 2>&1 &
+  pid=$!
+  sleep 3
+  if kill -0 "$pid" 2>/dev/null; then
+    ok "$name recovered after installing $missing"
+  else
+    warn "$name still failing after installing $missing — check $log_file"
+  fi
+}
+
 # ── Ollama ────────────────────────────────────────────────────────────────────
 # Ollama is installed into base Linux which is WIPED on RunPod pod restart.
 # Re-install if the binary is missing (models at /workspace/ollama persist fine).
@@ -109,8 +146,8 @@ if [[ ! -d "$COMFYUI_DIR" ]]; then
 elif curl -sf http://localhost:8188/ >/dev/null 2>&1; then
   ok "ComfyUI already responding"
 else
-  nohup python3 "$COMFYUI_DIR/main.py" --listen 0.0.0.0 --port 8188 \
-    >"$LOG_DIR/comfyui.log" 2>&1 &
+  launch_with_self_heal "ComfyUI" "$LOG_DIR/comfyui.log" python3 -m pip -- \
+    nohup python3 "$COMFYUI_DIR/main.py" --listen 0.0.0.0 --port 8188
   ok "ComfyUI starting (log: $LOG_DIR/comfyui.log) — takes ~30s to load"
 fi
 
@@ -126,8 +163,9 @@ elif curl -sf http://localhost:8025/health >/dev/null 2>&1; then
 else
   cd "$ROOT_DIR"
   FISH_SPEECH_DIR="$FISH_DIR" \
-  nohup "$FISH_VENV/bin/uvicorn" services.fish_s2_server:app \
-    --host 0.0.0.0 --port 8025 >"$LOG_DIR/fish_s2.log" 2>&1 &
+  launch_with_self_heal "Fish Audio S2" "$LOG_DIR/fish_s2.log" "$FISH_VENV/bin/pip" -- \
+    nohup "$FISH_VENV/bin/uvicorn" services.fish_s2_server:app \
+    --host 0.0.0.0 --port 8025
   ok "Fish Audio S2 starting (log: $LOG_DIR/fish_s2.log)"
 fi
 
@@ -165,8 +203,9 @@ elif curl -sf http://localhost:8020/health >/dev/null 2>&1; then
   ok "Chatterbox TTS already responding"
 else
   cd "$ROOT_DIR"
-  nohup "$WORKSPACE/.venv_chatterbox/bin/uvicorn" services.chatterbox_server:app \
-    --host 0.0.0.0 --port 8020 >"$LOG_DIR/chatterbox.log" 2>&1 &
+  launch_with_self_heal "Chatterbox TTS" "$LOG_DIR/chatterbox.log" "$WORKSPACE/.venv_chatterbox/bin/pip" -- \
+    nohup "$WORKSPACE/.venv_chatterbox/bin/uvicorn" services.chatterbox_server:app \
+    --host 0.0.0.0 --port 8020
   ok "Chatterbox TTS starting (log: $LOG_DIR/chatterbox.log)"
 fi
 
@@ -181,8 +220,9 @@ else
   # wan package is installed as an editable package in .venv_wan so WAN_DIR is
   # only needed as an existence guard; use the inner repo dir so the path check passes.
   WAN_DIR="$WORKSPACE/Wan2.2/Wan2.2" WAN_MODEL_DIR="$WORKSPACE/Wan2.2-I2V-A14B" \
-  nohup "$WORKSPACE/.venv_wan/bin/uvicorn" services.wan_server:app \
-    --host 0.0.0.0 --port 8030 >"$LOG_DIR/wan.log" 2>&1 &
+  launch_with_self_heal "Wan2.2" "$LOG_DIR/wan.log" "$WORKSPACE/.venv_wan/bin/pip" -- \
+    nohup "$WORKSPACE/.venv_wan/bin/uvicorn" services.wan_server:app \
+    --host 0.0.0.0 --port 8030
   ok "Wan2.2 starting (log: $LOG_DIR/wan.log)"
 fi
 
@@ -196,8 +236,9 @@ else
   cd "$ROOT_DIR"
   MUSETALK_DIR="$WORKSPACE/MuseTalk" \
   PYTHONPATH="$WORKSPACE/MuseTalk${PYTHONPATH:+:$PYTHONPATH}" \
-  nohup "$WORKSPACE/.venv_musetalk/bin/uvicorn" services.musetalk_server:app \
-    --host 0.0.0.0 --port 8040 >"$LOG_DIR/musetalk.log" 2>&1 &
+  launch_with_self_heal "MuseTalk" "$LOG_DIR/musetalk.log" "$WORKSPACE/.venv_musetalk/bin/pip" -- \
+    nohup "$WORKSPACE/.venv_musetalk/bin/uvicorn" services.musetalk_server:app \
+    --host 0.0.0.0 --port 8040
   ok "MuseTalk starting (log: $LOG_DIR/musetalk.log)"
 fi
 
