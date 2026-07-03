@@ -420,6 +420,7 @@ setup_musubi_tuner() {
 
   local musubi_dir="$WORKSPACE/musubi-tuner"
   local text_enc_dir="$WORKSPACE/FLUX2-text-encoder"
+  local venv_dir="$WORKSPACE/.venv_musubi"
 
   # Clone / update musubi-tuner
   if [[ ! -d "$musubi_dir" ]]; then
@@ -429,14 +430,28 @@ setup_musubi_tuner() {
     run git -C "$musubi_dir" pull --ff-only || warn "git pull failed — continuing"
   fi
 
-  # Install training dependencies into system Python (same env that runs training)
-  run pip3 install accelerate hf_transfer flash-attn --no-build-isolation || \
+  # Dedicated venv (inherits system torch via --system-site-packages, same pattern
+  # as .venv_wan/.venv_fish_s2/.venv_musetalk). musubi_flux_adapter.py invokes
+  # this venv's python directly — NOT system pip3/python. A prior version of this
+  # script installed musubi-tuner into system Python, which silently vanished on a
+  # pod restart (same class of loss as Ollama's binary); an isolated venv under
+  # /workspace survives restarts and isn't at the mercy of system-wide package churn.
+  if [[ ! -d "$venv_dir" ]]; then
+    log "Creating $venv_dir (system-site-packages for torch 2.8.0+cu128)"
+    run python3 -m venv --system-site-packages "$venv_dir"
+  else
+    ok "musubi-tuner venv already exists at $venv_dir"
+  fi
+
+  local pip="$venv_dir/bin/pip"
+  run "$pip" install --upgrade pip
+  run "$pip" install accelerate hf_transfer flash-attn --no-build-isolation || \
       warn "flash-attn build failed — training will be slower without it"
-  run pip3 install -e "$musubi_dir" || warn "musubi-tuner install failed"
+  run "$pip" install -e "$musubi_dir" || warn "musubi-tuner install failed"
 
   # Configure accelerate for single-GPU bf16
   if [[ "$DRY_RUN" == "0" ]]; then
-    accelerate config default --mixed_precision bf16 2>/dev/null || true
+    "$venv_dir/bin/accelerate" config default --mixed_precision bf16 2>/dev/null || true
   fi
 
   # ── Mistral 3 text encoder (~45 GB, 10 shards) ───────────────────────────
@@ -464,14 +479,14 @@ setup_musubi_tuner() {
   ok "musubi-tuner setup complete"
   ok "LoRA training commands (run from $ROOT_DIR):"
   ok "  # Pre-cache (once per dataset, fast):"
-  ok "  python $musubi_dir/src/musubi_tuner/flux_2_cache_latents.py \\"
+  ok "  $venv_dir/bin/python $musubi_dir/src/musubi_tuner/flux_2_cache_latents.py \\"
   ok "    --dataset_config assets/kids_duo/training/musubi_dataset_max.toml \\"
   ok "    --vae $WORKSPACE/ComfyUI/models/diffusion_models/ae.safetensors --model_version dev"
-  ok "  python $musubi_dir/src/musubi_tuner/flux_2_cache_text_encoder_outputs.py \\"
+  ok "  $venv_dir/bin/python $musubi_dir/src/musubi_tuner/flux_2_cache_text_encoder_outputs.py \\"
   ok "    --dataset_config assets/kids_duo/training/musubi_dataset_max.toml \\"
   ok "    --text_encoder $te_shard --batch_size 4 --model_version dev"
   ok "  # Train Max LoRA:"
-  ok "  accelerate launch $musubi_dir/src/musubi_tuner/flux_2_train_network.py \\"
+  ok "  $venv_dir/bin/accelerate launch $musubi_dir/src/musubi_tuner/flux_2_train_network.py \\"
   ok "    --model_version dev --dit $WORKSPACE/ComfyUI/models/diffusion_models/flux2-dev.safetensors \\"
   ok "    --vae $WORKSPACE/ComfyUI/models/diffusion_models/ae.safetensors \\"
   ok "    --text_encoder $te_shard \\"

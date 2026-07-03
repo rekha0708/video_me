@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import shutil
-import sys
 from pathlib import Path
 
 from core.capabilities.base import RenderCharacter
@@ -16,9 +15,16 @@ _LORA_EXTENSIONS = (".safetensors", ".pt", ".ckpt")
 _PLACEHOLDER_LORA_PREFIX = b"TEST-ONLY placeholder"
 
 _MUSUBI_SCRIPT = Path("/workspace/musubi-tuner/src/musubi_tuner/flux_2_generate_image.py")
+# Dedicated venv (python3 -m venv --system-site-packages) with musubi-tuner installed —
+# inherits system torch, isolated from the lightweight orchestration .venv (which must
+# not carry heavy ML deps). sys.executable would resolve to the orchestration venv,
+# where musubi_tuner is never installed.
+_MUSUBI_PYTHON = Path("/workspace/.venv_musubi/bin/python")
 _DIT = Path("/workspace/ComfyUI/models/diffusion_models/flux2-dev.safetensors")
 _VAE = Path("/workspace/ComfyUI/models/diffusion_models/ae.safetensors")
-_TEXT_ENCODER = Path("/workspace/FLUX2-text-encoder")
+_TEXT_ENCODER = Path(
+    "/workspace/FLUX2-text-encoder/text_encoder/model-00001-of-00010.safetensors"
+)
 
 
 def _is_placeholder_lora(path: Path) -> bool:
@@ -74,6 +80,8 @@ class MusubiFluxAdapter(RenderCharacter):
 
     async def health(self) -> HealthStatus:
         missing = []
+        if not _MUSUBI_PYTHON.exists():
+            missing.append(str(_MUSUBI_PYTHON))
         if not _MUSUBI_SCRIPT.exists():
             missing.append(str(_MUSUBI_SCRIPT))
         if not _DIT.exists():
@@ -144,8 +152,16 @@ class MusubiFluxAdapter(RenderCharacter):
         out_path: Path,
         seed: int,
     ) -> None:
+        # flux_2_generate_image.py treats --save_path as an output DIRECTORY and
+        # invents its own filename inside it (save_images_grid: "{time_flag}_{seed}_000.png")
+        # — it does not accept a literal target file path. Point it at a scratch
+        # dir per candidate, then move the single image it writes to out_path.
+        scratch_dir = out_path.parent / f"_scratch_{out_path.stem}"
+        shutil.rmtree(scratch_dir, ignore_errors=True)
+        scratch_dir.mkdir(parents=True, exist_ok=True)
+
         cmd = [
-            sys.executable,
+            str(_MUSUBI_PYTHON),
             str(_MUSUBI_SCRIPT),
             "--dit", str(_DIT),
             "--vae", str(_VAE),
@@ -155,7 +171,7 @@ class MusubiFluxAdapter(RenderCharacter):
             "--infer_steps", str(self._steps),
             "--guidance_scale", str(self._guidance_scale),
             "--seed", str(seed),
-            "--save_path", str(out_path),
+            "--save_path", str(scratch_dir),
             "--fp8", "--fp8_scaled",
             "--attn_mode", "flash",
             "--model_version", "dev",
@@ -175,10 +191,13 @@ class MusubiFluxAdapter(RenderCharacter):
                 f"flux_2_generate_image.py failed (exit {proc.returncode}):\n"
                 f"{stdout.decode(errors='replace')[-2000:]}"
             )
-        if not out_path.exists():
+        generated = sorted(scratch_dir.glob("*.png"))
+        if not generated:
             raise RuntimeError(
-                f"flux_2_generate_image.py exited 0 but output not found: {out_path}"
+                f"flux_2_generate_image.py exited 0 but no image found in: {scratch_dir}"
             )
+        shutil.move(str(generated[0]), str(out_path))
+        shutil.rmtree(scratch_dir, ignore_errors=True)
 
     def lora_name(self, lora_ref: str) -> str:
         parts = Path(lora_ref).parts

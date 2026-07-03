@@ -151,6 +151,32 @@ else
   ok "ComfyUI starting (log: $LOG_DIR/comfyui.log) — takes ~30s to load"
 fi
 
+# ── musubi-tuner (Flux 2.0 image gen for render_character) ───────────────────
+# Default image backend — no server, no port. musubi_flux_adapter.py invokes
+# this venv's python directly for each render, so there's nothing to "start"
+# here; just verify the venv can still import musubi_tuner and self-heal if a
+# package went missing (same individual-package-vanishes issue we've hit with
+# ComfyUI/sqlalchemy and Fish S2 + Wan2.2/click — happens even to /workspace
+# venvs, not just system Python).
+log "musubi-tuner (Flux 2.0 image gen, subprocess — no port)"
+MUSUBI_VENV="$WORKSPACE/.venv_musubi"
+MUSUBI_DIR="$WORKSPACE/musubi-tuner"
+if [[ ! -d "$MUSUBI_VENV" ]]; then
+  warn "musubi-tuner venv not found at $MUSUBI_VENV — run setup_gpu.sh first"
+else
+  if "$MUSUBI_VENV/bin/python" -c "from musubi_tuner.flux_2 import flux2_utils" >/dev/null 2>&1; then
+    ok "musubi-tuner importable in $MUSUBI_VENV"
+  else
+    warn "musubi-tuner not importable in $MUSUBI_VENV — reinstalling"
+    "$MUSUBI_VENV/bin/pip" install -e "$MUSUBI_DIR" -q || warn "musubi-tuner reinstall failed"
+    if "$MUSUBI_VENV/bin/python" -c "from musubi_tuner.flux_2 import flux2_utils" >/dev/null 2>&1; then
+      ok "musubi-tuner recovered after reinstall"
+    else
+      warn "musubi-tuner still not importable after reinstall — check manually"
+    fi
+  fi
+fi
+
 # ── Fish Audio S2 TTS ─────────────────────────────────────────────────────────
 # Default TTS: EN + HI + 80 languages, voice cloning from reference WAV.
 log "Fish Audio S2 TTS (port 8025)"
