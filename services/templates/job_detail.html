@@ -26,6 +26,10 @@
     <div class="page-subtitle">
       {{ job.source_url | truncate(72) }} &nbsp;·&nbsp; phase: {{ job.phase }}
       &nbsp;·&nbsp; lang: {{ job.target_language }}
+      {% set video_override = job.request.get('overrides', {}).get('video_adapter') %}
+      {% if video_override %}
+        &nbsp;·&nbsp; video: <span class="td-mono">{{ video_override }}</span>
+      {% endif %}
       {% if job.current_stage %}
         &nbsp;·&nbsp; stage: <span id="current-stage">{{ job.current_stage }}</span>
       {% endif %}

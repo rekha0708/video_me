@@ -82,6 +82,33 @@ def test_complete_and_fail_queue_actions(tmp_path: Path) -> None:
     assert item2.error["code"] == "ERR"
 
 
+def test_config_for_job_applies_overrides(tmp_path: Path) -> None:
+    """DashboardJobOverrides fields should override the matching Settings field."""
+    from core.models.dashboard import DashboardJobOverrides
+
+    worker, _ = _make_worker(tmp_path)
+    base_video_adapter = worker.config.settings.video_adapter
+
+    req = CreateDashboardJobRequest(
+        source=DashboardSource(url="https://example.com/v"),
+        rights_cleared=True,
+        phase="all",
+        overrides=DashboardJobOverrides(video_adapter="wan"),
+    )
+    job_config = worker._config_for_job(req)
+
+    assert job_config.settings.video_adapter == "wan"
+    # The worker's own base config must not be mutated.
+    assert worker.config.settings.video_adapter == base_video_adapter
+
+
+def test_config_for_job_no_overrides_returns_base_config(tmp_path: Path) -> None:
+    worker, _ = _make_worker(tmp_path)
+    req = _noop_request()  # no overrides set — all fields default to None
+
+    assert worker._config_for_job(req) is worker.config
+
+
 def test_resolve_approval_approved(tmp_path: Path) -> None:
     from core.models.dashboard import DashboardApprovalKind, DashboardApprovalStatus
 

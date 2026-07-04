@@ -192,8 +192,24 @@ class DashboardWorker:
             )
         return hook
 
+    def _config_for_job(self, req: CreateDashboardJobRequest) -> AppConfig:
+        """Apply the job's per-request overrides (model/adapter choices) on top
+        of the worker's base config. DashboardJobOverrides' field names are a
+        deliberate 1:1 match with Settings' fields, so this is a direct copy.
+        """
+        overrides = req.overrides
+        updates = {
+            k: v for k, v in overrides.model_dump().items() if v is not None
+        }
+        if not updates:
+            return self.config
+        new_settings = self.config.settings.model_copy(update=updates)
+        return self.config.model_copy(update={"settings": new_settings})
+
     async def _run_pipeline(self, req: CreateDashboardJobRequest, job_id: str) -> None:
         from core.workflow import RunOptions, run_pipeline_job
+
+        job_config = self._config_for_job(req)
 
         # Build dashboard approval adapters so approval gates use the repo
         # instead of blocking flag-file servers.
@@ -216,7 +232,7 @@ class DashboardWorker:
         job = await run_pipeline_job(
             source_url=req.source.url,
             rights_cleared=req.rights_cleared,
-            app_config=self.config,
+            app_config=job_config,
             options=options,
             job_id=job_id,
             resume_job_id=job_id if resume else None,
