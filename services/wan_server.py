@@ -137,7 +137,10 @@ def _inference(pil_image, prompt: str, num_frames: int, fps: int) -> bytes:
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
         out_path = Path(f.name)
 
-    save_video(video_tensor, str(out_path), fps=fps, nrow=1)
+    # generate() returns (C, N, H, W) — save_video()'s unbind(2) expects an
+    # extra leading batch axis so dim=2 lands on frames, not height (matches
+    # Wan2.2's own generate.py: save_video(tensor=video[None], ...)).
+    save_video(video_tensor[None], str(out_path), fps=fps, nrow=1)
     data = out_path.read_bytes()
     out_path.unlink(missing_ok=True)
     return data
