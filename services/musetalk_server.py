@@ -35,6 +35,10 @@ from fastapi.responses import JSONResponse, Response
 logger = logging.getLogger(__name__)
 
 MUSETALK_DIR = Path(os.getenv("MUSETALK_DIR", "/workspace/MuseTalk"))
+# Directory holding sitecustomize.py — see musetalk_compat/sitecustomize.py
+# for why this needs to be a subprocess-level PYTHONPATH shim rather than
+# an in-process monkey-patch.
+_COMPAT_DIR = Path(__file__).parent / "musetalk_compat"
 
 # inference.py lives under scripts/, not the repo root
 _INFERENCE_SCRIPT = "scripts/inference.py"
@@ -114,9 +118,14 @@ async def lipsync(
             "--use_float16",
         ]
 
-        # scripts/inference.py lives in scripts/ but imports musetalk from repo root
+        # scripts/inference.py lives in scripts/ but imports musetalk from repo root.
+        # _COMPAT_DIR first so its sitecustomize.py (torch.load weights_only patch,
+        # required for mmengine checkpoint loading on PyTorch 2.6+) auto-applies
+        # before mmengine/musetalk are imported in this subprocess.
         env = os.environ.copy()
-        env["PYTHONPATH"] = str(MUSETALK_DIR) + os.pathsep + env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = (
+            str(_COMPAT_DIR) + os.pathsep + str(MUSETALK_DIR) + os.pathsep + env.get("PYTHONPATH", "")
+        )
 
         logger.info("Running MuseTalk for shot %s", shot_id)
         result = subprocess.run(

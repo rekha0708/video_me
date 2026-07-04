@@ -721,9 +721,19 @@ setup_musetalk() {
     tqdm Pillow gdown huggingface_hub transformers \
     "diffusers==0.30.2" "accelerate>=0.28.0" \
     face-alignment ffmpeg-python moviepy \
-    Cython xtcocotools \
+    Cython munkres \
     mmengine "mmdet>=3.0.0" \
     fastapi uvicorn python-multipart
+
+  # xtcocotools' setup.py imports numpy directly at build time — pip's isolated
+  # build sandbox doesn't inherit --system-site-packages, so numpy isn't visible
+  # there even though it's visible at install time. --no-build-isolation lets it
+  # use this venv's already-inherited numpy instead of failing to find one.
+  run "$pip" install xtcocotools --no-build-isolation
+
+  # chumpy's old-style setup.py shells out to pip internally, which isn't
+  # available inside an isolated build sandbox either — same fix.
+  run "$pip" install chumpy json-tricks --no-build-isolation
 
   # mmpose 1.3.2 supports mmcv <3.0.0 (compatible with 2.2.0)
   run "$pip" install "mmpose==1.3.2" --no-deps
