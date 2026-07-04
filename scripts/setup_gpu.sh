@@ -654,14 +654,17 @@ setup_wan() {
   local pip="$venv_dir/bin/pip"
   run "$pip" install --upgrade pip
 
-  # Core deps — numpy must be ≥2.0 to satisfy system scipy (1.18+)
+  # Core deps — numpy must be ≥2.0 to satisfy system scipy (1.18+).
+  # huggingface_hub must stay <1.0 — transformers 4.51.3/peft 0.19.x both
+  # require it, and an unpinned install here silently inherits whatever
+  # newer (incompatible) version other venvs/system Python have picked up.
   run "$pip" install \
       opencv-python "diffusers>=0.31.0" "transformers>=4.49.0,<=4.51.3" \
       "tokenizers>=0.20.3" "accelerate>=1.1.1" tqdm "imageio[ffmpeg]" \
       easydict ftfy "numpy>=2.0,<2.3" dashscope \
       decord librosa rotary-embedding-torch peft \
       fastapi uvicorn python-multipart \
-      huggingface_hub hf_transfer || warn "Some Wan deps may have failed"
+      "huggingface_hub>=0.30.0,<1.0" hf_transfer || warn "Some Wan deps may have failed"
 
   # Install wan as an editable package (avoids WAN_DIR sys.path manipulation)
   run "$pip" install -e "$wan_dir" --no-deps
@@ -725,13 +728,14 @@ setup_musetalk() {
   # mmpose 1.3.2 supports mmcv <3.0.0 (compatible with 2.2.0)
   run "$pip" install "mmpose==1.3.2" --no-deps
 
-  # mmcv must be built from source for Python 3.12 (no prebuilt cp312 wheels).
+  # mmcv must be built from source for Python 3.12 (no prebuilt cp312 wheels),
+  # pinned to 2.1.0 — mmdet 3.3.0 requires mmcv<2.2.0; 2.2.0+ breaks import.
   # MAX_JOBS=8 parallelises CUDA compilation; still takes ~15-20 min.
-  if ! "$venv_dir/bin/python" -c "import mmcv" 2>/dev/null; then
-    log "Building mmcv from source (CUDA extensions, ~15-20 min with MAX_JOBS=8)"
-    run MAX_JOBS=8 "$pip" install mmcv --no-build-isolation
+  if ! "$venv_dir/bin/python" -c "import mmcv; assert mmcv.__version__ == '2.1.0'" 2>/dev/null; then
+    log "Building mmcv==2.1.0 from source (CUDA extensions, ~15-20 min with MAX_JOBS=8)"
+    run MAX_JOBS=8 "$pip" install mmcv==2.1.0 --no-build-isolation
   else
-    ok "mmcv already installed: $("$venv_dir/bin/python" -c 'import mmcv; print(mmcv.__version__)')"
+    ok "mmcv 2.1.0 already installed"
   fi
 
   # Download model weights to $musetalk_dir/models/
