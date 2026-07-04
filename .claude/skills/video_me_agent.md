@@ -1,5 +1,6 @@
 ---
 name: video_me_agent
+trigger: video_me_agent
 description: >
   Senior polyglot SW architect for video_me. Runs the full
   run → monitor → debug → fix → test → retry loop via the dashboard
@@ -73,7 +74,7 @@ If the user did not provide BOTH a phase and a source, ask:
 If the phase requires a prior phase, confirm:
 
 > "`script_plan` requires a completed `transcribe` run for this job.
-> Should I use the same job ID from the last transcribe run?"
+> Should I advance the same job or start a new one?"
 
 Do not proceed until both are confirmed.
 
@@ -160,9 +161,13 @@ Stop when `status` is one of: `completed`, `failed`, `blocked`, `cancelled`.
 # Show artifacts
 curl -s http://localhost:8080/api/jobs/JOB_ID/artifacts
 
-# Advance to next phase (if not assemble)
+# Advance to next phase (same job, same work dir)
 curl -s -X POST http://localhost:8080/api/jobs/JOB_ID/advance
 ```
+
+Phase chaining: all phases share a single `job_id` and work directory.
+After each phase completes, advance via `POST /api/jobs/{id}/advance`.
+The worker sets `resume=True` automatically so prior artifacts are reused.
 
 Update progress doc:
 
@@ -174,8 +179,8 @@ Artifacts: [list key artifact names]
 If phase is `assemble`: report final output path
 `review/<timestamp>_<stem>/video.mp4` and stop. Loop is complete.
 
-Otherwise: offer to advance. If the user confirms, go back to Step 4
-monitoring the same job.
+Otherwise: offer to advance. If the user confirms, call the advance
+endpoint and go back to Step 4 monitoring the same job.
 
 ### blocked
 
@@ -227,7 +232,7 @@ Edit the file with the minimal diff required.
 # Test the affected module
 python3 -m pytest tests/test_<module>.py -q
 
-# Full suite (must stay at 333+ passing)
+# Full suite (must stay at 335+ passing)
 python3 -m pytest -q
 ```
 
@@ -255,7 +260,10 @@ Lesson written: yes
 
 ### 6f — Retry
 
-Submit a new job (Step 3) with the same source and phase.
+```bash
+# Retry the same job (re-queues, skips completed stages)
+curl -s -X POST http://localhost:8080/api/jobs/JOB_ID/retry
+```
 
 ### 6g — Abort if looping
 
@@ -291,17 +299,20 @@ Notes: —
 
 ---
 
-## Step 8 — Phase and file reference
+## Step 8 — Phase, file, and API reference
 
-### Phase table
+### Phase table (dashboard phase chaining model)
 
-| Phase | Stages | Requires |
+All phases advance on the **same job record** via `POST /api/jobs/{id}/advance`.
+
+| Phase | Stages | Approval gates |
 |---|---|---|
-| `transcribe` | fetch_media → transcribe → analyze_content | — |
-| `script_plan` | adapt_script → plan_shots | transcribe done |
-| `render` | render_character → synthesize_voice → generate_video | script_plan done |
-| `assemble` | assemble_video → publish | render done |
-| `all` | all stages end-to-end | — |
+| `transcribe` | fetch_media → transcribe → analyze_content → **transcript review gate** → stop | Transcript review (approve/reject+notes → LLM refine, up to 3 iterations) |
+| `script_plan` | adapt_script → plan_shots → critique_plan → **plan approval gate** → stop | Plan approval (approve/reject+notes → re-plan) |
+| `render` | per-shot: render_character ×N → critique_images → **image approval gate** → synthesize_voice → generate_video → stop | Image approval (grid view, operator can override picks) |
+| `assemble` | assemble_video → critique → publish | — |
+| `all` | all stages end-to-end | All gates above |
+| `noop` | Mock pipeline (no services needed) | — |
 
 ### Key file map (stage → adapter → test)
 
@@ -310,26 +321,78 @@ Notes: —
 | fetch_media | adapters/fetch_media/ytdlp_adapter.py | tests/test_fetch_media.py |
 | transcribe | adapters/transcribe/whisper_adapter.py | tests/test_transcribe.py |
 | analyze_content | adapters/analyze_content/llm_adapter.py | tests/test_analyze_content.py |
+| transcript_refine | adapters/transcript_refine/llm_adapter.py | (covered in test_workflow.py) |
 | adapt_script | adapters/adapt_script/llm_adapter.py | tests/test_adapt_script.py |
 | plan_shots | adapters/plan_shots/llm_adapter.py | tests/test_plan_shots.py |
+| critique_plan | adapters/critique/plan_critique_adapter.py | tests/test_critique.py |
 | render_character | adapters/render_character/musubi_flux_adapter.py | tests/test_render_character.py |
+| critique_images | adapters/critique/image_critique_adapter.py | tests/test_critique.py |
 | synthesize_voice | adapters/synthesize_voice/fish_s2_adapter.py | tests/test_synthesize_voice.py |
 | generate_video | adapters/generate_video/ltx_adapter.py | tests/test_generate_video.py |
+| lip_sync | adapters/lip_sync/lip_sync_adapter.py | tests/test_lip_sync.py |
 | assemble_video | adapters/assemble_video/ffmpeg_adapter.py | tests/test_assemble_video.py |
-| dashboard worker | services/dashboard_worker.py | tests/test_workflow.py |
-| core executor | core/executor.py | tests/test_executor.py |
-| core workflow | core/workflow.py | tests/test_workflow.py |
+| critique (video) | adapters/critique/vlm_adapter.py | tests/test_critique.py |
+| publish | adapters/publish/manual_adapter.py | tests/test_publish.py |
+
+### Dashboard files
+
+| File | Purpose |
+|---|---|
+| services/dashboard_api.py | FastAPI app factory — all API + HTML routes |
+| services/dashboard_repository.py | SQLite CRUD — 6 tables (jobs, events, queue, heartbeat, approval, completed_phases) |
+| services/dashboard_worker.py | Worker loop — poll, claim, run pipeline, heartbeat, stage hooks, approval gates |
+| services/chat_service.py | Per-job LLM chat (Ollama) for operator Q&A |
+| services/static/app.css | Self-hosted CSS (zero CDN) |
+| services/static/app.js | SSE live updates + polling fallback + AJAX list refresh |
+| services/templates/jobs_list.html | Jobs table + New Job modal |
+| services/templates/job_detail.html | Phase stepper + stage timeline + events feed + script/storyboard/images/video viewer |
+| services/templates/approval_plan.html | Storyboard approval — score bars + shot table |
+| services/templates/approval_images.html | Image candidate grid — override + approve |
+| services/templates/approval_transcript.html | Transcript review — segment table + correction notes |
+| services/templates/health.html | Worker heartbeat + runtime readiness checks |
+| services/templates/base.html | Shared layout template |
+
+### Core files
+
+| File | Purpose |
+|---|---|
+| core/workflow.py | `run_pipeline_job()` — Phase 1 DAG; `run_with_critique()` — Phase 2 loop |
+| core/executor.py | `run_stage()` — health-check → invoke → persist; `check_rights()` gate |
+| core/config.py | Settings (env/pydantic-settings) + AppConfig + `load_app_config()` |
+| core/storage.py | SQLite/Postgres job store + local/S3 artifact store |
+| core/models/capabilities.py | All typed request/result Pydantic models |
+| core/models/content.py | Script, Scene, Line, Shot, Storyboard, LearningObjective |
+| core/models/dashboard.py | Dashboard-specific Pydantic models (job, queue, event, approval, heartbeat) |
+
+### Scripts
+
+| Script | Purpose |
+|---|---|
+| scripts/start_services.sh | Start GPU services (Ollama, ComfyUI, Fish S2, etc.) — use on GPU box |
+| scripts/restart_dashboard.sh | Restart dashboard API + worker |
+| scripts/check_track_b.py | Check Track B asset placement (LoRAs + voices) |
+| scripts/check_runtime_readiness.py | Runtime dependency/service/asset readiness check |
+| scripts/setup_gpu.sh | One-command GPU-machine setup + validation |
+| scripts/generate_training_images.py | Generate training images for LoRA |
+| scripts/generate_voices.py | Generate bootstrap voice reference files |
 
 Always also check:
 
 - `CLAUDE.md` — guardrails, open operator decisions, current adapter stack
 - `core/config.py` — env var overrides and defaults
-- `core/executor.py` — stage runner, hook wiring
 - `docs/DEV_LOOP_PROGRESS.md` — recent run history
 
 ### Dashboard API quick reference
 
 ```bash
+# --- Health ---
+curl -s http://localhost:8080/api/health/live
+curl -s http://localhost:8080/api/health/ready
+curl -s http://localhost:8080/api/runtime/readiness
+curl -s http://localhost:8080/api/runtime/services
+curl -s http://localhost:8080/api/config/defaults
+
+# --- Jobs CRUD ---
 # List local videos (for file source selection)
 curl -s "http://localhost:8080/api/local-videos?dir=/workspace/downloads"
 
@@ -339,16 +402,25 @@ curl -s -X POST http://localhost:8080/api/jobs \
   -d '{"source":{"kind":"file","url":"file:///workspace/downloads/VIDEO.mp4"},
        "phase":"transcribe","rights_cleared":true,"target_language":"en"}'
 
-# Poll status
+# List jobs
+curl -s http://localhost:8080/api/jobs
+
+# Get job status
 curl -s http://localhost:8080/api/jobs/JOB_ID
 
 # Get events (includes ERROR payloads with tracebacks)
 curl -s "http://localhost:8080/api/jobs/JOB_ID/events?limit=20"
 
-# Get transcript (after transcribe phase)
+# --- Job artifacts ---
+curl -s http://localhost:8080/api/jobs/JOB_ID/artifacts
 curl -s http://localhost:8080/api/jobs/JOB_ID/transcript
+curl -s http://localhost:8080/api/jobs/JOB_ID/script
+curl -s http://localhost:8080/api/jobs/JOB_ID/plan
+curl -s http://localhost:8080/api/jobs/JOB_ID/renders
+curl -s http://localhost:8080/api/jobs/JOB_ID/video
 
-# Advance to next phase
+# --- Job lifecycle ---
+# Advance to next phase (same job, reuses work dir)
 curl -s -X POST http://localhost:8080/api/jobs/JOB_ID/advance
 
 # Retry same phase (re-queues, skips completed stages)
@@ -357,12 +429,45 @@ curl -s -X POST http://localhost:8080/api/jobs/JOB_ID/retry
 # Cancel
 curl -s -X POST http://localhost:8080/api/jobs/JOB_ID/cancel
 
-# Artifacts
-curl -s http://localhost:8080/api/jobs/JOB_ID/artifacts
+# --- Approval ---
+# Get pending approval
+curl -s http://localhost:8080/api/jobs/JOB_ID/approval
 
-# GPU service health
-curl -s http://localhost:8080/api/runtime/services
+# Approve (plan, images, or transcript)
+curl -s -X POST http://localhost:8080/api/jobs/JOB_ID/approve \
+  -H "Content-Type: application/json" -d '{}'
+
+# Reject with notes (triggers re-plan or transcript refine)
+curl -s -X POST http://localhost:8080/api/jobs/JOB_ID/reject \
+  -H "Content-Type: application/json" \
+  -d '{"notes": "Fix the pacing in shot 3"}'
+
+# --- Chat ---
+curl -s -X POST http://localhost:8080/api/jobs/JOB_ID/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What does shot 2 look like?"}'
+
+curl -s http://localhost:8080/api/jobs/JOB_ID/chat/history
+curl -s -X DELETE http://localhost:8080/api/jobs/JOB_ID/chat/history
+
+# --- Live updates ---
+# SSE stream (used by browser UI)
+curl -s http://localhost:8080/api/jobs/JOB_ID/stream
 ```
+
+### Port table
+
+| Port | Service | Required? |
+|---|---|---|
+| 8080 | Dashboard API + Worker UI | ✅ Always (local Mac) |
+| 11434 | Ollama (LLM + VLM) | ✅ Always |
+| 8188 | ComfyUI (LTX-2.3 video) | ✅ Default |
+| 8025 | Fish Audio S2 (TTS) | ✅ Default |
+| 8765 | Human approval UI (standalone, non-dashboard path) | ⚠️ CLI path only |
+| 8020 | Chatterbox TTS | ⚠️ Fallback |
+| 7860 | AUTOMATIC1111 | ⚠️ Fallback |
+| 8030 | Wan 2.2 | ⚠️ Fallback |
+| 8040 | MuseTalk | ⚠️ Fallback |
 
 ---
 
@@ -391,6 +496,57 @@ Services: `ollama`, `comfyui`, `fish_s2`, `wan`, `musetalk`, `a1111`, `chatterbo
 Logic bug. Always read the file and line from the traceback before
 diagnosing. Read the test file to understand expected input/output shapes.
 Never guess.
+
+**6. Dashboard 422 validation error**
+Pydantic model mismatch — usually the API server has a stale cached model.
+Restart the API server (or ensure `--reload` is set). Check the 422 detail
+array for `field: message` pairs.
+
+**7. Approval poll timeout**
+Worker polls for approval resolution. If the operator doesn't act within
+the timeout (default 24h), the job fails. Check
+`curl -s http://localhost:8080/api/jobs/JOB_ID/approval` for pending status.
+
+---
+
+## Step 10 — Test suite summary
+
+335 test functions across 21 files. Tests mock all HTTP calls and
+subprocesses — no external services needed.
+
+```bash
+# Full suite
+python3 -m pytest -q
+
+# One test file
+python3 -m pytest tests/test_workflow.py -q
+
+# With coverage
+python3 -m pytest --cov=core --cov=adapters --cov=services --cov-report=term-missing -q
+```
+
+Key test files:
+- `test_workflow.py` (31) — DAG orchestration, phase chaining, rights blocking, critique loop
+- `test_assemble_video.py` (32) — ffmpeg assembly, captions, disclosure
+- `test_plan_shots.py` (29) — shot planning, storyboard structure
+- `test_render_character.py` (29) — musubi/comfyui/a1111 adapters, Track B gate
+- `test_synthesize_voice.py` (27) — Fish S2 + Chatterbox TTS
+- `test_critique.py` (26) — VLM critique, frame sampling, image candidate scoring
+- `test_publish.py` (26) — manual publish adapter, metadata sidecar
+- `test_adapt_script.py` (21) — script transformation, guardrails
+- `test_lip_sync.py` (20) — MuseTalk adapter
+- `test_analyze_content.py` (18) — content analysis
+- `test_generate_video.py` (18) — LTX + Wan video gen
+- `test_transcribe.py` (11) — faster-whisper transcription
+- `test_dashboard_worker.py` (10) — worker loop, claim, heartbeat
+- `test_runtime_readiness.py` (9) — service health checks
+- `test_fetch_media.py` (8) — yt-dlp download
+- `test_dashboard_repository.py` (5) — SQLite CRUD
+- `test_executor.py` (4) — stage runner
+- `test_setup_gpu.py` (4) — GPU setup script
+- `test_phase0_models.py` (4) — Phase 0 Pydantic models
+- `test_run_pipeline_cli.py` (2) — CLI entry point
+- `test_phase0_workflow.py` (1) — Phase 0 noop workflow
 
 ---
 

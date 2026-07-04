@@ -110,8 +110,8 @@ def _render_html(req: ImageApprovalRequest) -> str:
 </head>
 <body>
 <h1>Image Approval</h1>
-<p class="sub">Review the VLM-selected candidate for each shot. Override by clicking a different image, then click Approve.</p>
-<div class="legend"><span></span> VLM pick (green border). Click any image to select a different candidate.</div>
+<p class="sub">Review the pre-selected candidate for each shot. Override by clicking a different image, then click Approve.</p>
+<div class="legend"><span></span> Pre-selected pick (green border). Click any image to select a different candidate.</div>
 
 <form id="af">
 <table>

@@ -9,13 +9,13 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 
 ---
 
-## Current state (as of 2026-06-29)
+## Current state (as of 2026-07-04)
 
-**Stack: Flux 2.0 Dev image via musubi-tuner (local) + LTX-2.3 22B distilled video via ComfyUI (native lip-sync) + Fish Audio S2 (TTS). Plan critique loop + human approval gate added.**
+**Stack: Flux 2.0 Dev image via musubi-tuner (local) + LTX-2.3 22B distilled video via ComfyUI (native lip-sync) + Fish Audio S2 (TTS). Plan critique loop + human approval gate added. Dashboard UI with story ingest, job creation page, GPU sequencing.**
 
 **Default adapter stack is code-enforced in `core/config.py`: `musubi_flux` (image) / `ltx` (video) / `fish_s2` (TTS).** The image stage runs **musubi-tuner** as a subprocess — ComfyUI cannot load Flux 2.0 locally (no Mistral 3 encoder node; the `Flux2*` ComfyUI nodes are paid BFL cloud API), so `comfyui_flux` is a fallback, not the default. ComfyUI (8188) is still required for the **LTX-2.3 video** stage.
 
-**Test status:** 315 tests collected. Local Mac/py3.14 venv: **312 pass / 3 fail** — the 3 are pre-existing stale tests (`test_parse_response_raises_on_invalid_json`: code now repairs invalid JSON via `json_repair` instead of raising). Re-run `pytest` on the target box and record the real number.
+**Test status:** 400 tests, all passing. Local Mac/py3.13 venv: **400 pass / 0 fail**.
 
 - **LLM**: qwen3.6:35b (MoE 35B). Thinking mode disabled via `extra_body={"think": False}` + no `response_format`. `max_tokens=16384`. `json_repair` fallback. Used for all LLM stages including plan critique.
 - **Image generation**: Flux 2.0 Dev (32B, Nov 2025) + Flux LoRA, run **locally via musubi-tuner** (replaces A1111 + SD 1.5). Default adapter: `MusubiFluxAdapter` (subprocess, no server). `ComfyUIFluxAdapter` (port 8188) is a fallback but ComfyUI can't load Flux 2.0 locally — it needs the paid BFL cloud API / a custom Mistral 3 node.
@@ -31,6 +31,9 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 - **Resume**: `--resume-job JOB_ID` skips completed stages/shots. LTX completion marker: `clip.mp4`; Wan fallback: `synced.mp4`.
 - **Fallback adapters**: `VIDEO_ME_RENDER_ADAPTER=a1111` → A1111 + SD 1.5. `VIDEO_ME_VIDEO_ADAPTER=wan` → Wan 2.2 + MuseTalk. `VIDEO_ME_TTS_ADAPTER=chatterbox` → Chatterbox TTS.
 - **Track B LoRAs**: existing SD 1.5 weights won't work with Flux 2.0 — retrain with `flux_train_network.py` (kohya_ss config already updated).
+- **Dashboard UI**: web UI at `http://localhost:8080` (uvicorn). Job list, detail, health, chat. Dedicated `/jobs/new` page with 4 input modes (Video URL / Local file / Story / Story + Images). Source kinds: `url`, `upload`, `file`, `story`, `story_images`. Story-kind jobs restricted to `transcribe` or `all` phases. Character image upload via `POST /api/uploads/character-image`.
+- **Story ingest**: `adapters/story_ingest/` — structured parser (`start-end: text`) + LLM segmenter fallback. `_seed_story_job` in worker creates fake TranscribeResult from story text. Story+images mode skips Phase A render; user images go through approval with `origin="user"` label.
+- **GPU sequencer**: `core/gpu_sequencer.py` — coordinates VRAM between Wan adapter and other GPU models. Wan adapter uses deferred loading via `/load`/`/unload` endpoints (409 = busy). Workflow hooks free VRAM before Phase A and between approval and Phase B.
 
 | Track / Phase | Status | Blocker |
 |---|---|---|
@@ -40,6 +43,8 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 | Plan critique + approval gate | ✅ COMPLETE (code) | — |
 | Image candidate critique + approval | ✅ COMPLETE (code) | — |
 | Track B — LoRAs + voice files | ❌ INCOMPLETE | `loras/kids_duo_max.safetensors` missing; `kids_duo_zoe.safetensors` is a TEST-ONLY placeholder. Voice WAVs present (bootstrap). Run `python -m scripts.check_track_b`. |
+| Dashboard UI + story ingest | ✅ COMPLETE (code) | — |
+| GPU sequencer (Wan VRAM) | ✅ COMPLETE (code) | — |
 | Fish Audio S2 TTS (EN + HI) | ✅ COMPLETE (code) | Fish S2 server setup needed |
 | Track D — GPU services | ⚠️ Manual start required | Ollama ✅, ComfyUI needed, Fish Audio S2 needed |
 | Track E — Compliance sign-off | ❌ PENDING | Operator hasn't signed off |
@@ -58,13 +63,15 @@ This script auto-reinstalls Ollama (base Linux binary is wiped on restart), then
 ## Architecture
 
 ```
-source URL
-    │
-    ▼
-[fetch_media]        yt-dlp download + ffmpeg audio extraction
-    │
-    ▼
-[transcribe]         faster-whisper → TranscribeResult (segments + timestamps)
+source URL                              story text (+ optional images)
+    │                                       │
+    ▼                                       ▼
+[fetch_media]        yt-dlp download   [story_ingest]    structured/LLM parser
+    │                + ffmpeg extract        │              → fake TranscribeResult
+    ▼                                       │
+[transcribe]         faster-whisper         │
+    │                → TranscribeResult      │
+    └──────────────┬────────────────────────┘
     │
     ▼
 [analyze_content]    LLM → ContentMetadata + LearningObjective
@@ -144,6 +151,10 @@ The stage runner is `core/executor.py:run_stage()`. The Phase 1 DAG is
 | `adapters/critique/image_critique_adapter.py` | VLM image critique — N candidates → best pick; self-learning feedback log |
 | `adapters/approval/web_approval_adapter.py` | Human approval web UI at localhost:8765 (storyboard) |
 | `adapters/approval/image_approval_adapter.py` | Human image approval grid at localhost:8765 (shared port); records overrides |
+| `adapters/approval/dashboard_image_approval_adapter.py` | Dashboard-integrated image approval (shared port 8080) |
+| `adapters/story_ingest/parser.py` | Structured story parser (`start-end: text` per line) |
+| `adapters/story_ingest/llm_adapter.py` | LLM-based story segmenter (fallback for free-text stories) |
+| `core/gpu_sequencer.py` | VRAM coordination for Wan deferred loading |
 | `assets/kids_duo/critique_feedback.jsonl` | Per-cast self-learning log (critique picks + human overrides) |
 | `adapters/assemble_video/ffmpeg_adapter.py` | ffmpeg subprocess |
 | `adapters/critique/vlm_adapter.py` | OpenAI-compatible VLM/LLM critique adapter |
@@ -154,11 +165,16 @@ The stage runner is `core/executor.py:run_stage()`. The Phase 1 DAG is
 | `loras/` | LoRA weight files — **MUST EXIST** for render_character (Track B) |
 | `voices/` | Reference WAV files — **MUST EXIST** for synthesize_voice (Track B) |
 | `review/` | Output: `<timestamp>_<stem>/video.mp4` + `metadata.json` sidecar |
+| `services/dashboard_api.py` | Dashboard FastAPI app: job CRUD, approval gates, upload, chat, health |
+| `services/templates/job_new.html` | `/jobs/new` — 4-mode job creation (URL / file / story / story+images) |
+| `services/templates/jobs_list.html` | Job list with source-kind badges |
+| `services/templates/job_detail.html` | Job detail with stepper, artifact cards, phase controls |
+| `services/templates/approval_images.html` | Image approval grid (origin-aware labels: VLM vs user) |
 | `scripts/check_track_b.py` | Track B asset placement check |
 | `scripts/check_runtime_readiness.py` | runtime dependency/service/asset readiness check |
 | `scripts/setup_gpu.sh` | one-command GPU-machine setup + validation |
 | `scripts/setup_gpu.py` / `setup.py gpu` | lower-level GPU-machine setup helper |
-| `tests/` | 315 tests; no external services needed. Local Mac/py3.14 venv: 312 pass / 3 fail (stale `json_repair` tests — see Current state) |
+| `tests/` | 400 tests; no external services needed. All passing on Mac/py3.13 |
 | `BUILD_PROGRESS.md` | Full implementation journal + decision log |
 | `Agent.md` | Lead Designer agent charter |
 
@@ -315,6 +331,9 @@ Test count by file:
 - `test_transcribe.py`, `test_analyze_content.py`, `test_fetch_media.py` — ~10–15 each
 - `test_runtime_readiness.py` — 7
 - `test_setup_gpu.py` — 4
+- `test_gpu_sequencer.py` — 9 (Wan VRAM sequencing)
+- `test_story_ingest.py` — 14 (story parser + LLM segmenter)
+- `test_dashboard_api_helpers.py` — 21 (artifact flags, stepper, approval origin, uploads, phase restriction)
 - `test_executor.py`, `test_phase0_models.py`, `test_phase0_workflow.py` — Phase 0 tests
 
 ---
@@ -374,6 +393,29 @@ VIDEO_ME_WHISPER_COMPUTE_TYPE=int8     # use float16 on CUDA
 VIDEO_ME_JOB_STORE=postgres            # use PostgreSQL instead of SQLite
 VIDEO_ME_ARTIFACT_STORE=s3             # use MinIO/S3 instead of local filesystem
 ```
+
+### Running the dashboard
+
+```bash
+.venv/bin/uvicorn services.dashboard_api:create_app --factory --port 8080 --reload
+```
+
+Navigate to `http://localhost:8080`. Key pages:
+
+- `/` — job list with source-kind badges
+- `/jobs/new` — create job (4 input modes: Video URL / Local file / Story / Story + Images)
+- `/jobs/{id}` — job detail with stepper, artifacts, phase controls
+- `/health` — service health checks
+- `/api/docs` — OpenAPI docs
+
+API endpoints for story ingest:
+
+- `POST /api/jobs` — create job; `source.kind` = `url|upload|file|story|story_images`
+- `POST /api/uploads/character-image` — multipart upload for story+images mode
+- `GET /api/local-images?dir=` — list image files in a local directory
+
+Story-kind jobs are restricted to `transcribe` or `all` phases. Later phases require upstream
+artifacts — use the Advance button on an existing job to continue from a later phase.
 
 ---
 

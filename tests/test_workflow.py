@@ -464,6 +464,81 @@ async def test_stage_call_order(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_vram_managed_video_adapter_sequencing(tmp_path) -> None:
+    """A managed-VRAM video adapter (Wan) is unloaded before the render loop and
+    loaded (unload Ollama → gap → load → readiness poll) only after image approval."""
+    config = _make_config(tmp_path)
+    config.settings.wan_load_gap_sec = 0  # don't sleep in tests
+    call_order: list[str] = []
+
+    adapters = MagicMock(ffmpeg_bin="ffmpeg")
+    adapters.video.managed_vram = True
+    adapters.video.unload = AsyncMock(side_effect=lambda: call_order.append("wan_unload") or True)
+    adapters.video.load = AsyncMock(side_effect=lambda: call_order.append("wan_load"))
+    adapters.video.wait_until_loaded = AsyncMock(
+        side_effect=lambda *a, **k: call_order.append("wan_wait")
+    )
+
+    with (
+        patch("core.workflow._make_adapters", return_value=adapters),
+        patch("core.workflow.run_stage", new=_make_run_stage(_stage_results())),
+        patch("core.workflow._unload_ollama_model"),
+        patch("core.gpu_sequencer.unload_ollama_model"),
+        patch(
+            "core.workflow._run_plan_critique_and_approval",
+            new=AsyncMock(return_value=(_storyboard(), _script())),
+        ),
+        patch(
+            "core.workflow._render_shot_candidates",
+            new=AsyncMock(
+                side_effect=lambda *a, **k: call_order.append("render") or _image_critique_result()
+            ),
+        ),
+        patch(
+            "core.workflow._run_image_approval_gate",
+            new=AsyncMock(
+                side_effect=lambda *a, **k: call_order.append("approve") or ["/tmp/render_00.png"]
+            ),
+        ),
+        patch(
+            "core.workflow._generate_shot_video",
+            new=AsyncMock(
+                side_effect=lambda *a, **k: call_order.append("video")
+                or (_synced_clip(), _audio_track())
+            ),
+        ),
+        patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
+        patch("core.workflow.create_job_store", return_value=MagicMock()),
+        patch("core.workflow.create_artifact_store", return_value=MagicMock()),
+    ):
+        await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
+
+    assert call_order == ["wan_unload", "render", "approve", "wan_load", "wan_wait", "video"]
+
+
+@pytest.mark.asyncio
+async def test_unmanaged_video_adapter_skips_sequencing(tmp_path) -> None:
+    """The default LTX adapter (no managed_vram attr) must not get load/unload calls."""
+    config = _make_config(tmp_path)
+    adapters = MagicMock(ffmpeg_bin="ffmpeg")
+    adapters.video = MagicMock(spec=[])  # like LtxAdapter: no managed_vram / load / unload
+
+    with (
+        patch("core.workflow._make_adapters", return_value=adapters),
+        patch("core.workflow.run_stage", new=_make_run_stage(_stage_results())),
+        patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
+        patch("core.workflow.create_job_store", return_value=MagicMock()),
+        patch("core.workflow.create_artifact_store", return_value=MagicMock()),
+    ):
+        with _mock_shot_patches():
+            job = await run_pipeline_job(
+                "http://example.com", rights_cleared=True, app_config=config
+            )
+
+    assert job.status == JobStatus.COMPLETED
+
+
+@pytest.mark.asyncio
 async def test_per_shot_loop_runs_for_each_shot(tmp_path) -> None:
     config = _make_config(tmp_path)
     results = {**_stage_results(), "plan_shots": _two_shot_storyboard()}

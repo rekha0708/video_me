@@ -249,10 +249,6 @@ const ACTIVE_STATUSES = new Set([
 ]);
 
 async function refreshJobsList() {
-  // Don't refresh while the new-job modal is open.
-  const modal = document.getElementById("new-job-modal");
-  if (modal && modal.style.display === "flex") return;
-
   try {
     const res = await fetch("/api/jobs?limit=100");
     if (!res.ok) return;

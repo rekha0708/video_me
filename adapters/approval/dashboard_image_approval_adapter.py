@@ -44,6 +44,7 @@ def _build_request_payload(req: ImageApprovalRequest) -> dict[str, Any]:
             "vlm_winner_index": critique.winner_index,
             "vlm_winner_uri": critique.winner_uri,
             "overall_reasoning": critique.overall_reasoning,
+            "origin": getattr(critique, "origin", "vlm"),
             "candidate_scores": [
                 {
                     "candidate_index": s.candidate_index,

@@ -21,13 +21,19 @@ class WanAdapter(GenerateVideo):
     generate_video adapter: per-shot image-to-video via a Wan 2.7-compatible HTTP API.
 
     The service must expose:
-      GET  /health    → {"status": "ok"}
+      GET  /health    → 200 {"status": "ok", "model_loaded": bool, ...}
+      POST /load      → 200/202, kicks off a background model load
+      POST /unload    → 200, releases the model's VRAM (409 while a load is running)
       POST /generate  → multipart/form-data:
                           image         (file, PNG),
                           prompt        (str),
                           duration_sec  (float),
                           fps           (int)
                         → raw MP4 bytes
+
+    The Wan model is huge, so ``core.gpu_sequencer`` keeps it unloaded during the
+    render_character phase (``managed_vram = True`` opts this adapter in) and loads
+    it only right before the video phase.
 
     One instance per job — ``work_dir`` should be job-scoped.
 
@@ -40,6 +46,9 @@ class WanAdapter(GenerateVideo):
     """
 
     version = "1.0.0"
+
+    # The GPU sequencer loads/unloads this adapter's model around the render phase.
+    managed_vram = True
 
     def __init__(
         self,
@@ -69,6 +78,64 @@ class WanAdapter(GenerateVideo):
                 status="down",
                 reason=f"Wan service unreachable at {self._base_url}: {exc}",
             )
+
+    # ------------------------------------------------------------------
+    # VRAM lifecycle (called by core.gpu_sequencer around the render phase)
+    # ------------------------------------------------------------------
+
+    async def load(self) -> None:
+        """Ask the service to start loading the model (non-blocking on the server)."""
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(f"{self._base_url}/load")
+            resp.raise_for_status()
+
+    async def unload(self) -> bool:
+        """
+        Release the model's VRAM. Returns False if the service is unreachable
+        (nothing resident, safe to continue). Raises if the service is up but
+        refused to unload — proceeding would OOM the render phase.
+        """
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(f"{self._base_url}/unload")
+        except httpx.ConnectError:
+            logger.warning(
+                "Wan service unreachable at %s — assuming no model resident", self._base_url
+            )
+            return False
+        if resp.status_code >= 400:
+            raise RuntimeError(
+                f"Wan service at {self._base_url} refused to unload "
+                f"({resp.status_code}): {resp.text[:500]}"
+            )
+        return True
+
+    async def wait_until_loaded(self, timeout_sec: float, poll_sec: float = 10.0) -> None:
+        """Poll /health until the model is loaded. Raises on load error or timeout."""
+        import asyncio
+        import time
+
+        import httpx
+
+        deadline = time.monotonic() + timeout_sec
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            while time.monotonic() < deadline:
+                resp = await client.get(f"{self._base_url}/health")
+                resp.raise_for_status()
+                body = resp.json()
+                if body.get("model_loaded"):
+                    return
+                if body.get("error"):
+                    raise RuntimeError(f"Wan model failed to load: {body['error']}")
+                await asyncio.sleep(poll_sec)
+        raise TimeoutError(
+            f"Wan model not loaded after {timeout_sec:.0f}s. Check the wan_server logs; "
+            "raise VIDEO_ME_WAN_LOAD_TIMEOUT_SEC if the load is just slow."
+        )
 
     async def estimate_cost(self, req: VideoRequest) -> CostEstimate:
         return CostEstimate(

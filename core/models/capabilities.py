@@ -146,6 +146,9 @@ class ImageCritiqueResult(BaseModel):
     candidate_uris: list[str] = Field(default_factory=list)  # so approval gates can serve all candidates
     candidate_scores: list[ImageCandidateScore] = Field(default_factory=list)
     overall_reasoning: str = ""
+    # "vlm": winner picked by the VLM critique; "user": synthetic result built
+    # from user-provided reference images (story_images mode — no render/VLM ran).
+    origin: Literal["vlm", "user"] = "vlm"
 
 
 class ImageApprovalRequest(BaseModel):

@@ -1,21 +1,31 @@
 """
-Wan2.2 image-to-video HTTP service — resident-model edition.
+Wan2.2 image-to-video HTTP service — deferred-loading edition.
 
-Exposes the same API contract as before:
-  GET  /health    → {"status": "ok"}
+The model is NOT loaded at startup. The pipeline orchestrator loads it only when
+the video phase begins (after render_character finishes), so Wan never competes
+with Flux/Ollama for VRAM during the image-rendering phase.
+
+API contract:
+  GET  /health    → 200 {"status": "ok", "model_loaded": bool, "loading": bool,
+                         "error": str|null}   — 200 whenever the process is up
+  POST /load      → start loading the model in a background thread.
+                    200 if already loaded, 202 if load started or in progress.
+  POST /unload    → drop the pipeline, gc + empty CUDA cache. Idempotent 200.
+                    Blocks until any in-flight inference finishes.
+                    409 if a load is in progress (retry after it completes).
   POST /generate  → multipart/form-data:
                       image        (file, PNG/JPG)
                       prompt       (str)
                       duration_sec (float)
                       fps          (int)
                     → raw MP4 bytes
+                    Safety net: if the model is unloaded, /generate blocks on a
+                    load first — standalone use keeps working, paying the 4–5 min
+                    load on the first request instead of at server boot.
 
-Key differences vs the old subprocess approach:
-  - WanI2V loaded once at startup (4–5 min), stays resident in VRAM between shots
-  - offload_model=False → GPU runs the full denoising loop continuously; no CPU ↔ GPU
-    weight shuffling that was causing 7% GPU / 280% CPU utilization
+Model notes (unchanged from the resident edition):
   - t5_cpu=True → T5 text encoder stays on CPU (runs once per inference, saves ~11 GB VRAM)
-  - Result: ~26 min/shot → ~5 min/shot
+  - offload_model=True in generate: both DiTs (108 GB) can never be in VRAM together
 
 Environment variables:
   WAN_DIR        Path to the cloned Wan2.2 repo (default: /workspace/Wan2.2)
@@ -50,14 +60,23 @@ _MAX_AREA = 832 * 480
 # Wan2.2 recommends shift=3.0 for 480p (5.0 is for 720p)
 _SHIFT = 3.0
 
-_pipeline = None             # WanI2V instance, set during lifespan startup
+_pipeline = None             # WanI2V instance, set by /load (or /generate's safety net)
 _pipeline_error: str | None = None
 _infer_lock = threading.Lock()   # only one GPU inference at a time
+_load_lock = threading.Lock()    # serializes load attempts / guards _loading
+_loading = False
 
 
 def _load_pipeline() -> None:
-    """Load WanI2V into VRAM.  Runs in a thread executor at startup."""
-    global _pipeline, _pipeline_error
+    """Load WanI2V into memory.  Runs in a thread executor, never on the event loop."""
+    global _pipeline, _pipeline_error, _loading
+    with _load_lock:
+        if _pipeline is not None:
+            return
+        if _loading:
+            return
+        _loading = True
+        _pipeline_error = None
     try:
         if str(WAN_DIR) not in sys.path:
             sys.path.insert(0, str(WAN_DIR))
@@ -79,21 +98,41 @@ def _load_pipeline() -> None:
             # The benefit of this resident approach vs subprocess: no 4-5 min disk
             # reload per shot; model stays in CPU RAM between calls.
         )
-        logger.info("WanI2V ready — model resident in VRAM")
+        logger.info("WanI2V ready")
     except Exception as exc:
         _pipeline_error = str(exc)
         logger.error("WanI2V failed to load: %s", exc, exc_info=True)
+    finally:
+        with _load_lock:
+            _loading = False
+
+
+def _unload_pipeline() -> None:
+    """Drop the pipeline and release CUDA memory. Idempotent."""
+    global _pipeline, _pipeline_error
+    with _infer_lock:  # wait out any in-flight inference
+        _pipeline = None
+        _pipeline_error = None
+    import gc  # noqa: PLC0415
+    gc.collect()
+    try:
+        import torch  # noqa: PLC0415
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
+    logger.info("WanI2V unloaded — VRAM released")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Deferred loading: the model is loaded via POST /load (or lazily by
+    # /generate), never at startup — the render phase needs the VRAM first.
     if not WAN_DIR.exists():
         logger.error("WAN_DIR not found: %s", WAN_DIR)
     elif not WAN_MODEL_DIR.exists():
         logger.error("WAN_MODEL_DIR not found: %s", WAN_MODEL_DIR)
     else:
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, _load_pipeline)
+        logger.info("wan_server up — model deferred; POST /load to bring it into memory")
     yield
     global _pipeline
     _pipeline = None
@@ -104,16 +143,40 @@ async def lifespan(app: FastAPI):
         pass
 
 
-app = FastAPI(title="Wan2.2 image-to-video (resident)", lifespan=lifespan)
+app = FastAPI(title="Wan2.2 image-to-video (deferred loading)", lifespan=lifespan)
 
 
 @app.get("/health")
 def health() -> JSONResponse:
-    if _pipeline_error:
-        return JSONResponse({"status": "down", "reason": _pipeline_error}, status_code=503)
-    if _pipeline is None:
-        return JSONResponse({"status": "down", "reason": "model loading"}, status_code=503)
-    return JSONResponse({"status": "ok"})
+    return JSONResponse({
+        "status": "ok",
+        "model_loaded": _pipeline is not None,
+        "loading": _loading,
+        "error": _pipeline_error,
+    })
+
+
+@app.post("/load")
+async def load() -> JSONResponse:
+    if _pipeline is not None:
+        return JSONResponse({"status": "ok", "model_loaded": True})
+    if _loading:
+        return JSONResponse({"status": "loading", "model_loaded": False}, status_code=202)
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, _load_pipeline)  # fire and forget; poll /health
+    return JSONResponse({"status": "loading", "model_loaded": False}, status_code=202)
+
+
+@app.post("/unload")
+async def unload() -> JSONResponse:
+    if _loading:
+        # Unloading now would race the loader thread, which could set _pipeline
+        # after we return — leaving the model resident during the render phase.
+        raise HTTPException(409, detail="model load in progress; retry after it completes")
+    if _pipeline is not None:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _unload_pipeline)
+    return JSONResponse({"status": "ok", "model_loaded": False})
 
 
 def _inference(pil_image, prompt: str, num_frames: int, fps: int) -> bytes:
@@ -154,8 +217,15 @@ async def generate(
     fps: int = Form(16),
 ) -> Response:
     if _pipeline is None:
-        detail = "WanI2V not ready" + (f": {_pipeline_error}" if _pipeline_error else " (still loading)")
-        raise HTTPException(503, detail=detail)
+        # Safety net for standalone use: block on a load instead of failing.
+        # The orchestrated path always POSTs /load and polls /health first.
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _load_pipeline)
+        while _loading:  # another caller may hold the load; wait it out
+            await asyncio.sleep(2)
+        if _pipeline is None:
+            detail = "WanI2V not ready" + (f": {_pipeline_error}" if _pipeline_error else "")
+            raise HTTPException(503, detail=detail)
 
     # Wan requires frame_num = 4n+1  (81 for 5 s @ 16 fps)
     n = max(1, round(duration_sec * fps / 4))

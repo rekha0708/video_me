@@ -48,8 +48,12 @@ class Settings(BaseSettings):
 
     # --- generate_video backend ("wan" or "ltx") ---
     video_adapter: Literal["wan", "ltx"] = "ltx"
-    wan_base_url: str = "http://localhost:8030"      # Wan 2.2 resident server (kept for fallback)
+    wan_base_url: str = "http://localhost:8030"      # Wan 2.2 deferred-load server (fallback)
     ltx_base_url: str = "http://localhost:8188"      # LTX-Video 2.3 via ComfyUI (default same host)
+    # Wan deferred-loading sequence (core/gpu_sequencer.py): gap between unloading
+    # the render-phase models and loading Wan, and the readiness-poll ceiling.
+    wan_load_gap_sec: int = 30
+    wan_load_timeout_sec: int = 1800
 
     # --- synthesize_voice backend ("chatterbox" or "fish_s2") ---
     tts_adapter: Literal["chatterbox", "fish_s2"] = "fish_s2"

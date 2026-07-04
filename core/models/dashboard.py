@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 def utc_now() -> datetime:
@@ -75,16 +75,20 @@ class DashboardArtifactKind(StrEnum):
 
 
 class DashboardSource(BaseModel):
-    kind: Literal["url", "upload", "file"] = "url"
-    url: str
+    kind: Literal["url", "upload", "file", "story", "story_images"] = "url"
+    url: str = ""
 
-    @field_validator("url")
-    @classmethod
-    def require_url(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
+    @model_validator(mode="after")
+    def _require_url_for_media_kinds(self) -> "DashboardSource":
+        self.url = self.url.strip()
+        if self.kind in ("story", "story_images"):
+            # Story jobs have no media source; the url column is NOT NULL and
+            # shown in the jobs list, so give it a descriptive placeholder.
+            if not self.url:
+                self.url = "story://direct-input"
+        elif not self.url:
             raise ValueError("source url is required")
-        return value
+        return self
 
 
 class DashboardJobOverrides(BaseModel):
@@ -108,12 +112,25 @@ class CreateDashboardJobRequest(BaseModel):
     run_critique: bool = False
     overrides: DashboardJobOverrides = Field(default_factory=DashboardJobOverrides)
     idempotency_key: str | None = None
+    # Story input modes: the story replaces the transcript (kind="story"/"story_images");
+    # character_images maps cast member_id → server-side image path (kind="story_images").
+    story_text: str | None = None
+    character_images: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _require_story_fields(self) -> "CreateDashboardJobRequest":
+        if self.source.kind in ("story", "story_images"):
+            if not (self.story_text or "").strip():
+                raise ValueError("story_text is required for story source kinds")
+        if self.source.kind == "story_images" and not self.character_images:
+            raise ValueError("story_images requires at least one character image")
+        return self
 
 
 class DashboardJobRecord(BaseModel):
     job_id: str
     source_url: str
-    source_kind: Literal["url", "upload", "file"]
+    source_kind: Literal["url", "upload", "file", "story", "story_images"]
     status: DashboardJobStatus
     phase: str
     target_language: str

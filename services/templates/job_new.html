@@ -1,0 +1,328 @@
+{% extends "base.html" %}
+{% block title %}New Job{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">New Pipeline Job</div>
+    <div class="page-subtitle">Choose an input mode and configure the pipeline run.</div>
+  </div>
+  <a href="/jobs" class="btn btn-outline">&larr; Back to Jobs</a>
+</div>
+
+<div class="card" style="max-width:640px">
+  <form id="new-job-form" onsubmit="submitNewJob(event)">
+
+    {# ── Input mode selector ── #}
+    <div class="form-row">
+      <label>Input Mode</label>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <label class="radio-label">
+          <input type="radio" name="source_kind" value="url" checked
+                 onchange="toggleSourceMode('url')"> Video URL
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="source_kind" value="file"
+                 onchange="toggleSourceMode('file')"> Local File
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="source_kind" value="story"
+                 onchange="toggleSourceMode('story')"> Story
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="source_kind" value="story_images"
+                 onchange="toggleSourceMode('story_images')"> Story + Images
+        </label>
+      </div>
+    </div>
+
+    {# ── URL input ── #}
+    <div class="form-row" id="nj-url-row">
+      <label>URL</label>
+      <input type="text" id="nj-url"
+             placeholder="https://www.youtube.com/watch?v=…">
+      <div class="form-hint">YouTube, TikTok, Instagram, or any yt-dlp-supported URL.</div>
+    </div>
+
+    {# ── Local file browser ── #}
+    <div class="form-row" id="nj-file-row" style="display:none">
+      <label>Directory</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" id="nj-file-dir-input" style="flex:1;font-family:monospace;font-size:12px"
+               placeholder="/workspace/downloads"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();loadLocalVideos();}"
+               onblur="loadLocalVideos()">
+        <button type="button" class="btn btn-outline" style="padding:4px 10px"
+                onclick="loadLocalVideos()" title="Refresh file list">&#8635;</button>
+      </div>
+      <div class="form-hint" id="nj-file-dir-hint"></div>
+
+      <label style="margin-top:10px">Local Video</label>
+      <select id="nj-file" style="width:100%">
+        <option value="">— select a file —</option>
+      </select>
+    </div>
+
+    {# ── Story textarea ── #}
+    <div class="form-row" id="nj-story-row" style="display:none">
+      <label>Story Text</label>
+      <textarea id="nj-story-text" rows="8" style="width:100%;font-family:monospace;font-size:12px"
+                placeholder="Paste your story here.&#10;&#10;Structured format (optional):&#10;0-4: Max and Zoe find a rainbow.&#10;4-8: They count the colors together.&#10;&#10;Or just paste free text — it will be auto-segmented."></textarea>
+      <div class="form-hint">
+        Use <code>start-end: text</code> per line for precise timing,
+        or paste free text (auto-segmented by the LLM).
+      </div>
+    </div>
+
+    {# ── Character image upload (story_images mode) ── #}
+    <div class="form-row" id="nj-images-row" style="display:none">
+      <label>Character Reference Images</label>
+      <div class="form-hint" style="margin-bottom:8px">
+        Upload one reference image per character. Used for all shots.
+      </div>
+      {% for member in cast_members %}
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <span style="min-width:60px;font-weight:600">{{ member.name }}</span>
+        <input type="file" id="nj-img-{{ member.id }}" accept="image/png,image/jpeg,image/webp"
+               data-member-id="{{ member.id }}">
+        <span class="form-hint" id="nj-img-status-{{ member.id }}"></span>
+      </div>
+      {% endfor %}
+    </div>
+
+    {# ── Phase ── #}
+    <div class="form-row">
+      <label>Phase</label>
+      <select name="phase" id="nj-phase" onchange="updatePhaseHint(this.value)">
+        <option value="noop">noop — smoke test only (no pipeline)</option>
+        <option value="transcribe" id="opt-transcribe">transcribe — fetch &rarr; transcribe &rarr; analyze content</option>
+        <option value="script_plan" id="opt-script_plan">script + plan — adapt script &rarr; plan shots &rarr; approval</option>
+        <option value="render" id="opt-render">render — render images &rarr; voice &rarr; video per shot</option>
+        <option value="assemble" id="opt-assemble">assemble — concat shots &rarr; final video</option>
+        <option value="all" selected>all — full pipeline (end-to-end)</option>
+      </select>
+      <div class="form-hint" id="phase-hint"></div>
+    </div>
+
+    {# ── Language ── #}
+    <div class="form-row">
+      <label>Language</label>
+      <select name="target_language" id="nj-lang">
+        <option value="en" selected>English</option>
+        <option value="hi">Hindi</option>
+        <option value="both">Both (EN + HI)</option>
+      </select>
+    </div>
+
+    {# ── Video model ── #}
+    <div class="form-row">
+      <label>Video Model</label>
+      <select name="video_adapter" id="nj-video-adapter">
+        <option value="">Default (from .env)</option>
+        <option value="ltx">LTX-Video 2.3 — native lip-sync, one diffusion pass</option>
+        <option value="wan">Wan 2.2 — no working lip-sync (MuseTalk can't detect cartoon faces)</option>
+      </select>
+      <div class="form-hint">Which video generation backend to use for this job only.</div>
+    </div>
+
+    {# ── Rights ── #}
+    <div class="form-row">
+      <label class="checkbox-row">
+        <input type="checkbox" name="rights_cleared" id="nj-rights">
+        <span id="nj-rights-label">I confirm this source is cleared for transformative use</span>
+      </label>
+      <div class="form-hint">Required for any non-noop phase.</div>
+    </div>
+
+    <div id="nj-error" class="alert alert-error" style="display:none"></div>
+
+    <div class="flex gap-8 mt-16">
+      <button type="submit" class="btn btn-primary" id="nj-submit">Submit</button>
+      <a href="/jobs" class="btn btn-outline">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const PHASE_HINTS = {
+  "noop":        "Runs a mock pipeline in-memory — no services needed.",
+  "transcribe":  "Downloads the video, transcribes audio, and analyzes content.",
+  "script_plan": "Adapts the transcript into a script, plans shots. Needs completed transcribe.",
+  "render":      "Renders character images, synthesizes voice, generates video per shot.",
+  "assemble":    "Concatenates rendered shots into a final video and publishes.",
+  "all":         "Full end-to-end pipeline — all stages in sequence.",
+};
+
+function updatePhaseHint(phase) {
+  const el = document.getElementById("phase-hint");
+  if (el) el.textContent = PHASE_HINTS[phase] || "";
+}
+
+const STORY_MODES = new Set(["story", "story_images"]);
+const RESTRICTED_PHASES = new Set(["script_plan", "render", "assemble"]);
+
+function toggleSourceMode(mode) {
+  document.getElementById("nj-url-row").style.display = mode === "url" ? "" : "none";
+  document.getElementById("nj-file-row").style.display = mode === "file" ? "" : "none";
+  document.getElementById("nj-story-row").style.display =
+    (mode === "story" || mode === "story_images") ? "" : "none";
+  document.getElementById("nj-images-row").style.display =
+    mode === "story_images" ? "" : "none";
+
+  // Restrict phase options for story modes.
+  const isStory = STORY_MODES.has(mode);
+  RESTRICTED_PHASES.forEach(p => {
+    const opt = document.getElementById("opt-" + p);
+    if (opt) opt.disabled = isStory;
+  });
+  const transcribeOpt = document.getElementById("opt-transcribe");
+  if (transcribeOpt) {
+    transcribeOpt.textContent = isStory
+      ? "transcribe — analyze story (review segmentation)"
+      : "transcribe — fetch → transcribe → analyze content";
+  }
+  // If current selection is a restricted phase, switch to 'all'.
+  const sel = document.getElementById("nj-phase");
+  if (isStory && RESTRICTED_PHASES.has(sel.value)) sel.value = "all";
+
+  // Update rights checkbox label.
+  const label = document.getElementById("nj-rights-label");
+  if (label) {
+    label.textContent = isStory
+      ? "I confirm I own/have rights to this story and images"
+      : "I confirm this source is cleared for transformative use";
+  }
+  if (mode === "file") loadLocalVideos();
+}
+
+async function loadLocalVideos() {
+  const sel = document.getElementById("nj-file");
+  const hint = document.getElementById("nj-file-dir-hint");
+  const dirInput = document.getElementById("nj-file-dir-input");
+  const customDir = dirInput.value.trim();
+  const url = customDir ? "/api/local-videos?dir=" + encodeURIComponent(customDir) : "/api/local-videos";
+  sel.innerHTML = '<option value="">Loading…</option>';
+  try {
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (!customDir) dirInput.value = data.dir;
+    if (data.error) {
+      hint.textContent = data.error;
+      hint.style.color = "var(--color-error, #e53e3e)";
+      sel.innerHTML = '<option value="">—</option>';
+      return;
+    }
+    hint.textContent = data.videos.length + " video(s) found";
+    hint.style.color = "";
+    if (!data.videos.length) {
+      sel.innerHTML = '<option value="">No video files found</option>';
+      return;
+    }
+    sel.innerHTML = '<option value="">— select a file —</option>' +
+      data.videos.map(v =>
+        `<option value="${v.uri}">${v.name} (${v.size_mb} MB)</option>`
+      ).join("");
+  } catch (e) {
+    sel.innerHTML = '<option value="">Error loading files</option>';
+    hint.textContent = e.message;
+    hint.style.color = "var(--color-error, #e53e3e)";
+  }
+}
+
+async function uploadCharacterImage(memberId) {
+  const input = document.getElementById("nj-img-" + memberId);
+  if (!input || !input.files.length) return null;
+  const formData = new FormData();
+  formData.append("member_id", memberId);
+  formData.append("file", input.files[0]);
+  const resp = await fetch("/api/uploads/character-image", { method: "POST", body: formData });
+  if (!resp.ok) {
+    const data = await resp.json();
+    throw new Error(data.detail?.message || "Upload failed for " + memberId);
+  }
+  const data = await resp.json();
+  document.getElementById("nj-img-status-" + memberId).textContent = "✓";
+  return { member_id: memberId, path: data.path };
+}
+
+async function submitNewJob(e) {
+  e.preventDefault();
+  const errEl = document.getElementById("nj-error");
+  errEl.style.display = "none";
+  const btn = document.getElementById("nj-submit");
+  btn.disabled = true;
+  btn.textContent = "Submitting…";
+
+  try {
+    const sourceKind = document.querySelector('input[name="source_kind"]:checked').value;
+    let sourceUrl = "";
+    let storyText = null;
+    const characterImages = {};
+
+    if (sourceKind === "url") {
+      sourceUrl = document.getElementById("nj-url").value.trim();
+      if (!sourceUrl) throw new Error("Source URL is required.");
+    } else if (sourceKind === "file") {
+      sourceUrl = document.getElementById("nj-file").value;
+      if (!sourceUrl) throw new Error("Select a local video file.");
+    } else if (sourceKind === "story" || sourceKind === "story_images") {
+      storyText = document.getElementById("nj-story-text").value.trim();
+      if (!storyText) throw new Error("Story text is required.");
+    }
+
+    if (sourceKind === "story_images") {
+      const inputs = document.querySelectorAll("#nj-images-row input[type=file]");
+      let hasAny = false;
+      for (const inp of inputs) {
+        if (inp.files.length) {
+          const result = await uploadCharacterImage(inp.dataset.memberId);
+          if (result) {
+            characterImages[result.member_id] = result.path;
+            hasAny = true;
+          }
+        }
+      }
+      if (!hasAny) throw new Error("Upload at least one character image.");
+    }
+
+    const videoAdapter = document.getElementById("nj-video-adapter").value;
+    const body = {
+      source: { kind: sourceKind, url: sourceUrl },
+      rights_cleared: document.getElementById("nj-rights").checked,
+      target_language: document.getElementById("nj-lang").value,
+      phase: document.getElementById("nj-phase").value,
+      overrides: videoAdapter ? { video_adapter: videoAdapter } : {},
+    };
+    if (storyText) body.story_text = storyText;
+    if (Object.keys(characterImages).length) body.character_images = characterImages;
+
+    const res = await fetch("/api/jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      let msg;
+      if (Array.isArray(data.detail)) {
+        msg = data.detail.map(e => {
+          const field = e.loc ? e.loc.slice(1).join(".") : "";
+          return field ? `${field}: ${e.msg}` : e.msg;
+        }).join("\n");
+      } else {
+        msg = data.detail?.message || JSON.stringify(data.detail) || "Unknown error";
+      }
+      throw new Error(msg);
+    }
+    window.location.href = "/jobs/" + data.job_id;
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.style.display = "block";
+    btn.disabled = false;
+    btn.textContent = "Submit";
+  }
+}
+</script>
+{% endblock %}

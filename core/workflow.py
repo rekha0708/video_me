@@ -7,6 +7,11 @@ from typing import Any, Literal
 
 from core.config import AppConfig, load_app_config
 from core.executor import StageError, check_rights, run_stage
+from core.gpu_sequencer import (
+    ensure_video_model_unloaded,
+    prepare_video_model,
+    unload_ollama_model,
+)
 from core.models.capabilities import (
     AnalyzeRequest,
     AssembleRequest,
@@ -57,6 +62,9 @@ class RunOptions:
     resume:      skip stages whose artifact JSON already exists on disk.
     only_shot:   in the shot loop, process only this shot ID (e.g. "s01").
     language:    BCP-47 language code for this run — "en" or "hi".
+    user_images: member_id → image path. When set, render_character + VLM
+                 critique are skipped entirely and each shot defaults to its
+                 speaker's reference image (story_images input mode).
     """
     phase: Phase = "all"
     resume: bool = False
@@ -64,6 +72,7 @@ class RunOptions:
     language: str = "en"
     stage_hook: Callable[[str, str], None] | None = None
     error_hook: Callable[[str, Exception], Any] | None = None
+    user_images: dict[str, str] | None = None
 
 logger = logging.getLogger(__name__)
 
@@ -445,6 +454,47 @@ async def _render_shot_candidates(
     return critique
 
 
+def _build_user_image_critiques(
+    shots: list[Shot],
+    user_images: dict[str, str],
+    cast: Cast,
+) -> list["ImageCritiqueResult"]:
+    """Synthesize critique results from user-provided reference images.
+
+    story_images mode: render_character + VLM critique never run. Every shot's
+    candidate list is the full set of reference images (in cast order, so the
+    approval grid is stable across shots) with the shot speaker's image
+    pre-selected. The operator can still override per shot at the approval gate.
+    """
+    from core.models.capabilities import ImageCritiqueResult
+
+    ordered_members = [m.id for m in cast.members if m.id in user_images]
+    candidate_uris = [user_images[member_id] for member_id in ordered_members]
+    if not candidate_uris:
+        raise ValueError("user_images is set but contains no known cast members")
+
+    results: list[ImageCritiqueResult] = []
+    for shot in shots:
+        speaker_id = shot.characters_on_screen[0]
+        winner_index = (
+            ordered_members.index(speaker_id) if speaker_id in ordered_members else 0
+        )
+        results.append(
+            ImageCritiqueResult(
+                winner_index=winner_index,
+                winner_uri=candidate_uris[winner_index],
+                candidate_uris=candidate_uris,
+                overall_reasoning=(
+                    "User-provided reference images ("
+                    + ", ".join(ordered_members)
+                    + f"); default for this shot: {ordered_members[winner_index]}."
+                ),
+                origin="user",
+            )
+        )
+    return results
+
+
 async def _run_image_approval_gate(
     shots: list[Shot],
     critique_results: list["ImageCritiqueResult"],
@@ -556,18 +606,8 @@ async def _generate_shot_video(
     return synced, audio_track
 
 
-def _unload_ollama_model(base_url: str, model: str) -> None:
-    """Tell Ollama to evict the model from VRAM (keep_alive=0) before GPU-heavy stages."""
-    import urllib.request, json as _json
-    ollama_base = base_url.replace("/v1", "").rstrip("/")
-    try:
-        data = _json.dumps({"model": model, "keep_alive": 0}).encode()
-        req = urllib.request.Request(f"{ollama_base}/api/generate", data=data,
-                                     headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=10)
-        logger.info("Unloaded %s from VRAM before shot loop", model)
-    except Exception as exc:
-        logger.warning("Could not unload Ollama model (non-fatal): %s", exc)
+# Moved to core/gpu_sequencer.py; alias kept for existing callers/tests.
+_unload_ollama_model = unload_ollama_model
 
 
 async def _concat_audio(
@@ -882,8 +922,10 @@ async def _run_to_assembled_video(
             storyboard, script, config.cast, ctx.work_dir
         )
     else:
-        # Release LLM from VRAM before the GPU-heavy shot loop.
+        # Release LLM from VRAM before the GPU-heavy shot loop, and make sure a
+        # VRAM-managed video model (Wan) is not resident during render_character.
         _unload_ollama_model(config.settings.llm_base_url, config.settings.llm_model)
+        await ensure_video_model_unloaded(adapters.video)
 
         shots_to_run = (
             [s for s in storyboard.shots if s.shot_id == opts.only_shot]
@@ -894,14 +936,29 @@ async def _run_to_assembled_video(
             raise ValueError(f"Shot '{opts.only_shot}' not found in storyboard.")
 
         # ── Phase A: render all candidates + VLM critique (sequential per shot) ──
-        critique_results = []
-        for shot in shots_to_run:
-            cr = await _render_shot_candidates(shot, config.cast, adapters, ctx.work_dir, opts)
-            critique_results.append(cr)
+        if opts.user_images:
+            # story_images mode: user supplied reference images — skip Flux
+            # rendering and VLM critique entirely (no LoRA/Track-B gate either).
+            critique_results = _build_user_image_critiques(
+                shots_to_run, opts.user_images, config.cast
+            )
+            log_event(logger, "phase_a_skipped_user_images",
+                      members=sorted(opts.user_images.keys()))
+        else:
+            critique_results = []
+            for shot in shots_to_run:
+                cr = await _render_shot_candidates(shot, config.cast, adapters, ctx.work_dir, opts)
+                critique_results.append(cr)
 
         # ── Image approval gate (single UI for all shots) ─────────────────────
         approved_uris = await _run_image_approval_gate(
             shots_to_run, critique_results, adapters
+        )
+
+        # Render phase is done — bring the VRAM-managed video model (Wan) up:
+        # unload Ollama, wait for VRAM to settle, load, poll until ready.
+        await prepare_video_model(
+            adapters.video, config.settings, notify=opts.stage_hook
         )
 
         # ── Phase B: synthesize voice + generate video with approved image ─────
@@ -1081,8 +1138,11 @@ async def run_pipeline_job(
         # Copy all fields from caller options (preserves stage_hook, error_hook, etc.)
         # and override language only.
         lang_opts = _dc_replace(options or RunOptions(), language=lang)
-        if lang_opts.resume and not resume_job_id:
-            raise ValueError("resume=True requires resume_job_id to be set.")
+        # resume needs a job id to locate cached artifacts — either an existing
+        # job (resume_job_id) or a fresh job created under a caller-chosen job_id
+        # whose artifacts were pre-seeded (story input mode).
+        if lang_opts.resume and not (resume_job_id or job_id):
+            raise ValueError("resume=True requires resume_job_id or job_id to be set.")
         ctx = (
             _restore_job_context(resume_job_id, config, approval_overrides=approval_overrides)
             if resume_job_id

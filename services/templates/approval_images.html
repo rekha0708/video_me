@@ -4,8 +4,14 @@
 
 <div class="approval-card images">
   <div class="approval-title">🖼 Image Approval Required</div>
+  {% set origin = shots_data[0].get('origin', 'vlm') if shots_data else 'vlm' %}
   <div class="approval-subtitle">
+    {% if origin == 'user' %}
+    Pick the reference image for each shot, or Approve to accept defaults.
+    Two-character shots default to the first character — override per shot if needed.
+    {% else %}
     Review the VLM-selected candidates and confirm or override per shot.
+    {% endif %}
   </div>
 
   <form id="image-approval-form">
@@ -26,8 +32,9 @@
              onclick="selectCandidate(this, '{{ shot_id }}', {{ loop.index0 }})">
           <img src="/img/{{ uri | b64path }}" alt="candidate {{ loop.index }}"
                onerror="this.style.display='none'">
+          {% set shot_origin = shot.get('origin', 'vlm') %}
           <div class="cand-label">
-            #{{ loop.index }}{% if loop.index0 == vlm_pick %} ★ VLM{% endif %}
+            #{{ loop.index }}{% if loop.index0 == vlm_pick %}{% if shot_origin == 'user' %} ★ default{% else %} ★ VLM{% endif %}{% endif %}
           </div>
         </div>
         {% endfor %}

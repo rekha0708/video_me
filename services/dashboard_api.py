@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from fastapi import File, Form, UploadFile
+
 from core.config import AppConfig, load_app_config
 from core.storage import create_artifact_store
 from core.models.dashboard import (
@@ -53,6 +55,71 @@ def _result_to_dict(result: CheckResult) -> dict[str, str]:
         "status": result.status.lower(),
         "detail": result.detail,
     }
+
+
+# Pipeline stage → macro phase, for deriving stepper state on phase="all" jobs.
+# "video_model_load" is the synthetic stage emitted by core/gpu_sequencer.py.
+_STAGE_TO_MACRO = {
+    "fetch_media": "transcribe",
+    "transcribe": "transcribe",
+    "analyze_content": "transcribe",
+    "adapt_script": "script_plan",
+    "plan_shots": "script_plan",
+    "render_character": "render",
+    "synthesize_voice": "render",
+    "generate_video": "render",
+    "lip_sync": "render",
+    "video_model_load": "render",
+    "assemble_video": "assemble",
+    "publish": "assemble",
+}
+
+_MACRO_ORDER = ["transcribe", "script_plan", "render", "assemble"]
+
+
+def _artifact_flags(artifact_store: Any, work_dir: Path, job_id: str) -> dict[str, bool]:
+    """Which artifact cards the job page should show, based on what actually exists.
+
+    Robust to how the job was run (phased vs phase="all" vs story-seeded) because it
+    looks at artifacts, not phase bookkeeping.
+    """
+    has_plan = artifact_store.has(job_id, "plan_shots")
+    return {
+        "transcript": artifact_store.has(job_id, "transcribe"),
+        "script": artifact_store.has(job_id, "adapt_script") or has_plan,
+        "renders": has_plan
+        and ((work_dir / "renders").exists() or (work_dir / "user_images").exists()),
+        "video": (work_dir / "assembled" / "final.mp4").exists(),
+    }
+
+
+def _stepper_state(job: Any, flags: dict[str, bool]) -> dict[str, Any]:
+    """Derive the phase stepper's active phase + completed phases.
+
+    Phased jobs pass through unchanged. For phase="all" jobs — whose
+    completed_phases contains only "all" and whose phase never matches a
+    stepper node — the active macro phase comes from current_stage and the
+    completed set from artifact existence.
+    """
+    status = getattr(job.status, "value", str(job.status))
+    if job.phase != "all":
+        return {"phase": job.phase, "completed": list(job.completed_phases or [])}
+
+    if status == "completed":
+        return {"phase": "assemble", "completed": list(_MACRO_ORDER)}
+
+    active = _STAGE_TO_MACRO.get(job.current_stage or "")
+    if active is None:
+        # No stage recorded yet (e.g. queued) — infer from artifacts.
+        if flags["video"]:
+            active = "assemble"
+        elif flags["renders"]:
+            active = "render"
+        elif flags["script"] or flags["transcript"]:
+            active = "script_plan"
+        else:
+            active = "transcribe"
+    return {"phase": active, "completed": _MACRO_ORDER[: _MACRO_ORDER.index(active)]}
 
 
 def _make_repository(config: AppConfig) -> DashboardRepository:
@@ -212,6 +279,67 @@ def create_app(
                 })
         return _base_response({"videos": videos, "dir": str(video_dir)})
 
+    _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+
+    @app.get("/api/local-images")
+    def list_local_images(dir: str | None = None) -> dict[str, Any]:
+        import base64 as b64
+
+        if not dir:
+            return _base_response({"images": [], "dir": "", "error": "Provide a dir parameter"})
+        image_dir = Path(dir).expanduser().resolve()
+        if not image_dir.exists():
+            return _base_response({"images": [], "dir": str(image_dir), "error": "Directory not found"})
+        if not image_dir.is_dir():
+            return _base_response({"images": [], "dir": str(image_dir), "error": "Path is not a directory"})
+        data_root = Path(config.settings.data_dir).resolve()
+        images = []
+        for f in sorted(image_dir.iterdir()):
+            if f.is_file() and f.suffix.lower() in _IMAGE_EXTENSIONS:
+                entry: dict[str, Any] = {
+                    "name": f.name,
+                    "path": str(f),
+                    "size_mb": round(f.stat().st_size / 1_048_576, 1),
+                }
+                try:
+                    f.resolve().relative_to(data_root)
+                    entry["path_b64"] = b64.urlsafe_b64encode(str(f).encode()).decode()
+                except ValueError:
+                    pass
+                images.append(entry)
+        return _base_response({"images": images, "dir": str(image_dir)})
+
+    @app.post("/api/uploads/character-image")
+    async def upload_character_image(
+        member_id: str = Form(...),
+        file: UploadFile = File(...),
+    ) -> dict[str, Any]:
+        cast_ids = {m.id for m in config.cast.members}
+        if member_id not in cast_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "INVALID_MEMBER", "message": f"Unknown cast member: {member_id}. Expected: {sorted(cast_ids)}", "retryable": False},
+            )
+        ext = Path(file.filename or "img.png").suffix.lower()
+        if ext not in _IMAGE_EXTENSIONS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "INVALID_FORMAT", "message": f"Image must be PNG, JPG, or WebP (got {ext})", "retryable": False},
+            )
+        content = await file.read()
+        if len(content) > 10 * 1_048_576:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "FILE_TOO_LARGE", "message": "Image must be under 10 MB", "retryable": False},
+            )
+        import uuid
+        token = uuid.uuid4().hex[:12]
+        dest_dir = Path(config.settings.data_dir) / "uploads" / token
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / f"{member_id}{ext}"
+        dest.write_bytes(content)
+        return _base_response({"path": str(dest), "member_id": member_id, "filename": dest.name})
+
     @app.post("/api/jobs")
     def create_job(
         body: CreateDashboardJobRequest,
@@ -223,6 +351,21 @@ def create_app(
                 detail={
                     "code": "RIGHTS_NOT_CLEARED",
                     "message": "Confirm rights clearance before queueing a real pipeline job.",
+                    "retryable": False,
+                },
+            )
+
+        if body.source.kind in ("story", "story_images") and body.phase in (
+            "script_plan", "render", "assemble",
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "INVALID_PHASE_FOR_STORY",
+                    "message": (
+                        "Story jobs must start at 'transcribe' (analyze story) or 'all'. "
+                        "Use the Advance button to continue from a later phase."
+                    ),
                     "retryable": False,
                 },
             )
@@ -391,6 +534,17 @@ def create_app(
                 critique_data = json.loads(critique_path.read_text())
                 winner_index = critique_data.get("winner_index")
                 reasoning = critique_data.get("overall_reasoning", "")
+
+            if not candidate_uris and speaker_id:
+                # Story+images job: no Flux renders — show the user-provided
+                # reference image for this shot's speaker instead.
+                user_images = sorted((work_dir / "user_images").glob(f"{speaker_id}.*"))
+                if user_images:
+                    candidate_uris = [
+                        base64.urlsafe_b64encode(str(user_images[0]).encode()).decode()
+                    ]
+                    winner_index = 0
+                    reasoning = reasoning or "User-provided reference image."
 
             shots_out.append({
                 "shot_id": shot_id,
@@ -817,7 +971,7 @@ def create_app(
 
         @app.get("/jobs/new", include_in_schema=False)
         def ui_new_job():
-            return _render("jobs_list.html", jobs=[], worker=None, show_new_form=True)
+            return _render("job_new.html", cast_members=config.cast.members)
 
         @app.get("/jobs/{job_id}", include_in_schema=False)
         def ui_job_detail(job_id: str):
@@ -825,7 +979,14 @@ def create_app(
             if detail is None:
                 from fastapi.responses import HTMLResponse
                 return HTMLResponse("<h1>Job not found</h1>", status_code=404)
-            return _render("job_detail.html", detail=detail)
+            work_dir = Path(config.settings.data_dir) / "jobs" / job_id
+            flags = _artifact_flags(artifact_store, work_dir, job_id)
+            return _render(
+                "job_detail.html",
+                detail=detail,
+                artifact_flags=flags,
+                stepper=_stepper_state(detail.job, flags),
+            )
 
         @app.get("/health", include_in_schema=False)
         def ui_health():

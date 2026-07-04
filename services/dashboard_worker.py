@@ -207,6 +207,7 @@ class DashboardWorker:
         return self.config.model_copy(update={"settings": new_settings})
 
     async def _run_pipeline(self, req: CreateDashboardJobRequest, job_id: str) -> None:
+        from core.storage import create_job_store
         from core.workflow import RunOptions, run_pipeline_job
 
         job_config = self._config_for_job(req)
@@ -215,14 +216,30 @@ class DashboardWorker:
         # instead of blocking flag-file servers.
         approval_overrides = self._make_approval_overrides(req, job_id)
 
+        # Story input modes: pre-seed fetch_media + transcribe artifacts from the
+        # pasted story so the pipeline (run with resume=True) skips yt-dlp/Whisper.
+        is_story = req.source.kind in ("story", "story_images")
+        user_images: dict[str, str] | None = None
+        if is_story:
+            user_images = await self._seed_story_job(req, job_id)
+
         phase = req.phase if req.phase != "all" else "all"
-        # script_plan/render/assemble resume from artifacts saved by the previous phase.
-        resume = phase in ("script_plan", "render", "assemble")
+        # script_plan/render/assemble resume from artifacts saved by the previous
+        # phase; story jobs always resume so the seeded artifacts are picked up.
+        resume = is_story or phase in ("script_plan", "render", "assemble")
         options = RunOptions(
             phase=phase,
             resume=resume,
+            user_images=user_images,
             stage_hook=self._make_stage_hook(job_id),
             error_hook=self._make_error_hook(job_id),
+        )
+
+        # resume_job_id restores an existing core Job row (prior phase / retry).
+        # A fresh story job has no core row yet — pass job_id only, so a new row
+        # is created while the seeded artifacts are still found under it.
+        core_job_exists = (
+            resume and create_job_store(job_config.settings).get_job(job_id) is not None
         )
 
         self.repo.record_event(
@@ -235,7 +252,7 @@ class DashboardWorker:
             app_config=job_config,
             options=options,
             job_id=job_id,
-            resume_job_id=job_id if resume else None,
+            resume_job_id=job_id if core_job_exists else None,
             approval_overrides=approval_overrides,
         )
 
@@ -263,10 +280,97 @@ class DashboardWorker:
 
         # Record which phase just finished so the stepper can show it as done.
         if dash_status == DashboardJobStatus.COMPLETED:
+            if phase == "all":
+                # End-to-end run covers every macro phase — record them all so
+                # completed_phases stays truthful for the stepper/artifact views.
+                for sub_phase in ("transcribe", "script_plan", "render", "assemble"):
+                    self.repo.append_completed_phase(job_id, sub_phase)
             self.repo.append_completed_phase(job_id, phase)
             self.repo.record_event(
                 job_id, "phase_completed", f"Phase '{phase}' done.", stage_name=phase
             )
+
+    # ------------------------------------------------------------------
+    # Story input seeding
+    # ------------------------------------------------------------------
+
+    async def _seed_story_job(
+        self, req: CreateDashboardJobRequest, job_id: str
+    ) -> dict[str, str] | None:
+        """Pre-seed fetch_media + transcribe artifacts from the pasted story.
+
+        Idempotent: skipped when the transcribe artifact already exists (retry,
+        or second language pass of target_language="both"). The fetch_media stub
+        is written FIRST — the guard checks transcribe, so a mid-seed crash can
+        never leave transcribe present without fetch_media (which would send the
+        story:// URL into yt-dlp on retry).
+
+        Returns the member_id → copied-image-path map for story_images jobs.
+        """
+        import shutil
+
+        from adapters.story_ingest.parser import parse_structured_story
+        from core.models.capabilities import FetchMediaResult
+        from core.storage import create_artifact_store
+
+        s = self.config.settings
+        store = create_artifact_store(s)
+        work_dir = Path(s.data_dir) / "jobs" / job_id
+
+        if store.has(job_id, "transcribe"):
+            self.repo.record_event(
+                job_id, "story_seeded", "Story artifacts already present — seeding skipped."
+            )
+        else:
+            language = "hi" if req.target_language == "hi" else "en"
+            transcript = parse_structured_story(req.story_text or "", language=language)
+            if transcript is not None:
+                seg_source = "structured timeline"
+            else:
+                from adapters.story_ingest.llm_adapter import LlmStorySegmentAdapter
+
+                segmenter = LlmStorySegmentAdapter(base_url=s.llm_base_url, model=s.llm_model)
+                transcript = await segmenter.segment(req.story_text or "", language=language)
+                seg_source = "LLM segmentation"
+
+            duration = transcript.segments[-1].end if transcript.segments else 0.0
+            fetch_stub = FetchMediaResult(
+                video_uri=f"story://{job_id}",
+                audio_uri=f"story://{job_id}",
+                duration_sec=duration,
+                source_url=req.source.url,
+            )
+            store.put_json(job_id, "fetch_media", fetch_stub.model_dump())
+            store.put_json(job_id, "transcribe", transcript.model_dump())
+            self.repo.record_event(
+                job_id,
+                "story_seeded",
+                f"Story converted to {len(transcript.segments)} timed segments "
+                f"via {seg_source}; fetch/transcribe stages will be skipped.",
+            )
+
+        if req.source.kind != "story_images":
+            return None
+
+        # Copy reference images under data_dir so the /img route can serve them
+        # in the approval grid, and so the job work dir is self-contained.
+        image_dir = work_dir / "user_images"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        user_images: dict[str, str] = {}
+        for member_id, src in req.character_images.items():
+            src_path = Path(src)
+            if not src_path.is_file():
+                raise FileNotFoundError(f"Character image for '{member_id}' not found: {src}")
+            dest = image_dir / f"{member_id}{src_path.suffix.lower()}"
+            if src_path.resolve() != dest.resolve():
+                shutil.copyfile(src_path, dest)
+            user_images[member_id] = str(dest)
+        self.repo.record_event(
+            job_id,
+            "story_images_staged",
+            f"Reference images staged for: {', '.join(sorted(user_images))}.",
+        )
+        return user_images
 
     # ------------------------------------------------------------------
     # Transcript review gate
@@ -376,19 +480,18 @@ class DashboardWorker:
         return None
 
     def _load_transcript_artifact(self, job_id: str) -> dict | None:
-        artifact_path = Path(self.config.settings.data_dir) / job_id / "transcribe.json"
-        if not artifact_path.exists():
-            return None
+        from core.storage import create_artifact_store
+
         try:
-            return json.loads(artifact_path.read_text(encoding="utf-8"))
+            return create_artifact_store(self.config.settings).get_json(job_id, "transcribe")
         except Exception as exc:
             logger.warning("Job %s: failed to read transcript artifact: %s", job_id, exc)
             return None
 
     def _save_transcript_artifact(self, job_id: str, transcript: dict) -> None:
-        artifact_path = Path(self.config.settings.data_dir) / job_id / "transcribe.json"
-        artifact_path.parent.mkdir(parents=True, exist_ok=True)
-        artifact_path.write_text(json.dumps(transcript, indent=2, default=str), encoding="utf-8")
+        from core.storage import create_artifact_store
+
+        create_artifact_store(self.config.settings).put_json(job_id, "transcribe", transcript)
 
     def _transcript_to_payload(self, transcript: dict, iteration: int) -> dict:
         """Build the approval request payload shown in the UI."""

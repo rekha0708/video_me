@@ -44,11 +44,11 @@
 
 <!-- ── Phase Stepper ─────────────────────────────────────────────────── -->
 {#
-  Shows the macro-level phase progression for phased jobs (not noop/all).
-  State per node is derived from:
-    - job.completed_phases: phases already done
-    - job.phase: current phase
-    - job.status: current status (running/completed/pending_*/failed)
+  Shows the macro-level phase progression for phased jobs and phase="all".
+  State comes from the `stepper` context (services/dashboard_api.py:_stepper_state):
+    - stepper.completed: phases already done
+    - stepper.phase: active phase (for "all" jobs, derived from current_stage)
+  For phased jobs stepper mirrors job.phase / job.completed_phases exactly.
 #}
 {% set phased_modes = ['transcribe','script_plan','render','assemble'] %}
 {% if job.phase in phased_modes or job.phase == 'all' %}
@@ -58,20 +58,20 @@
   ('render',      'Render'),
   ('assemble',    'Assemble'),
 ] %}
-{% set completed_phases = job.completed_phases %}
+{% set completed_phases = stepper.completed %}
 <div class="card" style="padding:16px 20px">
   <div class="phase-stepper">
     {% for phase_key, phase_label in phase_labels %}
       {% if phase_key in completed_phases %}
         {% set ps = 'done' %}
         {% set icon = '✓' %}
-      {% elif phase_key == job.phase and status in ['running','pending_transcript_review','pending_plan_approval','pending_image_approval','pending_final_review'] %}
+      {% elif phase_key == stepper.phase and status in ['running','pending_transcript_review','pending_plan_approval','pending_image_approval','pending_final_review'] %}
         {% set ps = 'active' %}
         {% set icon = '⟳' %}
-      {% elif phase_key == job.phase and status == 'completed' %}
+      {% elif phase_key == stepper.phase and status == 'completed' %}
         {% set ps = 'done' %}
         {% set icon = '✓' %}
-      {% elif phase_key == job.phase and status in ['failed','blocked'] %}
+      {% elif phase_key == stepper.phase and status in ['failed','blocked'] %}
         {% set ps = 'failed' %}
         {% set icon = '✕' %}
       {% else %}
@@ -201,8 +201,9 @@
 {% endif %}
 
 <!-- ── Transcript ────────────────────────────────────────────────────── -->
-{% set show_transcript = 'transcribe' in (job.completed_phases or []) or (job.phase == 'transcribe' and status == 'completed') %}
-{% if show_transcript %}
+{# Card visibility is artifact-driven (services/dashboard_api.py:_artifact_flags)
+   so it works for phased, phase="all", and story-seeded jobs alike. #}
+{% if artifact_flags.transcript %}
 <div class="card" id="transcript-card">
   <div class="flex justify-between items-center" style="margin-bottom:10px">
     <div class="card-title mt-0">Transcript</div>
@@ -214,14 +215,7 @@
 {% endif %}
 
 <!-- ── Script / Storyboard / Rendered Images / Final Video ─────────────── -->
-{% set phase_order = ['transcribe', 'script_plan', 'render', 'assemble'] %}
-{% set completed_set = job.completed_phases or [] %}
-{% set current_idx = phase_order.index(job.phase) if job.phase in phase_order else -1 %}
-{% set show_script = 'script_plan' in completed_set or current_idx >= 1 %}
-{% set show_renders = 'render' in completed_set or current_idx >= 2 %}
-{% set show_video = 'assemble' in completed_set or current_idx >= 3 %}
-
-{% if show_script %}
+{% if artifact_flags.script %}
 <div class="card" id="script-card">
   <div class="flex justify-between items-center" style="margin-bottom:10px">
     <div class="card-title mt-0">Script</div>
@@ -241,7 +235,7 @@
 </div>
 {% endif %}
 
-{% if show_renders %}
+{% if artifact_flags.renders %}
 <div class="card" id="renders-card">
   <div class="flex justify-between items-center" style="margin-bottom:10px">
     <div class="card-title mt-0">Rendered Images</div>
@@ -252,7 +246,7 @@
 </div>
 {% endif %}
 
-{% if show_video %}
+{% if artifact_flags.video %}
 <div class="card" id="video-card">
   <div class="card-title mt-0" style="margin-bottom:10px">Final Video</div>
   <div id="video-body">

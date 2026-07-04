@@ -12,6 +12,7 @@ from core.models.job import Job, JobStatus, StageResult
 class ArtifactStore(Protocol):
     def put_json(self, job_id: str, stage_name: str, payload: dict[str, Any]) -> ArtifactRef: ...
     def get_json(self, job_id: str, stage_name: str) -> dict[str, Any] | None: ...
+    def has(self, job_id: str, stage_name: str) -> bool: ...
 
 
 class JobRepository(Protocol):
@@ -36,6 +37,9 @@ class LocalArtifactStore:
         if not path.exists():
             return None
         return json.loads(path.read_text(encoding="utf-8"))
+
+    def has(self, job_id: str, stage_name: str) -> bool:
+        return (self.root / job_id / f"{stage_name}.json").exists()
 
 
 class S3ArtifactStore:
@@ -94,6 +98,16 @@ class S3ArtifactStore:
         except self._client_error as exc:
             if exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
                 return None
+            raise
+
+    def has(self, job_id: str, stage_name: str) -> bool:
+        key = f"{job_id}/{stage_name}.json"
+        try:
+            self.client.head_object(Bucket=self.bucket, Key=key)
+            return True
+        except self._client_error as exc:
+            if exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
+                return False
             raise
 
 
