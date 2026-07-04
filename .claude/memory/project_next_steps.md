@@ -28,9 +28,18 @@ started via `scripts/restart_dashboard.sh`) bind to **8765**. Browser UI is also
   wanted to test wan despite MuseTalk's confirmed lip-sync failure) keeps Wan permanently resident
   (~52 GiB) unlike the default `ltx` stack, and Ollama auto-reloads `qwen3.6:35b` for image critique
   between shots — together they left no VRAM headroom for Flux 2.0.
-- **Status: unresolved, paused for a decision.** Options on the table: revert to default `ltx` adapter
-  (restart dashboard without the `VIDEO_ME_VIDEO_ADAPTER=wan` override), stop the MuseTalk server
-  (frees VRAM, it does nothing useful anyway), or just retry as-is and risk repeating the OOM.
+- **Status: unresolved, paused for a decision — parked as a TODO to resume 2026-07-05.** Root cause
+  refined further: `services/wan_server.py` loads WanI2V into VRAM once at **process startup**
+  (`lifespan` hook) and keeps it resident for the whole session, even though Wan is only actually
+  used in Phase B (`generate_video`) — well after `render_character`/`critique_images`/image-approval
+  (Phase A) finish for every shot. The ~52 GiB it holds is likely inflated by leftover CUDA
+  caching-allocator memory from earlier Wan test runs (not something it actively needs at rest).
+  Next-session plan: either (1) ops-level — stop Wan (and MuseTalk, confirmed non-functional anyway)
+  before running render_character, restart Wan only right before generate_video; or (2) code-level —
+  add stage-boundary start/stop hooks in `core/workflow.py` mirroring the existing pattern that
+  already unloads `qwen3.6:35b` from Ollama before the shot loop. Also found a doc/code mismatch in
+  `services/wan_server.py`: docstring line 15 says `offload_model=False`, but `_inference()` line 134
+  actually passes `offload_model=True` — reconcile regardless of which option is picked.
   Job/queue/worker are otherwise healthy — this is purely a VRAM budgeting issue, not a code bug.
 
 **Gotcha found this session:** the local file the user initially pointed at
