@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-video_me pipeline runner — turn a source video into a Max & Zoe kids' short.
+video_me pipeline runner — turn a source video into an animated kids' educational short.
 
 Basic usage:
     python run_pipeline.py <URL|FILE>
@@ -39,7 +39,7 @@ logger = logging.getLogger("run_pipeline")
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Turn a reference video into a Max & Zoe kids' educational short.",
+        description="Turn a reference video into an animated kids' educational short.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )

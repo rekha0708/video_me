@@ -3,9 +3,11 @@
 ## What this project is
 
 `video_me` is an orchestration pipeline that turns a reference video URL into an original animated
-kids' educational short starring the final `kids_duo` cast: Max and Zoe. Every model is an
-interchangeable adapter behind a typed capability ABC. The pipeline is guardrail-enforced — jobs
-with uncleared rights or unoriginal content are blocked, not silently passed.
+kids' educational short. The default cast is `kids_duo` (Max and Zoe), but the pipeline is
+**cast-agnostic** — each job selects its cast from a dropdown, and a different cast YAML
+(even 1-character) works seamlessly. Every model is an interchangeable adapter behind a typed
+capability ABC. The pipeline is guardrail-enforced — jobs with uncleared rights or unoriginal
+content are blocked, not silently passed.
 
 ---
 
@@ -15,7 +17,7 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 
 **Default adapter stack is code-enforced in `core/config.py`: `musubi_flux` (image) / `ltx` (video) / `fish_s2` (TTS).** The image stage runs **musubi-tuner** as a subprocess — ComfyUI cannot load Flux 2.0 locally (no Mistral 3 encoder node; the `Flux2*` ComfyUI nodes are paid BFL cloud API), so `comfyui_flux` is a fallback, not the default. ComfyUI (8188) is still required for the **LTX-2.3 video** stage.
 
-**Test status:** 400 tests, all passing. Local Mac/py3.13 venv: **400 pass / 0 fail**.
+**Test status:** 404 tests, all passing. Local Mac/py3.13 venv: **399 pass / 5 skipped** (FastAPI-dependent dashboard tests skip when fastapi not installed).
 
 - **LLM**: qwen3.6:35b (MoE 35B). Thinking mode disabled via `extra_body={"think": False}` + no `response_format`. `max_tokens=16384`. `json_repair` fallback. Used for all LLM stages including plan critique.
 - **Image generation**: Flux 2.0 Dev (32B, Nov 2025) + Flux LoRA, run **locally via musubi-tuner** (replaces A1111 + SD 1.5). Default adapter: `MusubiFluxAdapter` (subprocess, no server). `ComfyUIFluxAdapter` (port 8188) is a fallback but ComfyUI can't load Flux 2.0 locally — it needs the paid BFL cloud API / a custom Mistral 3 node.
@@ -31,7 +33,8 @@ with uncleared rights or unoriginal content are blocked, not silently passed.
 - **Resume**: `--resume-job JOB_ID` skips completed stages/shots. LTX completion marker: `clip.mp4`; Wan fallback: `synced.mp4`.
 - **Fallback adapters**: `VIDEO_ME_RENDER_ADAPTER=a1111` → A1111 + SD 1.5. `VIDEO_ME_VIDEO_ADAPTER=wan` → Wan 2.2 + MuseTalk. `VIDEO_ME_TTS_ADAPTER=chatterbox` → Chatterbox TTS.
 - **Track B LoRAs**: existing SD 1.5 weights won't work with Flux 2.0 — retrain with `flux_train_network.py` (kohya_ss config already updated).
-- **Dashboard UI**: web UI at `http://localhost:8080` (uvicorn). Job list, detail, health, chat. Dedicated `/jobs/new` page with 4 input modes (Video URL / Local file / Story / Story + Images). Source kinds: `url`, `upload`, `file`, `story`, `story_images`. Story-kind jobs restricted to `transcribe` or `all` phases. Character image upload via `POST /api/uploads/character-image`.
+- **Per-job cast selection**: each job picks its cast from a dropdown in `/jobs/new`. `GET /api/casts` scans `config/casts/*.yaml`. Worker loads the selected cast via `_config_for_job()`. Default cast: `kids_duo` (env: `VIDEO_ME_CAST_PATH`). `Cast.members` enforces min_length=1 — 0 members gives a clear `ValidationError`. Adapt-script scene guide adjusts for 1/2/3+ member casts.
+- **Dashboard UI**: web UI at `http://localhost:8080` (uvicorn). Job list, detail, health, chat. Dedicated `/jobs/new` page with cast selector + 4 input modes (Video URL / Local file / Story / Story + Images). Source kinds: `url`, `upload`, `file`, `story`, `story_images`. Story-kind jobs restricted to `transcribe` or `all` phases. Character image upload via `POST /api/uploads/character-image`.
 - **Story ingest**: `adapters/story_ingest/` — structured parser (`start-end: text`) + LLM segmenter fallback. `_seed_story_job` in worker creates fake TranscribeResult from story text. Story+images mode skips Phase A render; user images go through approval with `origin="user"` label.
 - **GPU sequencer**: `core/gpu_sequencer.py` — coordinates VRAM between Wan adapter and other GPU models. Wan adapter uses deferred loading via `/load`/`/unload` endpoints (409 = busy). Workflow hooks free VRAM before Phase A and between approval and Phase B.
 
@@ -323,7 +326,7 @@ Test count by file:
 - `test_plan_shots.py` — 29
 - `test_assemble_video.py` — 32
 - `test_publish.py` — 26
-- `test_adapt_script.py` — ~25
+- `test_adapt_script.py` — ~30
 - `test_synthesize_voice.py` — 27
 - `test_render_character.py` — 29
 - `test_lip_sync.py` — 20
@@ -380,6 +383,9 @@ VIDEO_ME_LLM_MODEL=qwen3.6:35b         # also VLM critique; rollback: qwen3:14b
 VIDEO_ME_LLM_BASE_URL=http://localhost:11434/v1
 VIDEO_ME_CRITIQUE_MODEL=qwen3.6:35b    # single multimodal model for all critique
 VIDEO_ME_CRITIQUE_BASE_URL=http://localhost:11434/v1
+# Per-job cast selection (process-level default; overridden per job):
+VIDEO_ME_CAST_PATH=config/casts/kids_duo.yaml
+VIDEO_ME_CHANNEL_PATH=config/channels/education_kids.yaml
 # Default stack (musubi image + ComfyUI/LTX video + Fish S2 TTS):
 VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188   # ComfyUI (LTX video; also comfyui_flux fallback)
 VIDEO_ME_FISH_S2_BASE_URL=http://localhost:8025

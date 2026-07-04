@@ -7,9 +7,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import File, Form, UploadFile
+try:
+    from fastapi import File, Form, UploadFile
+except ModuleNotFoundError:  # allow import for helper tests without fastapi
+    File = Form = UploadFile = None  # type: ignore[assignment,misc]
 
-from core.config import AppConfig, load_app_config
+from core.config import AppConfig, load_app_config, load_yaml_model
 from core.storage import create_artifact_store
 from core.models.dashboard import (
     ChatRequest,
@@ -281,6 +284,26 @@ def create_app(
 
     _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
+    @app.get("/api/casts")
+    def list_casts() -> dict[str, Any]:
+        from core.models.profile import Cast
+
+        casts_dir = Path("config/casts")
+        result = []
+        if casts_dir.is_dir():
+            for yml in sorted(casts_dir.glob("*.yaml")):
+                try:
+                    cast = load_yaml_model(yml, Cast)
+                    result.append({
+                        "id": cast.id,
+                        "species": cast.species,
+                        "member_count": len(cast.members),
+                        "members": [{"id": m.id, "name": m.name} for m in cast.members],
+                    })
+                except Exception:
+                    pass
+        return _base_response({"casts": result, "default": config.cast.id})
+
     @app.get("/api/local-images")
     def list_local_images(dir: str | None = None) -> dict[str, Any]:
         import base64 as b64
@@ -313,8 +336,20 @@ def create_app(
     async def upload_character_image(
         member_id: str = Form(...),
         file: UploadFile = File(...),
+        cast_ref: str = Form(default=""),
     ) -> dict[str, Any]:
-        cast_ids = {m.id for m in config.cast.members}
+        if cast_ref:
+            from core.models.profile import Cast
+            cast_path = Path(f"config/casts/{cast_ref}.yaml")
+            if not cast_path.exists():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"code": "UNKNOWN_CAST", "message": f"No cast config for '{cast_ref}'", "retryable": False},
+                )
+            target_cast = load_yaml_model(cast_path, Cast)
+            cast_ids = {m.id for m in target_cast.members}
+        else:
+            cast_ids = {m.id for m in config.cast.members}
         if member_id not in cast_ids:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -971,7 +1006,9 @@ def create_app(
 
         @app.get("/jobs/new", include_in_schema=False)
         def ui_new_job():
-            return _render("job_new.html", cast_members=config.cast.members)
+            return _render("job_new.html",
+                          cast_members=config.cast.members,
+                          default_cast_id=config.cast.id)
 
         @app.get("/jobs/{job_id}", include_in_schema=False)
         def ui_job_detail(job_id: str):

@@ -62,11 +62,7 @@ Channel tone: {tone}
 Pedagogy: {pedagogy}
 Target length: ~{target_length_sec}s (≈{line_count} short lines total, 2–3s per line)
 
-Scene guide (write exactly 4 scenes):
-  Scene 1 — Hook: c1 asks a simple question about the concept. 2-3 lines.
-  Scene 2 — Discovery: c3 introduces and demonstrates the concept. 3-4 lines.
-  Scene 3 — Practice: all characters try it together, c2 makes it fun. 3-4 lines.
-  Scene 4 — Celebration: everyone cheers, c4 says the success phrase. 2-3 lines.
+{scene_guide}
 
 Return JSON with exactly this structure:
 {{
@@ -85,6 +81,35 @@ Return JSON with exactly this structure:
     }}
   ]
 }}"""
+
+
+def _format_scene_guide(cast) -> str:
+    m = cast.members
+    n = len(m)
+    if n == 1:
+        c = m[0].id
+        return (
+            f"Scene guide (write exactly 4 scenes):\n"
+            f'  Scene 1 — Hook: "{c}" asks a simple question about the concept. 2-3 lines.\n'
+            f'  Scene 2 — Discovery: "{c}" explores and discovers the concept. 3-4 lines.\n'
+            f'  Scene 3 — Practice: "{c}" tries it out, practicing the concept. 3-4 lines.\n'
+            f'  Scene 4 — Celebration: "{c}" celebrates and says the success phrase. 2-3 lines.'
+        )
+    if n == 2:
+        return (
+            f"Scene guide (write exactly 4 scenes):\n"
+            f'  Scene 1 — Hook: "{m[0].id}" asks a simple question about the concept. 2-3 lines.\n'
+            f'  Scene 2 — Discovery: "{m[1].id}" introduces and demonstrates the concept. 3-4 lines.\n'
+            f'  Scene 3 — Practice: both characters try it together, "{m[0].id}" makes it fun. 3-4 lines.\n'
+            f'  Scene 4 — Celebration: everyone cheers, "{m[1].id}" says the success phrase. 2-3 lines.'
+        )
+    return (
+        f"Scene guide (write exactly 4 scenes):\n"
+        f'  Scene 1 — Hook: "{m[0].id}" asks a simple question about the concept. 2-3 lines.\n'
+        f'  Scene 2 — Discovery: "{m[1].id}" introduces and demonstrates the concept. 3-4 lines.\n'
+        f'  Scene 3 — Practice: all characters try it together, "{m[2 % n].id}" makes it fun. 3-4 lines.\n'
+        f'  Scene 4 — Celebration: everyone cheers, "{m[-1].id}" says the success phrase. 2-3 lines.'
+    )
 
 
 def _strip_markdown_fence(text: str) -> str:
@@ -225,6 +250,7 @@ class LlmAdaptScriptAdapter(AdaptScript):
             success_phrase=obj.success_phrase,
             reinforcement_count=obj.reinforcement_count,
             cast_block=_format_cast_block(req.cast),
+            scene_guide=_format_scene_guide(req.cast),
             tone=profile.tone,
             pedagogy=profile.pedagogy,
             target_length_sec=target_sec,

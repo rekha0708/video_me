@@ -115,7 +115,7 @@ class VlmImageCritiqueAdapter(CritiqueImages):
         model: str = "qwen3.6:35b",
         base_url: str = "http://localhost:11434/v1",
         api_key: str = "ollama",
-        feedback_log_dir: Path = Path("assets/kids_duo"),
+        feedback_log_dir: Path = Path("assets"),
         temperature: float = 0.1,
         max_tokens: int = 4096,
     ) -> None:

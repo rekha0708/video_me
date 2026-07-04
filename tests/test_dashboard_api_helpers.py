@@ -1,10 +1,15 @@
 """Unit tests for the module-level job-page helpers in services/dashboard_api.py."""
+import importlib
+
+import pytest
 from pathlib import Path
 from types import SimpleNamespace
 
 from core.storage import LocalArtifactStore
 from services.dashboard_api import _artifact_flags, _stepper_state
 from adapters.approval.dashboard_image_approval_adapter import _build_request_payload
+
+_has_fastapi = importlib.util.find_spec("fastapi") is not None
 
 
 # ------------------------------------------------------------------ fixtures
@@ -141,12 +146,13 @@ def test_stepper_all_queued_job_infers_from_artifacts() -> None:
 # -------------------------------------------------------- story phase restriction
 
 
+@pytest.mark.skipif(not _has_fastapi, reason="fastapi not installed")
 def test_story_job_rejected_with_invalid_phase(tmp_path: Path) -> None:
     """Story-kind jobs must start at 'transcribe' or 'all', not script_plan/render/assemble."""
     from fastapi.testclient import TestClient
     from services.dashboard_api import create_app
     from core.config import AppConfig, Settings
-    from core.models.profile import ChannelProfile, Cast
+    from core.models.profile import ChannelProfile, Cast, CastMember
 
     settings = Settings(data_dir=str(tmp_path / "data"), artifact_dir=str(tmp_path / "art"))
     cfg = AppConfig(
@@ -156,7 +162,10 @@ def test_story_job_rejected_with_invalid_phase(tmp_path: Path) -> None:
             genre_content="education", tone="friendly",
             format="animated_character", made_for_kids=True,
         ),
-        cast=Cast(id="kids_duo", species="human", is_original_synthetic=True, members=[]),
+        cast=Cast(id="kids_duo", species="human", is_original_synthetic=True, members=[
+            CastMember(id="max", name="Max", visual_descriptor="boy", lora_ref="loras/max",
+                       voice_profile_ref="voices/max", personality="friendly"),
+        ]),
     )
     app = create_app(config_loader=lambda: cfg)
     client = TestClient(app, raise_server_exceptions=False)
@@ -255,6 +264,7 @@ def _make_test_client(tmp_path: Path):
     return TestClient(create_app(config_loader=lambda: cfg), raise_server_exceptions=False)
 
 
+@pytest.mark.skipif(not _has_fastapi, reason="fastapi not installed")
 def test_upload_character_image_valid(tmp_path: Path) -> None:
     client = _make_test_client(tmp_path)
     resp = client.post(
@@ -269,6 +279,7 @@ def test_upload_character_image_valid(tmp_path: Path) -> None:
     assert Path(data["path"]).exists()
 
 
+@pytest.mark.skipif(not _has_fastapi, reason="fastapi not installed")
 def test_upload_character_image_invalid_member(tmp_path: Path) -> None:
     client = _make_test_client(tmp_path)
     resp = client.post(
@@ -280,6 +291,7 @@ def test_upload_character_image_invalid_member(tmp_path: Path) -> None:
     assert "INVALID_MEMBER" in resp.text
 
 
+@pytest.mark.skipif(not _has_fastapi, reason="fastapi not installed")
 def test_upload_character_image_invalid_format(tmp_path: Path) -> None:
     client = _make_test_client(tmp_path)
     resp = client.post(
@@ -291,6 +303,7 @@ def test_upload_character_image_invalid_format(tmp_path: Path) -> None:
     assert "INVALID_FORMAT" in resp.text
 
 
+@pytest.mark.skipif(not _has_fastapi, reason="fastapi not installed")
 def test_local_images_endpoint(tmp_path: Path) -> None:
     client = _make_test_client(tmp_path)
     img_dir = tmp_path / "images"

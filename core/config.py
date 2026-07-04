@@ -84,7 +84,11 @@ class Settings(BaseSettings):
     image_critique_model: str = "qwen3.6:35b"
     image_critique_base_url: str = "http://localhost:11434/v1"
     image_critique_api_key: str = "ollama"
-    feedback_log_dir: Path = Path("assets/kids_duo")  # per-cast critique_feedback.jsonl
+    feedback_log_dir: Path = Path("assets/kids_duo")  # resolved per-cast in load_app_config()
+
+    # --- config paths (overridable via env) ---
+    cast_path: Path = Path("config/casts/kids_duo.yaml")
+    channel_path: Path = Path("config/channels/education_kids.yaml")
 
     # --- human approval web UI (image grid) ---
     # Reuses approval_port — the two gates run sequentially so no conflict.
@@ -104,10 +108,17 @@ def load_yaml_model(path: Path, model: type[ModelT]) -> ModelT:
 
 
 def load_app_config(
-    channel_path: Path = Path("config/channels/education_kids.yaml"),
-    cast_path: Path = Path("config/casts/kids_duo.yaml"),
+    channel_path: Path | None = None,
+    cast_path: Path | None = None,
 ) -> AppConfig:
+    settings = Settings()
+    resolved_channel = channel_path or settings.channel_path
+    resolved_cast = cast_path or settings.cast_path
+    cast = load_yaml_model(resolved_cast, Cast)
+    if settings.feedback_log_dir == Path("assets/kids_duo"):
+        settings.feedback_log_dir = Path(f"assets/{cast.id}")
     return AppConfig(
-        channel_profile=load_yaml_model(channel_path, ChannelProfile),
-        cast=load_yaml_model(cast_path, Cast),
+        settings=settings,
+        channel_profile=load_yaml_model(resolved_channel, ChannelProfile),
+        cast=cast,
     )

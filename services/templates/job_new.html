@@ -13,6 +13,15 @@
 <div class="card" style="max-width:640px">
   <form id="new-job-form" onsubmit="submitNewJob(event)">
 
+    {# ── Cast selector ── #}
+    <div class="form-row">
+      <label>Cast</label>
+      <select id="nj-cast" onchange="onCastChange(this.value)">
+        {# populated by JS from GET /api/casts; default pre-selected #}
+      </select>
+      <div class="form-hint">Character cast for this job. Each cast has its own LoRA + voice profiles.</div>
+    </div>
+
     {# ── Input mode selector ── #}
     <div class="form-row">
       <label>Input Mode</label>
@@ -67,27 +76,20 @@
     <div class="form-row" id="nj-story-row" style="display:none">
       <label>Story Text</label>
       <textarea id="nj-story-text" rows="8" style="width:100%;font-family:monospace;font-size:12px"
-                placeholder="Paste your story here.&#10;&#10;Structured format (optional):&#10;0-4: Max and Zoe find a rainbow.&#10;4-8: They count the colors together.&#10;&#10;Or just paste free text — it will be auto-segmented."></textarea>
+                placeholder="Paste your story here.&#10;&#10;Structured format (optional):&#10;0-4: Characters find a rainbow.&#10;4-8: They count the colors together.&#10;&#10;Or just paste free text — it will be auto-segmented."></textarea>
       <div class="form-hint">
         Use <code>start-end: text</code> per line for precise timing,
         or paste free text (auto-segmented by the LLM).
       </div>
     </div>
 
-    {# ── Character image upload (story_images mode) ── #}
+    {# ── Character image upload (story_images mode) — rebuilt dynamically by JS ── #}
     <div class="form-row" id="nj-images-row" style="display:none">
       <label>Character Reference Images</label>
       <div class="form-hint" style="margin-bottom:8px">
         Upload one reference image per character. Used for all shots.
       </div>
-      {% for member in cast_members %}
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-        <span style="min-width:60px;font-weight:600">{{ member.name }}</span>
-        <input type="file" id="nj-img-{{ member.id }}" accept="image/png,image/jpeg,image/webp"
-               data-member-id="{{ member.id }}">
-        <span class="form-hint" id="nj-img-status-{{ member.id }}"></span>
-      </div>
-      {% endfor %}
+      <div id="nj-images-slots"></div>
     </div>
 
     {# ── Phase ── #}
@@ -146,6 +148,60 @@
 
 {% block scripts %}
 <script>
+const DEFAULT_CAST_ID = "{{ default_cast_id }}";
+let _castsCache = null;
+let _currentCastMembers = [];
+
+async function loadCasts() {
+  try {
+    const resp = await fetch("/api/casts");
+    const data = await resp.json();
+    _castsCache = data.casts || [];
+    const sel = document.getElementById("nj-cast");
+    sel.innerHTML = _castsCache.map(c =>
+      `<option value="${c.id}"${c.id === DEFAULT_CAST_ID ? " selected" : ""}>`
+      + `${c.id} — ${c.members.map(m => m.name).join(", ")} (${c.member_count})`
+      + `</option>`
+    ).join("");
+    onCastChange(sel.value);
+  } catch (e) {
+    console.error("Failed to load casts:", e);
+  }
+}
+
+function onCastChange(castId) {
+  const cast = (_castsCache || []).find(c => c.id === castId);
+  _currentCastMembers = cast ? cast.members : [];
+  rebuildImageSlots(_currentCastMembers);
+  updateStoryPlaceholder(_currentCastMembers);
+}
+
+function rebuildImageSlots(members) {
+  const container = document.getElementById("nj-images-slots");
+  if (!container) return;
+  container.innerHTML = members.map(m =>
+    `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">`
+    + `<span style="min-width:60px;font-weight:600">${m.name}</span>`
+    + `<input type="file" id="nj-img-${m.id}" accept="image/png,image/jpeg,image/webp" data-member-id="${m.id}">`
+    + `<span class="form-hint" id="nj-img-status-${m.id}"></span>`
+    + `</div>`
+  ).join("");
+}
+
+function updateStoryPlaceholder(members) {
+  const ta = document.getElementById("nj-story-text");
+  if (!ta || !members.length) return;
+  const names = members.length > 1
+    ? members[0].name + " and " + members[1].name
+    : members[0].name;
+  ta.placeholder = "Paste your story here.\n\nStructured format (optional):\n"
+    + "0-4: " + names + " find a rainbow.\n"
+    + "4-8: They count the colors together.\n\n"
+    + "Or just paste free text — it will be auto-segmented.";
+}
+
+document.addEventListener("DOMContentLoaded", loadCasts);
+
 const PHASE_HINTS = {
   "noop":        "Runs a mock pipeline in-memory — no services needed.",
   "transcribe":  "Downloads the video, transcribes audio, and analyzes content.",
@@ -237,6 +293,8 @@ async function uploadCharacterImage(memberId) {
   const formData = new FormData();
   formData.append("member_id", memberId);
   formData.append("file", input.files[0]);
+  const castSel = document.getElementById("nj-cast");
+  if (castSel && castSel.value) formData.append("cast_ref", castSel.value);
   const resp = await fetch("/api/uploads/character-image", { method: "POST", body: formData });
   if (!resp.ok) {
     const data = await resp.json();
@@ -288,6 +346,7 @@ async function submitNewJob(e) {
     }
 
     const videoAdapter = document.getElementById("nj-video-adapter").value;
+    const castSel = document.getElementById("nj-cast");
     const body = {
       source: { kind: sourceKind, url: sourceUrl },
       rights_cleared: document.getElementById("nj-rights").checked,
@@ -295,6 +354,7 @@ async function submitNewJob(e) {
       phase: document.getElementById("nj-phase").value,
       overrides: videoAdapter ? { video_adapter: videoAdapter } : {},
     };
+    if (castSel && castSel.value) body.cast_ref = castSel.value;
     if (storyText) body.story_text = storyText;
     if (Object.keys(characterImages).length) body.character_images = characterImages;
 

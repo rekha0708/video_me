@@ -8,6 +8,7 @@ from adapters.adapt_script.llm_adapter import (
     LlmAdaptScriptAdapter,
     _compute_caption_text,
     _format_cast_block,
+    _format_scene_guide,
 )
 from core.models.capabilities import AdaptScriptRequest
 from core.models.content import ContentMetadata, LearningObjective
@@ -367,3 +368,53 @@ async def test_estimate_cost_is_zero() -> None:
     adapter = _adapter()
     cost = await adapter.estimate_cost(_request())
     assert cost.amount == 0.0
+
+
+# ------------------------------------------------------------------ _format_scene_guide
+
+
+def _solo_cast() -> Cast:
+    return Cast(
+        id="solo", species="fox", is_original_synthetic=True,
+        members=[
+            CastMember(id="fox", name="Fox", visual_descriptor="red fox",
+                       lora_ref="loras/fox", voice_profile_ref="voices/fox",
+                       personality="adventurous"),
+        ],
+    )
+
+
+def _duo_cast() -> Cast:
+    return Cast(
+        id="duo", species="cat", is_original_synthetic=True,
+        members=[
+            CastMember(id="a", name="A", visual_descriptor="x",
+                       lora_ref="l/a", voice_profile_ref="v/a", personality="curious"),
+            CastMember(id="b", name="B", visual_descriptor="y",
+                       lora_ref="l/b", voice_profile_ref="v/b", personality="wise"),
+        ],
+    )
+
+
+def test_format_scene_guide_solo() -> None:
+    guide = _format_scene_guide(_solo_cast())
+    assert '"fox"' in guide
+    assert "Scene 1" in guide and "Scene 4" in guide
+
+
+def test_format_scene_guide_duo() -> None:
+    guide = _format_scene_guide(_duo_cast())
+    assert '"a"' in guide and '"b"' in guide
+    assert "both" in guide.lower()
+
+
+def test_format_scene_guide_four_members() -> None:
+    guide = _format_scene_guide(_cast())
+    assert '"c1"' in guide and '"c2"' in guide
+    assert "all characters" in guide.lower() or "everyone" in guide.lower()
+
+
+def test_cast_members_min_length_rejects_empty() -> None:
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError, match="at least 1"):
+        Cast(id="empty", species="x", is_original_synthetic=True, members=[])

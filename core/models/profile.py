@@ -33,7 +33,7 @@ class Cast(BaseModel):
     id: str
     species: str
     is_original_synthetic: bool
-    members: list[CastMember]
+    members: list[CastMember] = Field(..., min_length=1)
     design_constraints: list[str] = Field(default_factory=list)
 
     @field_validator("is_original_synthetic")

@@ -196,15 +196,31 @@ class DashboardWorker:
         """Apply the job's per-request overrides (model/adapter choices) on top
         of the worker's base config. DashboardJobOverrides' field names are a
         deliberate 1:1 match with Settings' fields, so this is a direct copy.
+        Per-job cast: if req.cast_ref differs from the default, load that cast YAML.
         """
+        config = self.config
+
+        if req.cast_ref and req.cast_ref != config.cast.id:
+            from pathlib import Path as _Path
+            from core.config import load_yaml_model
+            from core.models.profile import Cast
+
+            cast_path = _Path(f"config/casts/{req.cast_ref}.yaml")
+            if not cast_path.exists():
+                raise ValueError(f"Unknown cast: {req.cast_ref} (no file at {cast_path})")
+            new_cast = load_yaml_model(cast_path, Cast)
+            feedback_dir = _Path(f"assets/{new_cast.id}")
+            new_settings = config.settings.model_copy(update={"feedback_log_dir": feedback_dir})
+            config = config.model_copy(update={"cast": new_cast, "settings": new_settings})
+
         overrides = req.overrides
         updates = {
             k: v for k, v in overrides.model_dump().items() if v is not None
         }
-        if not updates:
-            return self.config
-        new_settings = self.config.settings.model_copy(update=updates)
-        return self.config.model_copy(update={"settings": new_settings})
+        if updates:
+            new_settings = config.settings.model_copy(update=updates)
+            config = config.model_copy(update={"settings": new_settings})
+        return config
 
     async def _run_pipeline(self, req: CreateDashboardJobRequest, job_id: str) -> None:
         from core.storage import create_job_store

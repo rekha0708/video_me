@@ -499,6 +499,7 @@ async def _run_image_approval_gate(
     shots: list[Shot],
     critique_results: list["ImageCritiqueResult"],
     adapters: _Adapters,
+    cast_id: str,
 ) -> list[str]:
     """Show the image approval grid UI; return approved URI per shot."""
     from core.models.capabilities import ImageApprovalRequest
@@ -507,7 +508,7 @@ async def _run_image_approval_gate(
         ImageApprovalRequest(
             shots=shots,
             critique_results=critique_results,
-            cast_id="kids_duo",
+            cast_id=cast_id,
         )
     )
     return result.approved_uris
@@ -952,7 +953,7 @@ async def _run_to_assembled_video(
 
         # ── Image approval gate (single UI for all shots) ─────────────────────
         approved_uris = await _run_image_approval_gate(
-            shots_to_run, critique_results, adapters
+            shots_to_run, critique_results, adapters, cast_id=config.cast.id
         )
 
         # Render phase is done — bring the VRAM-managed video model (Wan) up:

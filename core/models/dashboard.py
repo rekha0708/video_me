@@ -114,6 +114,7 @@ class CreateDashboardJobRequest(BaseModel):
     idempotency_key: str | None = None
     # Story input modes: the story replaces the transcript (kind="story"/"story_images");
     # character_images maps cast member_id → server-side image path (kind="story_images").
+    cast_ref: str | None = None
     story_text: str | None = None
     character_images: dict[str, str] = Field(default_factory=dict)
 
