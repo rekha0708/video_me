@@ -1,0 +1,162 @@
+id: indian_model_duo
+species: human
+is_original_synthetic: true
+
+members:
+  - id: Meera
+    name: Meera
+    gender: female
+    visual_descriptor: >
+      An adult Indian woman model, mid-to-late 20s, confident and elegant.
+      She has warm brown skin, expressive almond-shaped dark brown eyes, bold defined eyebrows, sharp facial features, and a magnetic gaze.
+      Her eyes look confident, intense, slightly mysterious, and glamorous.
+      She has long, healthy black hair styled in soft waves with a polished, modern look.
+      Her makeup is refined and glamorous, with strong eyeliner, defined lashes, glowing skin, and a soft nude or rose-toned lip.
+      She wears a stylish modern outfit with subtle Indian elegance, such as a fitted dress, statement earrings, or a chic Indo-western look.
+      Her posture is upright, graceful, and powerful.
+      Overall vibe: bold, attractive, confident, elegant, feminine, charismatic, and high-fashion.
+
+    lora_ref: loras/indian_model_duo/meera
+    voice_profile_ref: voices/indian_model_duo/meera
+
+    personality: >
+      She is confident, fearless, stylish, emotionally strong, and self-assured.
+      She carries herself with quiet power and does not seek approval.
+      She is graceful, intelligent, charming, and slightly mysterious.
+      Her presence feels magnetic and cinematic.
+      She blends modern global fashion energy with Indian cultural elegance.
+      She is bold but classy, attractive but sophisticated, playful but composed.
+
+    signature_expressions:
+      - Direct confident eye contact
+      - Intense glamorous gaze
+      - Slight mysterious smile
+      - Soft confident smirk
+      - Raised eyebrow when amused or challenged
+      - Calm composed face with expressive eyes
+      - Warm elegant smile
+      - Chin slightly lifted with self-assurance
+      - Slow eye movement toward the camera
+      - Playful but classy expression
+
+    signature_moves:
+      - Walks slowly and confidently toward the camera
+      - Turns her head slightly while maintaining eye contact
+      - Brushes hair back gracefully with one hand
+      - Adjusts statement earrings or bracelet elegantly
+      - Poses with one hand on waist
+      - Looks over her shoulder with a confident gaze
+      - Gives a subtle smirk before looking away
+      - Stands tall with relaxed shoulders and lifted chin
+      - Moves with smooth, controlled, high-fashion body language
+      - Enters the frame with calm confidence and strong presence
+
+    video_motion_style: >
+      Smooth cinematic movement, graceful body language, slow confident walking, subtle facial expressions, controlled head turns, elegant hand gestures, natural hair movement, polished fashion-model energy.
+
+    camera_style: >
+      Cinematic close-up and medium shots, soft natural lighting, shallow depth of field, smooth camera tracking, high-fashion editorial framing, elegant Indian glamour aesthetic.
+
+    negative_prompt: >
+      child, teenager, underage, overly exaggerated body, vulgar pose, explicit nudity, cheap styling, messy hair, distorted face, bad hands, extra fingers, awkward pose, low-quality image, blurry face, unnatural expression, oversexualized, cartoonish, plastic skin
+
+  - id: Rudra
+    name: Rudra
+    gender: male
+    visual_descriptor: >
+      An adult Indian man model, late 20s to early 30s, confident, attractive, and elegant.
+      He has warm brown skin, expressive deep brown eyes, bold eyebrows, a strong jawline, and sharp masculine facial features.
+      His gaze is intense, calm, confident, and slightly mysterious.
+      He has thick black hair, neatly styled with a polished modern look, either slightly textured or sleek.
+      He may have light stubble or a well-groomed beard that enhances his refined masculine appeal.
+      He wears sophisticated, premium, fashion-forward clothing such as a tailored shirt, structured blazer, modern casual wear, or a stylish Indo-western look.
+      His posture is upright, relaxed, and powerful.
+      Overall vibe: bold, attractive, confident, masculine, charismatic, refined, and high-fashion.
+
+    lora_ref: loras/indian_model_duo/rudra
+    voice_profile_ref: voices/indian_model_duo/rudra
+
+    personality: >
+      He is confident, self-assured, composed, and emotionally strong.
+      He carries himself with quiet authority and natural charm.
+      He is intelligent, stylish, grounded, and slightly mysterious.
+      His presence feels magnetic, cinematic, and premium.
+      He blends modern global fashion energy with Indian cultural elegance.
+      He is bold but classy, attractive but sophisticated, calm but commanding, and playful without losing composure.
+
+    signature_expressions:
+      - Direct confident eye contact
+      - Intense calm gaze
+      - Slight knowing smile
+      - Soft confident smirk
+      - Raised eyebrow when amused or intrigued
+      - Calm composed face with sharp eye expression
+      - Warm masculine smile
+      - Chin slightly lifted with self-assurance
+      - Slow glance toward the camera
+      - Playful but controlled expression
+
+    signature_moves:
+      - Walks slowly and confidently toward the camera
+      - Turns his head slightly while maintaining eye contact
+      - Runs a hand through his hair in a relaxed, stylish way
+      - Adjusts his cuff, jacket, or watch elegantly
+      - Poses with one hand in pocket
+      - Looks over his shoulder with a confident gaze
+      - Gives a subtle smirk before looking away
+      - Stands tall with relaxed shoulders and lifted chin
+      - Moves with smooth, controlled, high-fashion body language
+      - Enters the frame with calm confidence and commanding presence
+
+    video_motion_style: >
+      Smooth cinematic movement, controlled masculine body language, slow confident walking, subtle facial expressions, measured head turns, elegant hand gestures, natural hair movement, polished fashion-model energy.
+
+    camera_style: >
+      Cinematic close-up and medium shots, soft natural lighting, shallow depth of field, smooth camera tracking, high-fashion editorial framing, elegant Indian male model aesthetic.
+
+    negative_prompt: >
+      child, teenager, underage, exaggerated muscles, vulgar pose, explicit nudity, cheap styling, messy hair, distorted face, bad hands, extra fingers, awkward pose, low-quality image, blurry face, unnatural expression, oversexualized, cartoonish, plastic skin
+
+design_constraints:
+  general:
+    - Adult human models only
+    - Indian origin
+    - Premium, high-fashion, cinematic visual identity
+    - Attractive, elegant, confident, and sophisticated
+    - Subtle Indian elegance blended with modern global fashion styling
+    - Natural human anatomy and realistic body proportions
+    - Consistent identity across generations
+    - Maintain the same facial structure, skin tone, hair color, and overall personality
+    - No cartoon style
+    - No plastic skin
+    - No distorted anatomy
+    - No underage appearance
+    - No vulgar or explicit presentation
+
+  Meera:
+    - Adult woman, age 25 to 32
+    - Warm brown skin tone
+    - Deep expressive dark brown eyes with intense confident gaze
+    - Bold eyebrows and sharp refined facial features
+    - Long black hair, neat, polished, soft waves or sleek styling
+    - Glamorous but classy makeup, defined eyeliner, glowing skin, soft nude or rose lip
+    - Modern high-fashion styling with subtle Indian elegance
+    - Outfits should be stylish, fitted, elegant, and premium-looking
+    - Avoid cheap, overly revealing, vulgar, or costume-like clothing
+    - Body language should be graceful, controlled, and confident
+    - Expressions should be subtle, magnetic, and cinematic
+
+  Rudra:
+    - Adult man, age 27 to 34
+    - Warm brown skin tone
+    - Deep expressive dark brown eyes with calm intense gaze
+    - Bold eyebrows, strong jawline, refined masculine facial features
+    - Thick black hair, neatly styled, polished and modern
+    - Optional light stubble or a well-groomed beard
+    - Fashion styling should be premium, fitted, elegant, and modern
+    - Can include tailored western wear or subtle Indo-western styling
+    - Avoid cheap, flashy, overly revealing, or costume-like clothing
+    - Body language should be graceful, controlled, and confident
+    - Expressions should be subtle, magnetic, and cinematic
+    - Maintain realistic body proportions and natural human movement
+    - No exaggerated physique

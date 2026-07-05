@@ -1,0 +1,76 @@
+id: lady_model
+species: human
+is_original_synthetic: true
+members:
+  - id: Meera
+    name: Meera
+    gender: female
+    visual_descriptor: >
+      An adult Indian woman model, mid-to-late 20s, confident and elegant.
+      She has warm brown skin, expressive almond-shaped dark brown eyes, bold defined eyebrows, sharp facial features, and a magnetic gaze.
+      Her eyes look confident, intense, slightly mysterious, and glamorous. She has long, healthy black hair styled in soft waves with a polished, modern look.
+      Her makeup is refined and glamorous, with strong eyeliner, defined lashes, glowing skin, and a soft nude or rose-toned lip.
+      She wears a stylish modern outfit with subtle Indian elegance, such as a fitted dress, statement earrings, or a chic Indo-western look. Her posture is upright, graceful, and powerful.
+      Overall vibe: bold, attractive, confident, elegant, feminine, charismatic, and high-fashion.
+    lora_ref: loras/lady_model/meera
+    voice_profile_ref: voices/lady_model/meera
+    personality: >
+      She is confident, fearless, stylish, emotionally strong, and self-assured.
+      She carries herself with quiet power and does not seek approval.
+      She is graceful, intelligent, charming, and slightly mysterious.
+      Her presence feels magnetic and cinematic. She blends modern global fashion energy with Indian cultural elegance.
+      She is bold but classy, attractive but sophisticated, playful but composed.
+    signature_expressions:
+      - Direct confident eye contact
+      - Intense glamorous gaze
+      - Slight mysterious smile
+      - Soft confident smirk
+      - Raised eyebrow when amused or challenged
+      - Calm composed face with expressive eyes
+      - Warm elegant smile
+      - Chin slightly lifted with self-assurance
+      - Slow eye movement toward the camera
+      - Playful but classy expression
+    signature_moves:
+      - Walks slowly and confidently toward the camera
+      - Turns her head slightly while maintaining eye contact
+      - Brushes hair back gracefully with one hand
+      - Adjusts statement earrings or bracelet elegantly
+      - Poses with one hand on waist
+      - Looks over her shoulder with a confident gaze
+      - Gives a subtle smirk before looking away
+      - Stands tall with relaxed shoulders and lifted chin
+      - Moves with smooth, controlled, high-fashion body language
+      - Enters the frame with calm confidence and strong presence
+    video_motion_style: >
+      Smooth cinematic movement, graceful body language, slow confident walking, subtle facial expressions, controlled head turns, elegant hand gestures, natural hair movement, polished fashion-model energy.
+
+    camera_style: >
+      Cinematic close-up and medium shots, soft natural lighting, shallow depth of field, smooth camera tracking, high-fashion editorial framing, elegant Indian glamour aesthetic.
+
+    negative_prompt: >
+      child, teenager, underage, overly exaggerated body, vulgar pose, explicit nudity, cheap styling, messy hair, distorted face, bad hands, extra fingers, awkward pose, low-quality image, blurry face, unnatural expression, oversexualized, cartoonish, plastic skin
+
+design_constraints:
+- Adult woman, age 25 to 32
+- Indian origin, warm brown skin tone
+- Elegant, bold, confident, and sophisticated
+- Attractive but not vulgar or explicit
+- Deep expressive dark brown eyes with intense confident gaze
+- Bold eyebrows, sharp refined facial features
+- Long black hair, neat, polished, soft waves or sleek styling
+- Glamorous but classy makeup, defined eyeliner, glowing skin, soft nude or rose lip
+- Modern high-fashion styling with subtle Indian elegance
+- Outfits should be stylish, fitted, elegant, and premium-looking
+- Avoid cheap, overly revealing, vulgar, or costume-like clothing
+- Body language should be graceful, controlled, and confident
+- Facial expressions should be subtle, magnetic, and cinematic
+- Keep the same face, hairstyle, skin tone, and personality across generations
+- Maintain realistic proportions and natural human movement
+- No exaggerated body shape, no cartoon style, no plastic skin
+- No underage appearance, no teen look
+
+#Animate this adult Indian female model with confident, elegant, high-fashion energy.
+#She has intense glamorous eyes, a subtle mysterious smile, graceful posture, and smooth controlled body movement. She slowly walks toward the camera, makes direct eye contact, gently turns her head, brushes her hair back, and gives a soft confident smirk.
+#Keep the motion natural, cinematic, elegant, bold, and sophisticated.
+#Avoid exaggerated or vulgar movement.
