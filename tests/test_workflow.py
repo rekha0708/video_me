@@ -135,6 +135,11 @@ def _transcribe_result() -> TranscribeResult:
     return TranscribeResult(segments=[], language="en", full_text="Let's count!")
 
 
+def _visual_context() -> "VisualContext":
+    from core.models.capabilities import VisualContext
+    return VisualContext()
+
+
 def _metadata() -> ContentMetadata:
     return ContentMetadata(
         content_genre="education",
@@ -246,6 +251,7 @@ def _stage_results():
         "fetch_media": _fetch_result(),
         "transcribe": _transcribe_result(),
         "analyze_content": _metadata(),
+        "analyze_visuals": _visual_context(),
         "adapt_script": _script(),
         "plan_shots": _storyboard(),
         "assemble_video": _final_video(),
@@ -456,6 +462,7 @@ async def test_stage_call_order(tmp_path) -> None:
         "fetch_media",
         "transcribe",
         "analyze_content",
+        "analyze_visuals",
         "adapt_script",
         "plan_shots",
         "assemble_video",
@@ -567,6 +574,38 @@ async def test_per_shot_loop_runs_for_each_shot(tmp_path) -> None:
         await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
 
     assert mock_generate.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_visual_context_flows_into_adapt_script(tmp_path) -> None:
+    """analyze_visuals output must reach the AdaptScriptRequest for grounding."""
+    from core.models.capabilities import VisualContext, VisualSegment
+
+    config = _make_config(tmp_path)
+    grounded = VisualContext(
+        segments=[VisualSegment(start=0, end=5, setting="cozy kitchen", props=["apple"])]
+    )
+    results = {**_stage_results(), "analyze_visuals": grounded}
+    captured = {}
+
+    async def recording_run_stage(stage_name, capability, request, job, *args, **_kw):
+        if stage_name == "adapt_script":
+            captured["request"] = request
+        return results[stage_name]
+
+    with (
+        patch("core.workflow._make_adapters", return_value=MagicMock(ffmpeg_bin="ffmpeg")),
+        patch("core.workflow.run_stage", new=recording_run_stage),
+        patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
+        patch("core.workflow.create_job_store", return_value=MagicMock()),
+        patch("core.workflow.create_artifact_store", return_value=MagicMock()),
+    ):
+        with _mock_shot_patches():
+            await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
+
+    req = captured["request"]
+    assert req.visual_context is not None
+    assert req.visual_context.segments[0].setting == "cozy kitchen"
 
 
 @pytest.mark.asyncio

@@ -63,7 +63,7 @@ Pedagogy: {pedagogy}
 Target length: ~{target_length_sec}s (≈{line_count} short lines total, 2–3s per line)
 
 {scene_guide}
-
+{visual_block}
 Return JSON with exactly this structure:
 {{
   "scenes": [
@@ -117,6 +117,25 @@ def _strip_markdown_fence(text: str) -> str:
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
     match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
     return match.group(1).strip() if match else text
+
+
+def _format_visual_block(visual_context) -> str:
+    """Render observed source-video settings so the LLM grounds scene backgrounds.
+
+    Empty when there is no visual context (story jobs / extraction failed) — the
+    LLM then invents settings as before.
+    """
+    if visual_context is None or not getattr(visual_context, "segments", None):
+        return ""
+    lines = [
+        "\nObserved settings from the source video (in temporal order). Set each",
+        'scene\'s "setting" to the real location that best matches that point in the',
+        "story, preserving order; do not invent unrelated locations:",
+    ]
+    for i, seg in enumerate(visual_context.segments, start=1):
+        props = f" — props: {', '.join(seg.props)}" if seg.props else ""
+        lines.append(f"  {i}. {seg.setting}{props}")
+    return "\n".join(lines) + "\n"
 
 
 def _format_cast_block(cast) -> str:
@@ -251,6 +270,7 @@ class LlmAdaptScriptAdapter(AdaptScript):
             reinforcement_count=obj.reinforcement_count,
             cast_block=_format_cast_block(req.cast),
             scene_guide=_format_scene_guide(req.cast),
+            visual_block=_format_visual_block(req.visual_context),
             tone=profile.tone,
             pedagogy=profile.pedagogy,
             target_length_sec=target_sec,

@@ -34,7 +34,27 @@ def _request(**kwargs) -> RenderCharacterRequest:
         member=kwargs.get("member", _member()),
         setting=kwargs.get("setting", "sunny meadow"),
         expression=kwargs.get("expression", "wide-eyed wonder"),
+        shot_id=kwargs.get("shot_id", ""),
+        camera=kwargs.get("camera", ""),
     )
+
+
+def test_build_prompt_contains_camera_framing(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    prompt = adapter._build_prompt(_request(camera="close-up"))
+    assert "close-up shot" in prompt
+
+
+def test_build_prompt_omits_framing_for_empty_camera(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    prompt = adapter._build_prompt(_request(camera=""))
+    for phrase in ("close-up shot", "medium shot", "wide establishing shot", "reaction shot"):
+        assert phrase not in prompt
+
+
+def test_build_prompt_maps_wide_camera(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    assert "wide establishing shot" in adapter._build_prompt(_request(camera="wide"))
 
 
 def _adapter(tmp_path: Path, **kwargs) -> DiffusionRenderAdapter:
@@ -371,3 +391,54 @@ async def test_run_propagates_api_error(tmp_path: Path) -> None:
 async def test_estimate_cost_is_zero(tmp_path: Path) -> None:
     cost = await _adapter(tmp_path).estimate_cost(_request())
     assert cost.amount == 0.0
+
+
+# ------------------------------------------------------------------ per-shot render scoping
+
+async def test_run_scopes_output_dir_by_shot_id(tmp_path: Path) -> None:
+    lora_dir = tmp_path / "loras"
+    lora_dir.mkdir()
+    (lora_dir / "kids_duo_max.safetensors").write_bytes(b"fake")
+
+    adapter = _adapter(tmp_path, lora_dir=lora_dir)
+    fake_httpx, _ = _mock_httpx()
+
+    with patch.dict(sys.modules, {"httpx": fake_httpx}):
+        result = await adapter.run(_request(shot_id="s01"))
+
+    # Shot-scoped: renders/s01/max/
+    assert (tmp_path / "renders" / "s01" / "max").is_dir()
+    assert "s01" in result.images[0]
+
+
+async def test_two_shots_same_speaker_get_distinct_dirs(tmp_path: Path) -> None:
+    lora_dir = tmp_path / "loras"
+    lora_dir.mkdir()
+    (lora_dir / "kids_duo_max.safetensors").write_bytes(b"fake")
+
+    adapter = _adapter(tmp_path, lora_dir=lora_dir)
+    fake_httpx, _ = _mock_httpx()
+
+    with patch.dict(sys.modules, {"httpx": fake_httpx}):
+        r1 = await adapter.run(_request(shot_id="s01"))
+        r2 = await adapter.run(_request(shot_id="s02"))
+
+    assert Path(r1.images[0]).parent != Path(r2.images[0]).parent
+    assert (tmp_path / "renders" / "s01" / "max").is_dir()
+    assert (tmp_path / "renders" / "s02" / "max").is_dir()
+
+
+async def test_run_legacy_member_scoped_dir_without_shot_id(tmp_path: Path) -> None:
+    lora_dir = tmp_path / "loras"
+    lora_dir.mkdir()
+    (lora_dir / "kids_duo_max.safetensors").write_bytes(b"fake")
+
+    adapter = _adapter(tmp_path, lora_dir=lora_dir)
+    fake_httpx, _ = _mock_httpx()
+
+    with patch.dict(sys.modules, {"httpx": fake_httpx}):
+        await adapter.run(_request())  # no shot_id
+
+    # Back-compat: renders/max/ (single level), not renders/max/max/
+    assert (tmp_path / "renders" / "max").is_dir()
+    assert not (tmp_path / "renders" / "max" / "max").exists()

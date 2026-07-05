@@ -307,9 +307,9 @@ All phases advance on the **same job record** via `POST /api/jobs/{id}/advance`.
 
 | Phase | Stages | Approval gates |
 |---|---|---|
-| `transcribe` | fetch_media → transcribe → analyze_content → **transcript review gate** → stop | Transcript review (approve/reject+notes → LLM refine, up to 3 iterations) |
-| `script_plan` | adapt_script → plan_shots → critique_plan → **plan approval gate** → stop | Plan approval (approve/reject+notes → re-plan) |
-| `render` | per-shot: render_character ×N → critique_images → **image approval gate** → synthesize_voice → generate_video → stop | Image approval (grid view, operator can override picks) |
+| `transcribe` | fetch_media → transcribe → analyze_content → **analyze_visuals** → **transcript review gate** → stop | Transcript review (approve/reject+notes → LLM refine, up to 3 iterations) |
+| `script_plan` | adapt_script (settings grounded in analyze_visuals) → plan_shots → critique_plan → **plan approval gate** → stop | Plan approval (approve/reject+notes → re-plan) |
+| `render` | per-shot (keyed by shot_id): render_character ×N → critique_images → **image approval gate** → synthesize_voice → generate_video → stop | Image approval (grid view, operator can override picks) |
 | `assemble` | assemble_video → critique → publish | — |
 | `all` | all stages end-to-end | All gates above |
 | `noop` | Mock pipeline (no services needed) | — |
@@ -321,6 +321,7 @@ All phases advance on the **same job record** via `POST /api/jobs/{id}/advance`.
 | fetch_media | adapters/fetch_media/ytdlp_adapter.py | tests/test_fetch_media.py |
 | transcribe | adapters/transcribe/whisper_adapter.py | tests/test_transcribe.py |
 | analyze_content | adapters/analyze_content/llm_adapter.py | tests/test_analyze_content.py |
+| analyze_visuals | adapters/analyze_visuals/vlm_adapter.py | tests/test_analyze_visuals.py |
 | transcript_refine | adapters/transcript_refine/llm_adapter.py | (covered in test_workflow.py) |
 | adapt_script | adapters/adapt_script/llm_adapter.py | tests/test_adapt_script.py |
 | plan_shots | adapters/plan_shots/llm_adapter.py | tests/test_plan_shots.py |
@@ -333,6 +334,39 @@ All phases advance on the **same job record** via `POST /api/jobs/{id}/advance`.
 | assemble_video | adapters/assemble_video/ffmpeg_adapter.py | tests/test_assemble_video.py |
 | critique (video) | adapters/critique/vlm_adapter.py | tests/test_critique.py |
 | publish | adapters/publish/manual_adapter.py | tests/test_publish.py |
+
+### Recently added (code-complete, as of 2026-07-05)
+
+- **Wan deferred VRAM loading** — `services/wan_server.py` loads lazily via `POST /load` / `/unload` (409 while loading); `core/gpu_sequencer.py` unloads Ollama + Wan before render, then loads Wan after image approval (30 s gap → poll). LTX unaffected (`managed_vram` only on Wan).
+- **Story input modes** — `kind=story` / `story_images`: worker `_seed_story_job` pre-seeds `transcribe` + `fetch_media` from pasted text (structured `start-end:` parser or LLM segmenter); `story_images` skips Phase A render and feeds user images to the approval gate. Dedicated `/jobs/new` page.
+- **Cast-agnostic** — per-job cast via `GET /api/casts` + `req.cast_ref`; no hardcoded `kids_duo`.
+- **Visual grounding** — `analyze_visuals` (VLM samples source-video frames → per-segment settings/props) grounds `adapt_script` scene settings; shown on the job page as "Source Video Settings" before render. Best-effort/empty for story jobs.
+- **Per-shot rendering + camera** — renders keyed `renders/{shot_id}/{member_id}` (distinct background per shot); `shot.camera` framing + `shot.setting` now flow into the Flux render prompt and `setting` into the LTX/Wan video prompt.
+
+### Model → stage → VRAM (G200, 143 GB)
+
+Single LLM/VLM for all reasoning + vision: **qwen3.6:35b** (~30 GB, natively multimodal).
+
+| Stage | Model / service | Adapter | ~VRAM | Notes |
+|---|---|---|---|---|
+| transcribe | faster-whisper | whisper_adapter | ~1–2 GB | cpu int8 or cuda float16 |
+| analyze_content | qwen3.6:35b | llm_adapter | ~30 GB (shared) | resident LLM |
+| analyze_visuals | qwen3.6:35b | vlm_adapter | ~30 GB (shared) | ≤8 frames, multimodal |
+| adapt_script / plan_shots / critique_plan | qwen3.6:35b | llm adapters | ~30 GB (shared) | same resident model |
+| render_character | Flux 2.0 Dev | musubi_flux (subprocess) | ~20 GB | freed after each image; Ollama unloaded first |
+| critique_images | qwen3.6:35b | image_critique | ~30 GB | reloaded between renders |
+| synthesize_voice | Fish Audio S2 | fish_s2_adapter | ~20 GB | port 8025 |
+| generate_video (default) | LTX-2.3 22B | ltx_adapter (ComfyUI 8188) | ~44 GB | native lip-sync |
+| generate_video (fallback) | Wan 2.2 | wan_adapter (8030) | ~52 GB | deferred load; MuseTalk lip_sync (subprocess) |
+| assemble_video / publish | ffmpeg | — | 0 (CPU) | — |
+
+Peak (default stack): qwen(30) + LTX(44) + Flux(20) + Fish(20) ≈ **114 GB / 143 GB** (~29 GB headroom). The GPU sequencer keeps Wan(52) and Flux(20) from ever overlapping (the OOM that motivated deferred loading).
+
+### Still pending (not code — environment/assets)
+
+- **Track B**: real Flux 2.0 LoRAs (`loras/kids_duo_{max,zoe}.safetensors`) — currently placeholder/missing. Voice WAVs are gTTS bootstrap.
+- **Track D**: ComfyUI (8188), Fish Audio S2 (8025), and (fallback) Wan (8030) must be started on the GPU box. Ollama auto-reinstalled by `start_services.sh`.
+- **Track E**: compliance sign-off.
 
 ### Dashboard files
 

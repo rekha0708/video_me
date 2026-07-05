@@ -123,7 +123,11 @@ class ComfyUIFluxAdapter(RenderCharacter):
 
         import httpx
 
-        out_dir = self.work_dir / req.member.id
+        out_dir = (
+            self.work_dir / req.shot_id / req.member.id
+            if req.shot_id
+            else self.work_dir / req.member.id
+        )
         out_dir.mkdir(parents=True, exist_ok=True)
 
         lora_name = self.lora_name(req.member.lora_ref)
@@ -185,7 +189,12 @@ class ComfyUIFluxAdapter(RenderCharacter):
         )
 
     def _build_prompt(self, req: RenderCharacterRequest, *, skip_lora: bool) -> str:
+        from adapters.render_character.prompt_util import camera_phrase
+
         parts = [req.member.visual_descriptor, f"in {req.setting}"]
+        framing = camera_phrase(req.camera)
+        if framing:
+            parts.append(framing)
         if req.expression:
             parts.append(req.expression)
         parts += ["children's animation style, cartoon, vibrant colors",

@@ -97,6 +97,7 @@ def _request(**kwargs) -> AdaptScriptRequest:
         metadata=kwargs.get("metadata", _metadata()),
         cast=kwargs.get("cast", _cast()),
         channel_profile=kwargs.get("channel_profile", _profile()),
+        visual_context=kwargs.get("visual_context"),
     )
 
 
@@ -418,3 +419,40 @@ def test_cast_members_min_length_rejects_empty() -> None:
     from pydantic import ValidationError
     with pytest.raises(ValidationError, match="at least 1"):
         Cast(id="empty", species="x", is_original_synthetic=True, members=[])
+
+
+# ------------------------------------------------------------------ visual grounding
+
+def _visual_context():
+    from core.models.capabilities import VisualContext, VisualSegment
+    return VisualContext(
+        segments=[
+            VisualSegment(start=0, end=5, setting="cozy sunlit kitchen", props=["apple", "table"]),
+            VisualSegment(start=5, end=10, setting="green backyard garden", props=[]),
+        ],
+        summary="kitchen then garden",
+    )
+
+
+def test_build_messages_includes_visual_context_block() -> None:
+    adapter = _adapter()
+    req = _request(visual_context=_visual_context())
+    user_content = adapter._build_messages(req)[1]["content"]
+    assert "Observed settings from the source video" in user_content
+    assert "cozy sunlit kitchen" in user_content
+    assert "green backyard garden" in user_content
+    assert "apple" in user_content  # props surfaced
+
+
+def test_build_messages_omits_block_without_visual_context() -> None:
+    adapter = _adapter()
+    user_content = adapter._build_messages(_request())[1]["content"]
+    assert "Observed settings from the source video" not in user_content
+
+
+def test_build_messages_omits_block_for_empty_visual_context() -> None:
+    from core.models.capabilities import VisualContext
+    adapter = _adapter()
+    req = _request(visual_context=VisualContext())
+    user_content = adapter._build_messages(req)[1]["content"]
+    assert "Observed settings from the source video" not in user_content

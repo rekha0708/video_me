@@ -44,8 +44,8 @@ def _job(phase: str = "all", status: str = "running", current_stage: str | None 
     )
 
 
-_ALL_FLAGS = {"transcript": True, "script": True, "renders": True, "video": True}
-_NO_FLAGS = {"transcript": False, "script": False, "renders": False, "video": False}
+_ALL_FLAGS = {"transcript": True, "visuals": True, "script": True, "renders": True, "video": True}
+_NO_FLAGS = {"transcript": False, "visuals": False, "script": False, "renders": False, "video": False}
 
 
 # ------------------------------------------------------------------ LocalArtifactStore.has
@@ -99,6 +99,26 @@ def test_video_flag_requires_final_mp4(tmp_path: Path) -> None:
     store = _store(tmp_path)
     flags = _artifact_flags(store, _work_dir(tmp_path, "assembled/final.mp4"), "job1")
     assert flags["video"] is True
+
+
+def test_visuals_flag_true_when_segments_present(tmp_path: Path) -> None:
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    store.put_json("job1", "analyze_visuals", {"segments": [{"start": 0, "end": 5, "setting": "kitchen"}], "summary": "x"})
+    flags = _artifact_flags(store, _work_dir(tmp_path), "job1")
+    assert flags["visuals"] is True
+
+
+def test_visuals_flag_false_when_empty(tmp_path: Path) -> None:
+    """Story jobs persist an empty analyze_visuals artifact — card stays hidden."""
+    store = LocalArtifactStore(tmp_path / "artifacts")
+    store.put_json("job1", "analyze_visuals", {"segments": [], "summary": ""})
+    flags = _artifact_flags(store, _work_dir(tmp_path), "job1")
+    assert flags["visuals"] is False
+
+
+def test_visuals_flag_false_when_missing(tmp_path: Path) -> None:
+    flags = _artifact_flags(_store(tmp_path), _work_dir(tmp_path), "job1")
+    assert flags["visuals"] is False
 
 
 # ------------------------------------------------------------------ _stepper_state

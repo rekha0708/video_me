@@ -2,6 +2,7 @@ import base64
 import logging
 from pathlib import Path
 
+from adapters.render_character.prompt_util import camera_phrase
 from core.capabilities.base import RenderCharacter
 from core.models.capabilities import ImageSet, RenderCharacterRequest
 from core.models.common import CostEstimate, HealthStatus
@@ -119,7 +120,11 @@ class DiffusionRenderAdapter(RenderCharacter):
             )
 
         import httpx
-        out_dir = self.work_dir / req.member.id
+        out_dir = (
+            self.work_dir / req.shot_id / req.member.id
+            if req.shot_id
+            else self.work_dir / req.member.id
+        )
         out_dir.mkdir(parents=True, exist_ok=True)
 
         prompt = self._build_prompt(req, lora_path=lora_path)
@@ -211,6 +216,9 @@ class DiffusionRenderAdapter(RenderCharacter):
         ):
             parts.append(f"<lora:{name}:{self._lora_weight}>")
         parts += [req.member.visual_descriptor, f"in {req.setting}"]
+        framing = camera_phrase(req.camera)
+        if framing:
+            parts.append(framing)
         if req.expression:
             parts.append(req.expression)
         parts += [

@@ -80,10 +80,14 @@ source URL                              story text (+ optional images)
 [analyze_content]    LLM → ContentMetadata + LearningObjective
     │
     ▼
+[analyze_visuals]    VLM samples source-video frames per segment → VisualContext
+    │                (settings/props); best-effort, empty for story jobs
+    ▼
 check_rights()  ◄─── BLOCKS job (status=BLOCKED) if rights_cleared=False
     │
     ▼
-[adapt_script]       LLM → Script (scenes + lines, mode=transformed)
+[adapt_script]       LLM → Script (scenes + lines, mode=transformed);
+    │                scene settings grounded in VisualContext when present
     │
     ▼
 [plan_shots]         LLM → Storyboard (Shot list, ≤2 chars/shot)
@@ -140,7 +144,8 @@ The stage runner is `core/executor.py:run_stage()`. The Phase 1 DAG is
 | `adapters/fetch_media/ytdlp_adapter.py` | yt-dlp + ffmpeg subprocess |
 | `adapters/transcribe/whisper_adapter.py` | faster-whisper local inference |
 | `adapters/analyze_content/llm_adapter.py` | Ollama/OpenAI-compat LLM |
-| `adapters/adapt_script/llm_adapter.py` | Ollama/OpenAI-compat LLM + guardrail injection |
+| `adapters/analyze_visuals/vlm_adapter.py` | VLM samples source-video frames → per-segment VisualContext (settings/props); best-effort, empty for story jobs |
+| `adapters/adapt_script/llm_adapter.py` | Ollama/OpenAI-compat LLM + guardrail injection + VisualContext grounding |
 | `adapters/plan_shots/llm_adapter.py` | Ollama/OpenAI-compat LLM + shot structure derivation |
 | `adapters/render_character/musubi_flux_adapter.py` | musubi-tuner Flux 2.0 local inference (**default**) |
 | `adapters/render_character/comfyui_flux_adapter.py` | ComfyUI + Flux 2.0 Dev + LoRA (fallback; needs BFL cloud API) |

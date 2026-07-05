@@ -14,6 +14,7 @@ from core.gpu_sequencer import (
 )
 from core.models.capabilities import (
     AnalyzeRequest,
+    AnalyzeVisualsRequest,
     AssembleRequest,
     AudioTrack,
     CritiqueRequest,
@@ -30,6 +31,7 @@ from core.models.capabilities import (
     TranscribeRequest,
     VideoClip,
     VideoRequest,
+    VisualContext,
     VoiceRequest,
 )
 from core.models.capabilities import AdaptScriptRequest
@@ -132,6 +134,7 @@ class _Adapters:
     fetch_media: object
     transcribe: object
     analyze: object
+    analyze_visuals: object
     adapt: object
     plan: object
     plan_critique: object
@@ -211,6 +214,7 @@ def _make_adapters(
     """Instantiate all Phase 1 adapters with job-scoped work directories."""
     from adapters.adapt_script.llm_adapter import LlmAdaptScriptAdapter
     from adapters.analyze_content.llm_adapter import LlmAnalyzeAdapter
+    from adapters.analyze_visuals.vlm_adapter import VlmAnalyzeVisualsAdapter
     from adapters.assemble_video.ffmpeg_adapter import FfmpegAssembleAdapter
     from adapters.critique.vlm_adapter import VlmCritiqueAdapter
     from adapters.fetch_media.ytdlp_adapter import YtDlpAdapter
@@ -237,6 +241,15 @@ def _make_adapters(
             model=s.llm_model,
             base_url=s.llm_base_url,
             api_key=s.llm_api_key,
+        ),
+        analyze_visuals=VlmAnalyzeVisualsAdapter(
+            model=s.analyze_visuals_model,
+            base_url=s.analyze_visuals_base_url,
+            api_key=s.analyze_visuals_api_key,
+            work_dir=work_dir / "visuals",
+            ffmpeg_bin=s.ffmpeg_bin,
+            ffprobe_bin=s.ffprobe_bin,
+            max_frames=s.visual_max_frames,
         ),
         adapt=LlmAdaptScriptAdapter(
             model=s.llm_model,
@@ -414,7 +427,9 @@ async def _render_shot_candidates(
     speaker = member_map[speaker_id]
 
     expression = None
-    render_dir = work_dir / "renders" / speaker_id
+    # Scope renders per shot (not per character) so shots that share a speaker
+    # get their own setting-matched image instead of colliding/reusing one.
+    render_dir = work_dir / "renders" / shot.shot_id / speaker_id
     render_dir.mkdir(parents=True, exist_ok=True)
 
     # Count expected candidates from the adapter's num_images setting
@@ -437,6 +452,8 @@ async def _render_shot_candidates(
                 member=speaker,
                 setting=shot.setting,
                 expression=expression,
+                shot_id=shot.shot_id,
+                camera=shot.camera,
             )
         )
 
@@ -586,6 +603,7 @@ async def _generate_shot_video(
                 action=shot.action,
                 duration_sec=shot.duration_sec,
                 shot_id=shot.shot_id,
+                setting=shot.setting,
                 audio_uri=audio_track.uri if native_lipsync else None,
             )
         )
@@ -835,6 +853,11 @@ async def _run_to_assembled_video(
                     f"Phase 'script_plan' requires artifacts from a completed 'transcribe' phase "
                     f"for job '{job.job_id}'. Run the transcribe phase first."
                 )
+            # Optional — older jobs (pre-analyze_visuals) won't have it; ground with empty.
+            visual_context = (
+                _load_artifact(job.job_id, "analyze_visuals", VisualContext, artifact_store)
+                or VisualContext()
+            )
         else:
             # 1. fetch_media
             fetch_result = await _stage(
@@ -860,6 +883,18 @@ async def _run_to_assembled_video(
                 ContentMetadata,
             )
 
+            # 3b. analyze_visuals — describe the source video's settings so
+            # adapt_script can ground scene backgrounds in the real footage.
+            # Best-effort: empty for story jobs / remote URIs / failures.
+            visual_context = await _stage(
+                "analyze_visuals", adapters.analyze_visuals,
+                AnalyzeVisualsRequest(
+                    video_uri=fetch_result.video_uri,
+                    segments=transcribe_result.segments,
+                ),
+                VisualContext,
+            )
+
         # Stop here for "transcribe" phase — artifacts are saved, human can review.
         if opts.phase == "transcribe":
             logger.info("Phase 'transcribe' complete — stopping after analyze_content.")
@@ -878,6 +913,7 @@ async def _run_to_assembled_video(
                 cast=config.cast,
                 channel_profile=config.channel_profile,
                 language=opts.language,
+                visual_context=visual_context,
             ),
             Script,
         )

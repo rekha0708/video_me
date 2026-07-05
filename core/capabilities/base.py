@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 from core.models.capabilities import (
     AdaptScriptRequest,
     AnalyzeRequest,
+    AnalyzeVisualsRequest,
     AssembleRequest,
     AudioTrack,
     CritiqueRequest,
@@ -29,6 +30,7 @@ from core.models.capabilities import (
     TranscribeResult,
     VideoClip,
     VideoRequest,
+    VisualContext,
     VoiceRequest,
 )
 from core.models.common import CostEstimate, HealthStatus
@@ -63,6 +65,10 @@ class Transcribe(Capability[TranscribeRequest, TranscribeResult], ABC):
 
 class AnalyzeContent(Capability[AnalyzeRequest, ContentMetadata], ABC):
     name = "analyze_content"
+
+
+class AnalyzeVisuals(Capability[AnalyzeVisualsRequest, VisualContext], ABC):
+    name = "analyze_visuals"
 
 
 class AdaptScript(Capability[AdaptScriptRequest, Script], ABC):

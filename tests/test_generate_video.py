@@ -93,6 +93,29 @@ def test_build_prompt_suffix_after_action(tmp_path: Path) -> None:
     assert prompt.index("waves goodbye") < prompt.index(_PROMPT_SUFFIX)
 
 
+def test_build_prompt_includes_setting_between_action_and_suffix(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    prompt = adapter._build_prompt("picks an apple", "cozy sunlit kitchen")
+    assert "cozy sunlit kitchen" in prompt
+    assert prompt.index("picks an apple") < prompt.index("cozy sunlit kitchen") < prompt.index(_PROMPT_SUFFIX)
+
+
+def test_build_prompt_omits_empty_setting(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    assert adapter._build_prompt("waves", "") == adapter._build_prompt("waves")
+
+
+async def test_run_sends_setting_in_prompt(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    req = _request(tmp_path)
+    req.setting = "warm bakery interior"
+    fake_httpx, mock_client = _mock_httpx()
+    with patch.dict(sys.modules, {"httpx": fake_httpx}):
+        await adapter.run(req)
+    sent_prompt = mock_client.post.call_args.kwargs.get("data", {}).get("prompt", "")
+    assert "warm bakery interior" in sent_prompt
+
+
 # ------------------------------------------------------------------ _save_clip
 
 def test_save_clip_writes_mp4(tmp_path: Path) -> None:

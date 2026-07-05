@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     critique_model: str = "qwen3.6:35b"
     critique_base_url: str = "http://localhost:11434/v1"
     critique_api_key: str = "ollama"
+    # --- analyze_visuals: describe source-video settings (same multimodal model) ---
+    analyze_visuals_model: str = "qwen3.6:35b"
+    analyze_visuals_base_url: str = "http://localhost:11434/v1"
+    analyze_visuals_api_key: str = "ollama"
+    visual_max_frames: int = 8
     chat_model: str = "qwen3.6:35b"
     chat_base_url: str = "http://localhost:11434/v1"
     chat_api_key: str = "ollama"

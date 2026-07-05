@@ -110,7 +110,13 @@ class MusubiFluxAdapter(RenderCharacter):
                 "VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA=true for smoke tests."
             )
 
-        out_dir = self.work_dir / req.member.id
+        # Shot-scoped when shot_id is set, so per-shot backgrounds don't collide;
+        # falls back to member-keyed for callers that don't pass shot_id.
+        out_dir = (
+            self.work_dir / req.shot_id / req.member.id
+            if req.shot_id
+            else self.work_dir / req.member.id
+        )
         out_dir.mkdir(parents=True, exist_ok=True)
 
         prompt_text = self._build_prompt(req, skip_lora=placeholder)
@@ -218,7 +224,12 @@ class MusubiFluxAdapter(RenderCharacter):
         )
 
     def _build_prompt(self, req: RenderCharacterRequest, *, skip_lora: bool) -> str:
+        from adapters.render_character.prompt_util import camera_phrase
+
         parts = [req.member.visual_descriptor, f"in {req.setting}"]
+        framing = camera_phrase(req.camera)
+        if framing:
+            parts.append(framing)
         if req.expression:
             parts.append(req.expression)
         parts += [

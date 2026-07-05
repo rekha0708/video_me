@@ -25,6 +25,7 @@ from core.models.capabilities import (
     PublishResult,
     TranscribeResult,
     VideoClip,
+    VisualContext,
 )
 from core.models.content import (
     ContentMetadata,
@@ -161,6 +162,7 @@ def _fox_stage_results():
                 success_phrase="I explored something new!",
             ),
         ),
+        "analyze_visuals": VisualContext(),
         "adapt_script": _fox_script(),
         "plan_shots": _fox_storyboard(),
         "assemble_video": FinalVideo(uri="/tmp/final.mp4", duration_sec=5.0),

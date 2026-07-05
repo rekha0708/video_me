@@ -62,6 +62,29 @@ class AnalyzeRequest(BaseModel):
     channel_profile: ChannelProfile
 
 
+# ---------- analyze_visuals → VisualContext ----------
+
+class VisualSegment(BaseModel):
+    start: float
+    end: float
+    setting: str                                   # observed location/background at this time
+    props: list[str] = Field(default_factory=list)  # notable objects/props on screen
+
+
+class VisualContext(BaseModel):
+    segments: list[VisualSegment] = Field(default_factory=list)
+    summary: str = ""
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.segments
+
+
+class AnalyzeVisualsRequest(BaseModel):
+    video_uri: str
+    segments: list[TranscriptSegment]
+
+
 # ---------- adapt_script → Script (already defined in content.py) ----------
 
 class AdaptScriptRequest(BaseModel):
@@ -69,6 +92,7 @@ class AdaptScriptRequest(BaseModel):
     cast: Cast
     channel_profile: ChannelProfile
     language: str = "en"  # BCP-47 code: "en" | "hi"
+    visual_context: VisualContext | None = None  # grounds scene settings in the source video
 
 
 # ---------- plan_shots → Storyboard (already defined in content.py) ----------
@@ -85,6 +109,8 @@ class RenderCharacterRequest(BaseModel):
     member: CastMember
     setting: str
     expression: str | None = None
+    shot_id: str = ""  # scopes render output per shot so per-shot backgrounds don't collide
+    camera: str = ""   # Shot.camera framing (close-up/medium/reaction/wide) → render prompt
 
 
 class ImageSet(BaseModel):
@@ -115,6 +141,7 @@ class VideoRequest(BaseModel):
     action: str
     duration_sec: float
     shot_id: str
+    setting: str = ""             # per-shot scene/environment description for the video prompt
     audio_uri: str | None = None  # set when video adapter has native_lipsync=True
 
 

@@ -87,8 +87,11 @@ def _artifact_flags(artifact_store: Any, work_dir: Path, job_id: str) -> dict[st
     looks at artifacts, not phase bookkeeping.
     """
     has_plan = artifact_store.has(job_id, "plan_shots")
+    visuals_data = artifact_store.get_json(job_id, "analyze_visuals")
     return {
         "transcript": artifact_store.has(job_id, "transcribe"),
+        # Only show when the VLM actually found settings (empty for story jobs).
+        "visuals": bool(visuals_data and visuals_data.get("segments")),
         "script": artifact_store.has(job_id, "adapt_script") or has_plan,
         "renders": has_plan
         and ((work_dir / "renders").exists() or (work_dir / "user_images").exists()),
@@ -570,6 +573,28 @@ def create_app(
             return _base_response({"plan": None, "message": "Storyboard not yet available."})
         return _base_response({"plan": {"shots": data.get("shots", [])}})
 
+    @app.get("/api/jobs/{job_id}/visuals")
+    def get_visuals(job_id: str) -> dict[str, Any]:
+        """Per-segment settings the VLM extracted from the source video.
+
+        Lets the operator verify the observed backgrounds before the expensive
+        Flux render stage. Empty for story jobs / when extraction found nothing.
+        """
+        if repo.get_job(job_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "JOB_NOT_FOUND", "message": f"Job not found: {job_id}", "retryable": False},
+            )
+        data = artifact_store.get_json(job_id, "analyze_visuals")
+        if data is None:
+            return _base_response({"visuals": None, "message": "Visual analysis not run for this job."})
+        return _base_response({
+            "visuals": {
+                "summary": data.get("summary", ""),
+                "segments": data.get("segments", []),
+            }
+        })
+
     @app.get("/api/jobs/{job_id}/renders")
     def get_renders(job_id: str) -> dict[str, Any]:
         import base64
@@ -592,7 +617,11 @@ def create_app(
 
             candidate_uris: list[str] = []
             if speaker_id:
-                render_dir = work_dir / "renders" / speaker_id
+                # Renders are shot-scoped (renders/{shot_id}/{speaker_id}/); fall
+                # back to the legacy per-speaker path for pre-existing jobs.
+                render_dir = work_dir / "renders" / shot_id / speaker_id
+                if not render_dir.is_dir():
+                    render_dir = work_dir / "renders" / speaker_id
                 candidate_uris = [
                     base64.urlsafe_b64encode(str(p).encode()).decode()
                     for p in sorted(render_dir.glob("render_??.png"))

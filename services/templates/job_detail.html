@@ -214,6 +214,18 @@
 </div>
 {% endif %}
 
+<!-- ── Source-video settings (VLM) — verify before the expensive render ──── -->
+{% if artifact_flags.visuals %}
+<div class="card" id="visuals-card">
+  <div class="flex justify-between items-center" style="margin-bottom:10px">
+    <div class="card-title mt-0">Source Video Settings <span class="text-muted" style="font-size:12px;font-weight:400">— what each shot's background is grounded in</span></div>
+    <button class="btn btn-sm" style="font-size:12px;padding:3px 10px"
+            onclick="toggleArtifactCard('visuals', this)">Show</button>
+  </div>
+  <div id="visuals-body" style="display:none"></div>
+</div>
+{% endif %}
+
 <!-- ── Script / Storyboard / Rendered Images / Final Video ─────────────── -->
 {% if artifact_flags.script %}
 <div class="card" id="script-card">
@@ -316,6 +328,22 @@
 {% block scripts %}
 <script>
 const ARTIFACT_RENDERERS = {
+  visuals: (data) => {
+    const v = data.visuals;
+    if (!v || !v.segments?.length) return '<p class="text-muted" style="font-size:13px;padding:6px 0">No source-video settings extracted (story job, or the video showed nothing distinct).</p>';
+    const summary = v.summary
+      ? `<div class="text-muted" style="font-size:12px;margin-bottom:10px">${v.summary}</div>` : '';
+    const rows = v.segments.map(s => {
+      const props = (s.props && s.props.length) ? s.props.join(', ') : '—';
+      return `<tr><td class="td-mono td-muted">${(s.start ?? 0).toFixed(1)}–${(s.end ?? 0).toFixed(1)}s</td><td>${s.setting || ''}</td><td class="td-muted">${props}</td></tr>`;
+    }).join('');
+    return `
+      ${summary}
+      <div class="table-wrap" style="max-height:340px;overflow-y:auto">
+        <table><thead><tr><th style="width:96px">Time</th><th>Setting</th><th style="width:30%">Props</th></tr></thead>
+        <tbody>${rows}</tbody></table>
+      </div>`;
+  },
   transcript: (data) => {
     const t = data.transcript;
     if (!t || !t.segments?.length) return '<p class="text-muted" style="font-size:13px;padding:6px 0">No transcript data available yet.</p>';

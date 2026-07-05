@@ -154,7 +154,7 @@ class WanAdapter(GenerateVideo):
         out_dir = self.work_dir / req.shot_id
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        prompt = self._build_prompt(req.action)
+        prompt = self._build_prompt(req.action, req.setting)
 
         log_event(
             logger,
@@ -185,8 +185,14 @@ class WanAdapter(GenerateVideo):
     # Private helpers (mockable in tests)
     # ------------------------------------------------------------------
 
-    def _build_prompt(self, action: str) -> str:
-        return f"{_PROMPT_PREFIX}, {action}, {_PROMPT_SUFFIX}"
+    def _build_prompt(self, action: str, setting: str = "") -> str:
+        # Order: style → subject/action → environment → quality. The setting
+        # steers lighting/scene mood; the first-frame image still dominates.
+        parts = [_PROMPT_PREFIX, action]
+        if setting.strip():
+            parts.append(setting.strip())
+        parts.append(_PROMPT_SUFFIX)
+        return ", ".join(parts)
 
     async def _call_wan(
         self, image_path: Path, prompt: str, duration_sec: float
