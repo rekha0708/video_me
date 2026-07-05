@@ -405,6 +405,42 @@ def create_app(
                 },
             )
 
+        if body.source.kind == "story_images":
+            # Fail fast with a clean 400 instead of a deep worker crash: every
+            # image key must be a member of the selected cast and its file must
+            # exist on disk (uploaded via /api/uploads/character-image).
+            from core.models.profile import Cast
+
+            if body.cast_ref and body.cast_ref != config.cast.id:
+                cast_path = Path(f"config/casts/{body.cast_ref}.yaml")
+                if not cast_path.exists():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={"code": "UNKNOWN_CAST",
+                                "message": f"No cast config for '{body.cast_ref}'",
+                                "retryable": False},
+                    )
+                cast_ids = {m.id for m in load_yaml_model(cast_path, Cast).members}
+            else:
+                cast_ids = {m.id for m in config.cast.members}
+
+            for member_id, image_path in body.character_images.items():
+                if member_id not in cast_ids:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={"code": "INVALID_MEMBER",
+                                "message": f"Unknown cast member: {member_id}. "
+                                           f"Expected: {sorted(cast_ids)}",
+                                "retryable": False},
+                    )
+                if not Path(image_path).is_file():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={"code": "BAD_CHARACTER_IMAGE",
+                                "message": f"Image for '{member_id}' not found: {image_path}",
+                                "retryable": False},
+                    )
+
         job, queue_item = repo.create_queued_job(body)
         return _base_response(
             {
