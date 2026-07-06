@@ -23,6 +23,7 @@ There are no per-stage "agents" — it's a single async pipeline process
 | 6 | adapt_script | qwen3.6:35b | 30 (shared) | original script; **scene settings grounded in #4** |
 | 7 | plan_shots | qwen3.6:35b | 30 (shared) | one shot per line + camera/action/duration (5–8 s) |
 | 8 | critique_plan (≤3×) | qwen3.6:35b | 30 (shared) | score 5 dims; re-plan if any < 0.75 |
+| 8b | render_overlays | matplotlib (CPU) | 0 | chart/diagram panels for shots with an overlay spec; previews shown at the plan gate; best-effort (skipped if matplotlib missing) |
 | — | **plan approval gate** | web UI :8765/dashboard | 0 | human approves storyboard |
 | 9 | render_character ×N (per shot) | **Flux 2.0 Dev** via musubi (subprocess) | ~20 GB | image per shot from `visual_descriptor + setting + camera` + LoRA; freed after each image; Ollama unloaded first. LoRA/weight/steps/trigger from `config/casts/<cast>/params.py`. **Skipped** in story_images mode. |
 | 10 | critique_images | qwen3.6:35b | 30 | pick best candidate; self-learning feedback log |

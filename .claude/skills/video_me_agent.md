@@ -326,6 +326,7 @@ All phases advance on the **same job record** via `POST /api/jobs/{id}/advance`.
 | adapt_script | adapters/adapt_script/llm_adapter.py | tests/test_adapt_script.py |
 | plan_shots | adapters/plan_shots/llm_adapter.py | tests/test_plan_shots.py |
 | critique_plan | adapters/critique/plan_critique_adapter.py | tests/test_critique.py |
+| render_overlays | adapters/render_overlays/matplotlib_adapter.py | tests/test_render_overlays.py |
 | render_character | adapters/render_character/musubi_flux_adapter.py | tests/test_render_character.py |
 | critique_images | adapters/critique/image_critique_adapter.py | tests/test_critique.py |
 | synthesize_voice | adapters/synthesize_voice/fish_s2_adapter.py | tests/test_synthesize_voice.py |
@@ -342,6 +343,8 @@ All phases advance on the **same job record** via `POST /api/jobs/{id}/advance`.
 - **Cast-agnostic** — per-job cast via `GET /api/casts` + `req.cast_ref`; no hardcoded `kids_duo`.
 - **Visual grounding** — `analyze_visuals` (VLM samples source-video frames → per-segment settings/props) grounds `adapt_script` scene settings; shown on the job page as "Source Video Settings" before render. Best-effort/empty for story jobs.
 - **Per-shot rendering + camera** — renders keyed `renders/{shot_id}/{member_id}` (distinct background per shot); `shot.camera` framing + `shot.setting` now flow into the Flux render prompt and `setting` into the LTX/Wan video prompt.
+- **Multi-character shots + pair LoRA** — `_resolve_shot_characters` (workflow) renders the listener for `reaction` shots, appends the 2nd character's descriptor to the prompt, and auto-selects a pair LoRA from `PAIRS` in `config/casts/<cast>/params.py` when its `lora_file` is set (file-drop, zero code once trained).
+- **Chart/diagram overlays** — `plan_shots` may attach a `ShotOverlay` spec (bar/line/pie/callout) to shots whose dialogue states data; new `render_overlays` stage (matplotlib, CPU, optional `overlays` extra) draws PNG panels before the plan approval gate (previews shown there); ffmpeg composites them time-windowed in the upper third at assemble. `analyze_visuals` flags charts seen in the reference video (`VisualSegment.chart`) → grounded, ORIGINAL overlays. Best-effort everywhere — never fails a job.
 
 ### Model → stage → VRAM (G200, 143 GB)
 
