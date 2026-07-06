@@ -21,6 +21,11 @@ _DEFAULT_WRAP_WIDTH: int = 38
 # Pixels from bottom edge where caption baseline sits.
 _DEFAULT_CAPTION_MARGIN: int = 100
 
+# Chart/diagram overlay panels: top offset (clears the y=20 disclosure text)
+# and a sane cap on extra ffmpeg inputs.
+_OVERLAY_Y: int = 80
+_MAX_OVERLAY_INPUTS: int = 10
+
 
 class FfmpegAssembleAdapter(AssembleVideo):
     """
@@ -109,6 +114,7 @@ class FfmpegAssembleAdapter(AssembleVideo):
         concat_file = self._write_concat_list(req.clips, self.work_dir)
         caption_file = self._write_caption_file(req.caption_text, self.work_dir)
         audio_path = Path(req.audio.uri)
+        overlays = self._usable_overlays(req.overlays)
 
         total_duration = sum(c.duration_sec for c in req.clips)
 
@@ -118,10 +124,11 @@ class FfmpegAssembleAdapter(AssembleVideo):
             clip_count=len(req.clips),
             total_duration_sec=total_duration,
             disclosure_required=req.disclosure_label_required,
+            overlay_count=len(overlays),
         )
 
         cmd = self._build_ffmpeg_args(
-            concat_file, audio_path, caption_file, output_path, req
+            concat_file, audio_path, caption_file, output_path, req, overlays
         )
         await self._run_ffmpeg(cmd)
 
@@ -160,10 +167,26 @@ class FfmpegAssembleAdapter(AssembleVideo):
         path.write_text(wrapped, encoding="utf-8")
         return path
 
+    def _usable_overlays(self, overlays: list) -> list:
+        """Cap the overlay input count and drop entries whose PNG is missing."""
+        usable = []
+        for ov in overlays:
+            if not Path(ov.png_uri).exists():
+                logger.warning("Overlay PNG missing for %s: %s — skipping", ov.shot_id, ov.png_uri)
+                continue
+            usable.append(ov)
+        if len(usable) > _MAX_OVERLAY_INPUTS:
+            logger.warning(
+                "Capping overlays at %d (got %d) — later panels dropped",
+                _MAX_OVERLAY_INPUTS, len(usable),
+            )
+            usable = usable[:_MAX_OVERLAY_INPUTS]
+        return usable
+
     def _build_filter(
-        self, caption_file: Path, disclosure_required: bool
+        self, caption_file: Path, disclosure_required: bool, overlays: list = (),
     ) -> str:
-        """Build the -filter_complex string: scale+pad → caption → optional disclosure."""
+        """Build the -filter_complex: scale+pad → overlay panels → caption → disclosure."""
         scale_pad = (
             f"scale={self._width}:{self._height}"
             ":force_original_aspect_ratio=decrease,"
@@ -179,17 +202,30 @@ class FfmpegAssembleAdapter(AssembleVideo):
             f":y=h-th-{self._caption_margin}"
         )
 
+        if overlays:
+            # Chain: [0:v]scale+pad[base0]; [base0][2:v]overlay[base1]; ...; caption last.
+            # Overlay inputs start at index 2 (0 = concat video, 1 = audio).
+            stmts = [f"[0:v]{scale_pad}[base0]"]
+            for i, ov in enumerate(overlays):
+                stmts.append(
+                    f"[base{i}][{2 + i}:v]overlay="
+                    f"x=(W-w)/2:y={_OVERLAY_Y}"
+                    f":enable='between(t,{ov.start_sec:.3f},{ov.end_sec:.3f})'"
+                    f"[base{i + 1}]"
+                )
+            head = f"[base{len(overlays)}]{caption}"
+            chain = ";".join(stmts) + ";" + head
+        else:
+            chain = f"[0:v]{scale_pad},{caption}"
+
         if disclosure_required:
             disclosure = (
                 "drawtext=text='AI\\-Generated Content'"
                 ":fontsize=28:fontcolor=white@0.8:x=20:y=20"
             )
-            return (
-                f"[0:v]{scale_pad},{caption}[labeled]"
-                f";[labeled]{disclosure}[v]"
-            )
+            return f"{chain}[labeled];[labeled]{disclosure}[v]"
 
-        return f"[0:v]{scale_pad},{caption}[v]"
+        return f"{chain}[v]"
 
     def _build_ffmpeg_args(
         self,
@@ -198,12 +234,19 @@ class FfmpegAssembleAdapter(AssembleVideo):
         caption_file: Path,
         output_path: Path,
         req: AssembleRequest,
+        overlays: list = (),
     ) -> list[str]:
-        vf = self._build_filter(caption_file, req.disclosure_label_required)
-        return [
+        vf = self._build_filter(caption_file, req.disclosure_label_required, overlays)
+        args = [
             self._ffmpeg_bin, "-y",
             "-f", "concat", "-safe", "0", "-i", str(concat_file),
             "-i", str(audio_path),
+        ]
+        for ov in overlays:
+            # overlay's default eof_action=repeat holds the single PNG frame for
+            # the whole timeline; the enable window gates visibility.
+            args += ["-i", str(ov.png_uri)]
+        args += [
             "-filter_complex", vf,
             "-map", "[v]",
             "-map", "1:a",
@@ -216,6 +259,7 @@ class FfmpegAssembleAdapter(AssembleVideo):
             "-shortest",
             str(output_path),
         ]
+        return args
 
     async def _run_ffmpeg(self, cmd: list[str]) -> None:
         """Run ffmpeg; raise RuntimeError with stderr tail if it exits non-zero."""

@@ -68,6 +68,7 @@ _STAGE_TO_MACRO = {
     "analyze_content": "transcribe",
     "adapt_script": "script_plan",
     "plan_shots": "script_plan",
+    "render_overlays": "script_plan",
     "render_character": "render",
     "synthesize_voice": "render",
     "generate_video": "render",
@@ -571,7 +572,13 @@ def create_app(
         data = artifact_store.get_json(job_id, "plan_shots")
         if data is None:
             return _base_response({"plan": None, "message": "Storyboard not yet available."})
-        return _base_response({"plan": {"shots": data.get("shots", [])}})
+        import base64
+        shots = data.get("shots", [])
+        for shot in shots:
+            png_uri = (shot.get("overlay") or {}).get("png_uri")
+            if png_uri:
+                shot["overlay_png_b64"] = base64.urlsafe_b64encode(str(png_uri).encode()).decode()
+        return _base_response({"plan": {"shots": shots}})
 
     @app.get("/api/jobs/{job_id}/visuals")
     def get_visuals(job_id: str) -> dict[str, Any]:

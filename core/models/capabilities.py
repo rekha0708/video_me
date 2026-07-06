@@ -69,6 +69,7 @@ class VisualSegment(BaseModel):
     end: float
     setting: str                                   # observed location/background at this time
     props: list[str] = Field(default_factory=list)  # notable objects/props on screen
+    chart: str = ""  # short phrase if a chart/graph/diagram is visible ("" = none)
 
 
 class VisualContext(BaseModel):
@@ -101,6 +102,26 @@ class PlanShotsRequest(BaseModel):
     script: Script
     cast: Cast
     critique_notes: list[str] = Field(default_factory=list)  # injected on re-plan
+    visual_context: VisualContext | None = None  # source-video chart hints for overlay authoring
+
+
+# ---------- render_overlays → per-shot chart panel PNGs ----------
+
+class RenderOverlaysRequest(BaseModel):
+    shots: list[Any]  # list[Shot] — Any avoids the circular import (same as ImageApprovalRequest)
+
+
+class RenderOverlaysResult(BaseModel):
+    images: dict[str, str] = Field(default_factory=dict)   # shot_id → PNG path
+    skipped: dict[str, str] = Field(default_factory=dict)  # shot_id → reason
+
+
+class OverlayWindow(BaseModel):
+    """A rendered overlay PNG + the absolute time window it is visible in the final video."""
+    shot_id: str
+    png_uri: str
+    start_sec: float
+    end_sec: float
 
 
 # ---------- render_character ----------
@@ -236,6 +257,7 @@ class AssembleRequest(BaseModel):
     aspect_ratio: str = "9:16"
     made_for_kids: bool = True
     disclosure_label_required: bool = True
+    overlays: list[OverlayWindow] = Field(default_factory=list)  # chart panels, time-windowed
 
 
 class FinalVideo(BaseModel):

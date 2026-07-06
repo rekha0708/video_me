@@ -273,12 +273,14 @@ class WebApprovalAdapter:
         lines = ["# Storyboard Review\n"]
         lines.append(f"**{len(storyboard.shots)} shots** · "
                      f"{sum(s.duration_sec for s in storyboard.shots):.1f}s total\n")
-        lines.append("| Shot | Character(s) | Camera | Setting | Action | Duration |")
-        lines.append("|------|-------------|--------|---------|--------|----------|")
+        lines.append("| Shot | Character(s) | Camera | Setting | Action | Duration | Overlay |")
+        lines.append("|------|-------------|--------|---------|--------|----------|---------|")
         for s in storyboard.shots:
             chars = ", ".join(cast_map.get(c, c) for c in s.characters_on_screen)
+            overlay = getattr(s, "overlay", None)
+            overlay_note = f"{overlay.kind}: {overlay.title}" if overlay else "—"
             lines.append(
-                f"| {s.shot_id} | {chars} | {s.camera} | {s.setting} | {s.action} | {s.duration_sec}s |"
+                f"| {s.shot_id} | {chars} | {s.camera} | {s.setting} | {s.action} | {s.duration_sec}s | {overlay_note} |"
             )
 
         if critique:

@@ -46,6 +46,21 @@ Return JSON:
   ]
 }}
 
+Optional per-shot "overlay": for lines whose dialogue states numbers, comparisons,
+rankings, or step lists, you MAY add a chart panel shown above the character:
+  "overlay": {{
+    "kind": "<bar|line|pie|callout>",
+    "title": "<short chart title, 6 words max>",
+    "labels": ["<2-6 short labels>"],
+    "values": [<one number per label>],
+    "caption": "<optional unit/context note>"
+  }}
+Overlay rules:
+- Only add an overlay when the line's dialogue actually mentions the data. Most shots have NO overlay.
+- "callout" is big text only: title (+ optional caption); omit labels/values.
+- Numbers must come from the script's own dialogue — never invent precise statistics.
+- At most one overlay per shot; 2-6 data points.
+
 Rules:
 - characters_on_screen must contain the speaker and AT MOST one other member ID.
 - Never put more than 2 IDs in characters_on_screen.
@@ -78,6 +93,51 @@ def trim_characters(characters: list[str], speaker: str) -> list[str]:
         return [speaker]
     ordered = [speaker] + [c for c in characters if c != speaker]
     return ordered[:2]
+
+
+def parse_overlay(raw: object) -> "ShotOverlay | None":
+    """Parse an LLM-provided overlay spec; any malformed spec → None (never fatal)."""
+    from pydantic import ValidationError
+
+    from core.models.content import ShotOverlay
+
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return ShotOverlay(
+            kind=str(raw.get("kind", "")).lower(),
+            title=str(raw.get("title", "")).strip(),
+            labels=[str(label) for label in (raw.get("labels") or [])][:6],
+            values=[float(v) for v in (raw.get("values") or [])][:6],
+            caption=str(raw.get("caption", "")).strip(),
+        )
+    except (ValueError, TypeError, ValidationError):
+        logger.warning("Dropping malformed overlay spec: %r", raw)
+        return None
+
+
+def _format_chart_hints(visual_context) -> str:
+    """Reference-video chart hints so overlays are grounded — with the rights rule.
+
+    Empty when there is no visual context or no charts were seen.
+    """
+    segments = getattr(visual_context, "segments", None) if visual_context else None
+    if not segments:
+        return ""
+    charted = [s for s in segments if getattr(s, "chart", "")]
+    if not charted:
+        return ""
+    total = max(segments[-1].end, 0.001)
+    lines = ["\nReference-video visual notes:"]
+    for seg in charted:
+        pct = int(100 * seg.start / total)
+        lines.append(f"  - ~{pct}% through the source ({seg.start:.0f}s–{seg.end:.0f}s) it showed: {seg.chart}.")
+    lines.append(
+        "If a script line covers the same idea, consider attaching an overlay to that shot.\n"
+        "RIGHTS RULE: your overlay must be an ORIGINAL chart built from the adapted script's "
+        "own wording and numbers — NEVER copy the source chart's exact data, labels, or design."
+    )
+    return "\n".join(lines)
 
 
 def _format_cast_block(cast) -> str:
@@ -205,6 +265,10 @@ class LlmPlanShotsAdapter(PlanShots):
             lines_block=lines_block,
         )
 
+        chart_hints = _format_chart_hints(req.visual_context)
+        if chart_hints:
+            user_content += "\n" + chart_hints
+
         if req.critique_notes:
             notes_block = "\n".join(f"- {n}" for n in req.critique_notes)
             user_content += (
@@ -274,6 +338,7 @@ class LlmPlanShotsAdapter(PlanShots):
                     action=action,
                     dialogue_line_refs=[line_ref],
                     duration_sec=estimate_duration(line_text),
+                    overlay=parse_overlay(llm.get("overlay")),
                 )
             )
 

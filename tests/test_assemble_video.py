@@ -439,3 +439,78 @@ async def test_run_ffmpeg_command_received(tmp_path: Path) -> None:
 async def test_estimate_cost_is_zero(tmp_path: Path) -> None:
     cost = await _adapter(tmp_path).estimate_cost(_request(tmp_path))
     assert cost.amount == 0.0
+
+
+# ------------------------------------------------------------------ overlays
+
+def _overlay_window(tmp_path: Path, shot_id: str, start: float, end: float):
+    from core.models.capabilities import OverlayWindow
+    png = tmp_path / f"{shot_id}.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 40)
+    return OverlayWindow(shot_id=shot_id, png_uri=str(png), start_sec=start, end_sec=end)
+
+
+def test_build_filter_with_overlays_chains_and_windows(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    caption_file = tmp_path / "caption.txt"
+    overlays = [
+        _overlay_window(tmp_path, "s01", 0.25, 4.9),
+        _overlay_window(tmp_path, "s02", 5.25, 9.9),
+    ]
+    f = adapter._build_filter(caption_file, disclosure_required=False, overlays=overlays)
+    assert "[base0][2:v]overlay=x=(W-w)/2:y=80:enable='between(t,0.250,4.900)'[base1]" in f
+    assert "[base1][3:v]overlay=" in f
+    assert "between(t,5.250,9.900)" in f
+    # caption drawtext applies after the last overlay, output still [v]
+    assert f.index("overlay=") < f.index("drawtext=")
+    assert f.endswith("[v]")
+
+
+def test_build_filter_without_overlays_identical_to_before(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    caption_file = tmp_path / "caption.txt"
+    assert adapter._build_filter(caption_file, True) == adapter._build_filter(caption_file, True, [])
+    f = adapter._build_filter(caption_file, disclosure_required=True)
+    assert f.startswith(f"[0:v]scale={adapter._width}")
+    assert "[labeled]" in f
+
+
+def test_build_ffmpeg_args_includes_overlay_inputs(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    overlays = [_overlay_window(tmp_path, "s01", 0.25, 4.9)]
+    cmd = adapter._build_ffmpeg_args(
+        tmp_path / "concat.txt", tmp_path / "a.wav", tmp_path / "c.txt",
+        tmp_path / "final.mp4", _request(tmp_path), overlays,
+    )
+    assert str(overlays[0].png_uri) in cmd
+    # PNG input comes after the audio input
+    assert cmd.index(str(overlays[0].png_uri)) > cmd.index(str(tmp_path / "a.wav"))
+
+
+def test_usable_overlays_caps_and_drops_missing(tmp_path: Path) -> None:
+    from core.models.capabilities import OverlayWindow
+    adapter = _adapter(tmp_path)
+    overlays = [_overlay_window(tmp_path, f"s{i:02d}", i * 5.0, i * 5.0 + 4) for i in range(12)]
+    overlays.append(OverlayWindow(shot_id="ghost", png_uri=str(tmp_path / "nope.png"),
+                                  start_sec=0, end_sec=1))
+    usable = adapter._usable_overlays(overlays)
+    assert len(usable) == 10                      # capped
+    assert all(o.shot_id != "ghost" for o in usable)  # missing PNG dropped
+
+
+async def test_run_with_overlays_passes_them_through(tmp_path: Path, monkeypatch) -> None:
+    adapter = _adapter(tmp_path)
+    captured: dict = {}
+
+    async def spy_ffmpeg(cmd):
+        captured["cmd"] = cmd
+        await _noop_ffmpeg(cmd)
+
+    monkeypatch.setattr(adapter, "_run_ffmpeg", spy_ffmpeg)
+    overlays = [_overlay_window(tmp_path, "s01", 0.25, 2.0)]
+    req = _request(tmp_path)
+    req.overlays = overlays
+    await adapter.run(req)
+    assert str(overlays[0].png_uri) in captured["cmd"]
+    filter_arg = captured["cmd"][captured["cmd"].index("-filter_complex") + 1]
+    assert "overlay=" in filter_arg

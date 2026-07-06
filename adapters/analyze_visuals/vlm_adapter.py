@@ -43,7 +43,8 @@ Each image below is one frame, in order. The time ranges are:
 Return JSON with exactly this shape:
 {{
   "segments": [
-    {{"start": 0.0, "end": 5.0, "setting": "<location/background visible>", "props": ["<object>", ...]}}
+    {{"start": 0.0, "end": 5.0, "setting": "<location/background visible>", "props": ["<object>", ...],
+      "chart": "<if a chart, graph, table, or diagram is visible: one short phrase like 'bar chart comparing X and Y'; otherwise empty string>"}}
   ],
   "summary": "<one sentence listing the distinct locations seen across the video>"
 }}
@@ -253,6 +254,9 @@ class VlmAnalyzeVisualsAdapter(AnalyzeVisuals):
             else:
                 start, end = float(item.get("start", 0.0)), float(item.get("end", 0.0))
             props = [str(p).strip() for p in (item.get("props") or []) if str(p).strip()]
-            segments.append(VisualSegment(start=start, end=end, setting=setting, props=props))
+            chart = str(item.get("chart", "")).strip()
+            segments.append(
+                VisualSegment(start=start, end=end, setting=setting, props=props, chart=chart)
+            )
 
         return VisualContext(segments=segments, summary=str(data.get("summary", "")).strip())

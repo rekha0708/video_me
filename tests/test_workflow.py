@@ -577,6 +577,151 @@ async def test_per_shot_loop_runs_for_each_shot(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_render_plan_overlays_sets_png_uri_and_persists(tmp_path) -> None:
+    from core.models.content import ShotOverlay
+    from core.workflow import _render_plan_overlays, RunOptions
+
+    sb = _storyboard()
+    sb.shots[0].overlay = ShotOverlay(kind="callout", title="Count to five!")
+
+    from core.models.capabilities import RenderOverlaysResult
+    from core.models.common import HealthStatus
+
+    ctx = SimpleNamespace(
+        adapters=SimpleNamespace(overlays=SimpleNamespace(
+            health=AsyncMock(return_value=HealthStatus(status="ok")),
+            run=AsyncMock(return_value=RenderOverlaysResult(
+                images={"s01": "/tmp/overlays/s01.png"})),
+        )),
+        artifact_store=MagicMock(),
+        job=SimpleNamespace(job_id="job1"),
+    )
+    result = await _render_plan_overlays(sb, ctx, RunOptions())
+
+    assert result.shots[0].overlay.png_uri == "/tmp/overlays/s01.png"
+    stage_names = [c.args[1] for c in ctx.artifact_store.put_json.call_args_list]
+    assert "render_overlays" in stage_names
+
+
+@pytest.mark.asyncio
+async def test_render_plan_overlays_best_effort_when_down(tmp_path) -> None:
+    from core.models.common import HealthStatus
+    from core.models.content import ShotOverlay
+    from core.workflow import _render_plan_overlays, RunOptions
+
+    sb = _storyboard()
+    sb.shots[0].overlay = ShotOverlay(kind="callout", title="Count!")
+    overlays_adapter = SimpleNamespace(
+        health=AsyncMock(return_value=HealthStatus(status="down", reason="no matplotlib")),
+        run=AsyncMock(),
+    )
+    ctx = SimpleNamespace(
+        adapters=SimpleNamespace(overlays=overlays_adapter),
+        artifact_store=MagicMock(),
+        job=SimpleNamespace(job_id="job1"),
+    )
+    result = await _render_plan_overlays(sb, ctx, RunOptions())
+    overlays_adapter.run.assert_not_called()
+    assert result.shots[0].overlay.png_uri is None  # job continues without panels
+
+
+@pytest.mark.asyncio
+async def test_overlays_render_before_approval_and_plan_repersisted(tmp_path) -> None:
+    """Previews must exist before the gate; the approved plan must be re-persisted."""
+    from core.models.capabilities import PlanCritiqueResult, RenderOverlaysResult
+    from core.models.common import HealthStatus
+    from core.models.content import ShotOverlay
+    from core.workflow import _run_plan_critique_and_approval, RunOptions
+
+    config = _make_config(tmp_path)
+    call_order: list[str] = []
+
+    sb = _storyboard()
+    sb.shots[0].overlay = ShotOverlay(kind="callout", title="Count!")
+
+    async def overlays_run(req):
+        call_order.append("overlays")
+        return RenderOverlaysResult(images={"s01": "/tmp/overlays/s01.png"})
+
+    async def approval_run(**kwargs):
+        call_order.append("approval")
+        # storyboard shown at the gate must already carry the preview path
+        assert kwargs["storyboard"].shots[0].overlay.png_uri == "/tmp/overlays/s01.png"
+        return (True, "")
+
+    adapters = SimpleNamespace(
+        plan=SimpleNamespace(run=AsyncMock(return_value=sb)),
+        plan_critique=SimpleNamespace(run=AsyncMock(return_value=PlanCritiqueResult(verdict="pass"))),
+        overlays=SimpleNamespace(
+            health=AsyncMock(return_value=HealthStatus(status="ok")),
+            run=overlays_run,
+        ),
+        approval=SimpleNamespace(request_approval=approval_run),
+    )
+    artifact_store = MagicMock()
+    ctx = SimpleNamespace(
+        config=config,
+        job=Job(source_url="http://x", channel_profile_ref="p", cast_ref="c", rights_cleared=True),
+        job_store=MagicMock(),
+        adapters=adapters,
+        artifact_store=artifact_store,
+    )
+
+    out_sb, _ = await _run_plan_critique_and_approval(sb, _script(), ctx, RunOptions())
+
+    assert call_order == ["overlays", "approval"]
+    persisted = [c for c in artifact_store.put_json.call_args_list if c.args[1] == "plan_shots"]
+    assert persisted, "approved storyboard must be re-persisted to the plan_shots artifact"
+    assert persisted[-1].args[2]["shots"][0]["overlay"]["png_uri"] == "/tmp/overlays/s01.png"
+
+
+@pytest.mark.asyncio
+async def test_build_overlay_windows_uses_probed_durations(tmp_path, monkeypatch) -> None:
+    from core.models.content import ShotOverlay
+    from core.workflow import _build_overlay_windows
+    import core.workflow as wf
+
+    sb = _two_shot_storyboard()
+    png = tmp_path / "s02.png"
+    png.write_bytes(b"png")
+    sb.shots[1].overlay = ShotOverlay(kind="callout", title="Data!", png_uri=str(png))
+
+    clips = [
+        VideoClip(uri="/tmp/c1.mp4", duration_sec=3.0, shot_id="s01"),  # estimate 3.0
+        VideoClip(uri="/tmp/c2.mp4", duration_sec=4.0, shot_id="s02"),
+    ]
+    # Actual durations differ from the estimates — offsets must use actuals.
+    actuals = {"/tmp/c1.mp4": 6.5, "/tmp/c2.mp4": 5.0}
+
+    async def fake_probe(path, ffprobe_bin):
+        return actuals[str(path)]
+
+    monkeypatch.setattr(wf, "_probe_duration_sec", fake_probe)
+    windows = await _build_overlay_windows(sb.shots, clips, "ffprobe")
+
+    assert len(windows) == 1
+    w = windows[0]
+    assert w.shot_id == "s02"
+    assert w.start_sec == pytest.approx(6.5 + 0.25)   # offset from ACTUAL first clip
+    assert w.end_sec == pytest.approx(6.5 + 5.0 - 0.1)
+
+
+@pytest.mark.asyncio
+async def test_build_overlay_windows_skips_missing_png(tmp_path, monkeypatch) -> None:
+    from core.models.content import ShotOverlay
+    from core.workflow import _build_overlay_windows
+    import core.workflow as wf
+
+    sb = _storyboard()
+    sb.shots[0].overlay = ShotOverlay(kind="callout", title="Gone",
+                                      png_uri=str(tmp_path / "missing.png"))
+    clips = [VideoClip(uri="/tmp/c1.mp4", duration_sec=3.0, shot_id="s01")]
+    monkeypatch.setattr(wf, "_probe_duration_sec", AsyncMock(return_value=None))
+    windows = await _build_overlay_windows(sb.shots, clips, "ffprobe")
+    assert windows == []
+
+
+@pytest.mark.asyncio
 async def test_visual_context_flows_into_adapt_script(tmp_path) -> None:
     """analyze_visuals output must reach the AdaptScriptRequest for grounding."""
     from core.models.capabilities import VisualContext, VisualSegment

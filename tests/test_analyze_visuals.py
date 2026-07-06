@@ -172,3 +172,35 @@ def test_bucket_segments_passthrough_when_under_cap(tmp_path: Path) -> None:
     segments = _segments(3)
     buckets = adapter._bucket_segments(segments)
     assert len(buckets) == 3
+
+
+# ------------------------------------------------------------------ chart detection
+
+
+async def test_chart_field_parsed(tmp_path: Path, monkeypatch) -> None:
+    adapter = _adapter(tmp_path)
+    video = _make_video(tmp_path)
+    monkeypatch.setattr(adapter, "_sample_frames", AsyncMock(return_value=[Path("a.jpg")]))
+    monkeypatch.setattr(
+        adapter, "_call_vlm",
+        AsyncMock(return_value='{"segments":[{"start":0,"end":5,"setting":"studio",'
+                              '"chart":"bar chart comparing planets"}]}'),
+    )
+    result = await adapter.run(
+        AnalyzeVisualsRequest(video_uri=str(video), segments=[TranscriptSegment(text="x", start=0, end=5)])
+    )
+    assert result.segments[0].chart == "bar chart comparing planets"
+
+
+async def test_chart_field_defaults_empty(tmp_path: Path, monkeypatch) -> None:
+    adapter = _adapter(tmp_path)
+    video = _make_video(tmp_path)
+    monkeypatch.setattr(adapter, "_sample_frames", AsyncMock(return_value=[Path("a.jpg")]))
+    monkeypatch.setattr(
+        adapter, "_call_vlm",
+        AsyncMock(return_value='{"segments":[{"start":0,"end":5,"setting":"studio"}]}'),
+    )
+    result = await adapter.run(
+        AnalyzeVisualsRequest(video_uri=str(video), segments=[TranscriptSegment(text="x", start=0, end=5)])
+    )
+    assert result.segments[0].chart == ""

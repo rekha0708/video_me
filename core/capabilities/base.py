@@ -24,6 +24,8 @@ from core.models.capabilities import (
     PublishRequest,
     PublishResult,
     RenderCharacterRequest,
+    RenderOverlaysRequest,
+    RenderOverlaysResult,
     SeparateAudioRequest,
     SeparateAudioResult,
     TranscribeRequest,
@@ -81,6 +83,10 @@ class PlanShots(Capability[PlanShotsRequest, Storyboard], ABC):
 
 class RenderCharacter(Capability[RenderCharacterRequest, ImageSet], ABC):
     name = "render_character"
+
+
+class RenderOverlays(Capability[RenderOverlaysRequest, RenderOverlaysResult], ABC):
+    name = "render_overlays"
 
 
 class SynthesizeVoice(Capability[VoiceRequest, AudioTrack], ABC):

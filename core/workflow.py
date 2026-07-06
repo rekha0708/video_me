@@ -139,6 +139,7 @@ class _Adapters:
     adapt: object
     plan: object
     plan_critique: object
+    overlays: object
     approval: object
     image_critique: object
     image_approval: object
@@ -222,6 +223,7 @@ def _make_adapters(
     from adapters.lip_sync.lip_sync_adapter import LipSyncAdapter
     from adapters.plan_shots.llm_adapter import LlmPlanShotsAdapter
     from adapters.publish.manual_adapter import ManualPublishAdapter
+    from adapters.render_overlays.matplotlib_adapter import MatplotlibOverlayAdapter
     from adapters.synthesize_voice.tts_adapter import TtsAdapter  # Chatterbox fallback
     from adapters.transcribe.whisper_adapter import WhisperAdapter
 
@@ -267,6 +269,7 @@ def _make_adapters(
             base_url=s.llm_base_url,
             api_key=s.llm_api_key,
         ),
+        overlays=MatplotlibOverlayAdapter(work_dir=work_dir / "overlays"),
         approval=(approval_overrides or {}).get("approval") or WebApprovalAdapter(
             work_dir=work_dir,
             port=s.approval_port,
@@ -746,6 +749,7 @@ async def _critique_loop(
     script: Script,
     ctx: "_JobContext",
     max_iterations: int,
+    visual_context: "VisualContext | None" = None,
 ) -> tuple[Storyboard, list[str]]:
     """
     Run the plan critique loop: up to max_iterations re-plan attempts.
@@ -763,7 +767,8 @@ async def _critique_loop(
         if attempt > 1 and notes:
             log_event(logger, "plan_replan", attempt=attempt, notes=notes)
             storyboard = await adapters.plan.run(
-                PlanShotsRequest(script=script, cast=config.cast, critique_notes=notes)
+                PlanShotsRequest(script=script, cast=config.cast, critique_notes=notes,
+                                 visual_context=visual_context)
             )
 
         critique = await adapters.plan_critique.run(
@@ -782,11 +787,58 @@ async def _critique_loop(
     return storyboard, notes
 
 
+async def _render_plan_overlays(
+    storyboard: Storyboard,
+    ctx: "_JobContext",
+    opts: "RunOptions",
+) -> Storyboard:
+    """Render each shot.overlay to a PNG panel and set overlay.png_uri.
+
+    Best-effort: matplotlib missing, or any render failure, leaves the shot
+    without a panel — never fails the job. Runs before the plan approval gate
+    so the operator previews the panels; cheap CPU work, so re-plan iterations
+    simply re-render.
+    """
+    from core.models.capabilities import RenderOverlaysRequest
+
+    shots_with_overlays = [s for s in storyboard.shots if s.overlay is not None]
+    if not shots_with_overlays:
+        return storyboard
+
+    adapters = ctx.adapters
+    health = await adapters.overlays.health()
+    if health.status != "ok":
+        log_event(logger, "render_overlays_skipped", reason=health.reason)
+        return storyboard
+
+    if opts.stage_hook:
+        opts.stage_hook("render_overlays", "stage_started")
+    try:
+        result = await adapters.overlays.run(
+            RenderOverlaysRequest(shots=shots_with_overlays)
+        )
+    except Exception as exc:  # overlays are decorative — never fatal
+        logger.warning("render_overlays failed (%s); continuing without panels", exc)
+        return storyboard
+
+    for shot in shots_with_overlays:
+        shot.overlay.png_uri = result.images.get(shot.shot_id)
+
+    ctx.artifact_store.put_json(
+        ctx.job.job_id, "render_overlays",
+        {"images": result.images, "skipped": result.skipped},
+    )
+    if opts.stage_hook:
+        opts.stage_hook("render_overlays", "stage_completed")
+    return storyboard
+
+
 async def _run_plan_critique_and_approval(
     storyboard: Storyboard,
     script: Script,
     ctx: "_JobContext",
     opts: "RunOptions",
+    visual_context: "VisualContext | None" = None,
 ) -> tuple[Storyboard, Script]:
     """
     Run the critique loop then the human approval gate.
@@ -800,15 +852,25 @@ async def _run_plan_critique_and_approval(
     job_store = ctx.job_store
     adapters = ctx.adapters
 
+    def _persist_approved_plan(sb: Storyboard) -> None:
+        # Re-plans call adapters.plan.run() directly (no run_stage), so the
+        # persisted plan_shots artifact goes stale — and downstream phases
+        # (render/assemble resume) plus overlay png_uris depend on the final
+        # approved storyboard. Re-persist it after the gate.
+        ctx.artifact_store.put_json(job.job_id, "plan_shots", sb.model_dump(mode="json"))
+
     # ── LLM critique loop ─────────────────────────────────────────────────────
     storyboard, last_notes = await _critique_loop(
-        storyboard, script, ctx, s.max_plan_iterations
+        storyboard, script, ctx, s.max_plan_iterations, visual_context=visual_context
     )
 
     # Reconstruct final critique result for the UI (re-run to get fresh scores)
     final_critique = await adapters.plan_critique.run(
         PlanCritiqueRequest(storyboard=storyboard, script=script, cast=ctx.config.cast)
     )
+
+    # Render overlay panels so their previews ride the approval gate.
+    storyboard = await _render_plan_overlays(storyboard, ctx, opts)
 
     # ── Human approval gate ───────────────────────────────────────────────────
     job.status = JobStatus.PENDING_APPROVAL
@@ -825,18 +887,24 @@ async def _run_plan_critique_and_approval(
     if approved:
         job.status = JobStatus.RUNNING
         job_store.save_job(job)
+        _persist_approved_plan(storyboard)
         return storyboard, script
 
     # ── Rejection path: one more re-plan with human notes ────────────────────
     log_event(logger, "plan_human_rejected", notes=rejection_notes)
     combined_notes = last_notes + ([rejection_notes] if rejection_notes else [])
     storyboard = await adapters.plan.run(
-        PlanShotsRequest(script=script, cast=ctx.config.cast, critique_notes=combined_notes)
+        PlanShotsRequest(script=script, cast=ctx.config.cast, critique_notes=combined_notes,
+                         visual_context=visual_context)
     )
-    storyboard, _ = await _critique_loop(storyboard, script, ctx, s.max_plan_iterations)
+    storyboard, _ = await _critique_loop(
+        storyboard, script, ctx, s.max_plan_iterations, visual_context=visual_context
+    )
     final_critique = await adapters.plan_critique.run(
         PlanCritiqueRequest(storyboard=storyboard, script=script, cast=ctx.config.cast)
     )
+
+    storyboard = await _render_plan_overlays(storyboard, ctx, opts)
 
     # Second approval UI — if rejected again, fail the job
     approved, rejection_notes = await adapters.approval.request_approval(
@@ -858,6 +926,7 @@ async def _run_plan_critique_and_approval(
 
     job.status = JobStatus.RUNNING
     job_store.save_job(job)
+    _persist_approved_plan(storyboard)
     return storyboard, script
 
 
@@ -983,7 +1052,7 @@ async def _run_to_assembled_video(
         # 6. plan_shots
         storyboard: Storyboard = await _stage(
             "plan_shots", adapters.plan,
-            PlanShotsRequest(script=script, cast=config.cast),
+            PlanShotsRequest(script=script, cast=config.cast, visual_context=visual_context),
             Storyboard,
         )
 
@@ -993,6 +1062,7 @@ async def _run_to_assembled_video(
             script=script,
             ctx=ctx,
             opts=opts,
+            visual_context=visual_context,
         )
 
         if opts.phase in ("plan", "script_plan"):
@@ -1020,6 +1090,7 @@ async def _run_to_assembled_video(
         synced_clips, audio_tracks = _collect_existing_shot_artifacts(
             storyboard, script, config.cast, ctx.work_dir
         )
+        shots_for_clips = storyboard.shots  # one clip per shot, same order
     else:
         # Release LLM from VRAM before the GPU-heavy shot loop, and make sure a
         # VRAM-managed video model (Wan) is not resident during render_character.
@@ -1069,6 +1140,7 @@ async def _run_to_assembled_video(
             )
             synced_clips.append(synced)
             audio_tracks.append(audio)
+        shots_for_clips = shots_to_run  # one clip per shot, same order
 
         if opts.phase == "render":
             logger.info("Phase 'render' complete — stopping before assemble.")
@@ -1077,6 +1149,11 @@ async def _run_to_assembled_video(
             return script, None  # type: ignore[return-value]
 
     combined_audio = await _concat_audio(audio_tracks, ctx.work_dir, adapters.ffmpeg_bin)
+
+    # Chart/diagram overlay panels: absolute time windows from actual clip durations.
+    overlay_windows = await _build_overlay_windows(
+        shots_for_clips, synced_clips, config.settings.ffprobe_bin
+    )
 
     # ── Assemble phase ────────────────────────────────────────────────────────
     # 8. assemble_video
@@ -1089,6 +1166,7 @@ async def _run_to_assembled_video(
             aspect_ratio=config.channel_profile.aspect_ratio,
             made_for_kids=config.channel_profile.made_for_kids,
             disclosure_label_required=config.channel_profile.disclosure_label_required,
+            overlays=overlay_windows,
         ),
         job, artifact_store, job_store,
         stage_hook=opts.stage_hook,
@@ -1096,6 +1174,65 @@ async def _run_to_assembled_video(
     )
 
     return script, final_video
+
+
+async def _probe_duration_sec(path: str, ffprobe_bin: str) -> float | None:
+    """Actual media duration via ffprobe; None on any failure."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            ffprobe_bin, "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "csv=p=0",
+            str(path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        if proc.returncode != 0:
+            return None
+        return float(stdout.decode().strip())
+    except Exception:
+        return None
+
+
+async def _build_overlay_windows(
+    shots: list[Shot],
+    clips: list[VideoClip],
+    ffprobe_bin: str,
+) -> "list[OverlayWindow]":
+    """Compute the absolute time window of each shot's overlay in the final video.
+
+    Offsets use ffprobe-measured clip durations (fallback: the words/2 estimate)
+    because native-lipsync clips follow the TTS audio length, not the estimate —
+    per-shot drift would misplace later overlays.
+    """
+    from core.models.capabilities import OverlayWindow
+
+    # Common case: no overlays at all — skip the per-clip ffprobe entirely.
+    if not any(
+        s.overlay is not None and s.overlay.png_uri and Path(s.overlay.png_uri).exists()
+        for s in shots
+    ):
+        return []
+
+    windows: list[OverlayWindow] = []
+    offset = 0.0
+    for shot, clip in zip(shots, clips):
+        actual = await _probe_duration_sec(clip.uri, ffprobe_bin) or clip.duration_sec
+        overlay = shot.overlay
+        if overlay is not None and overlay.png_uri and Path(overlay.png_uri).exists():
+            visible = min(overlay.duration_sec or actual, actual)
+            start = offset + 0.25          # skip the very first frames of the cut
+            end = offset + visible - 0.1
+            if end > start:
+                windows.append(OverlayWindow(
+                    shot_id=shot.shot_id,
+                    png_uri=overlay.png_uri,
+                    start_sec=round(start, 3),
+                    end_sec=round(end, 3),
+                ))
+        offset += actual
+    return windows
 
 
 def _collect_existing_shot_artifacts(

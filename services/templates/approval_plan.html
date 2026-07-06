@@ -42,6 +42,21 @@
           <td class="td-muted">{{ shot.character_ids | join(', ') }}</td>
           <td class="td-muted">{{ shot.duration_sec }}s</td>
         </tr>
+        {% if shot.overlay %}
+        <tr>
+          <td></td>
+          <td colspan="4" style="padding-top:0">
+            {% if shot.overlay_png_b64 %}
+            <img src="/img/{{ shot.overlay_png_b64 }}" alt="overlay preview"
+                 style="max-width:320px;border-radius:6px;display:block;margin:4px 0">
+            {% endif %}
+            <span class="td-muted" style="font-size:12px">
+              Overlay: {{ shot.overlay.kind }} — “{{ shot.overlay.title }}”
+              {% if shot.overlay.labels %}({{ shot.overlay.labels | join(', ') }} = {{ shot.overlay.values | join(', ') }}){% endif %}
+            </span>
+          </td>
+        </tr>
+        {% endif %}
         {% endfor %}
       </tbody>
     </table>

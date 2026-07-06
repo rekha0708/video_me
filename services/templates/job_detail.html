@@ -381,11 +381,19 @@ const ARTIFACT_RENDERERS = {
   plan: (data) => {
     const shots = data.plan?.shots;
     if (!shots?.length) return '<p class="text-muted" style="font-size:13px;padding:6px 0">Storyboard not yet available.</p>';
-    const rows = shots.map(sh =>
-      `<tr><td class="td-mono">${sh.shot_id}</td><td>${sh.setting}</td><td>${sh.action}</td>
+    const rows = shots.map(sh => {
+      let row = `<tr><td class="td-mono">${sh.shot_id}</td><td>${sh.setting}</td><td>${sh.action}</td>
         <td class="td-muted">${(sh.characters_on_screen || []).join(', ')}</td>
-        <td class="td-muted">${sh.duration_sec}s</td></tr>`
-    ).join('');
+        <td class="td-muted">${sh.duration_sec}s</td></tr>`;
+      if (sh.overlay) {
+        const thumb = sh.overlay_png_b64
+          ? `<img src="/img/${sh.overlay_png_b64}" alt="overlay" style="max-width:240px;border-radius:6px;display:block;margin:4px 0">`
+          : '';
+        row += `<tr><td></td><td colspan="4" style="padding-top:0">${thumb}
+          <span class="text-muted" style="font-size:12px">Overlay: ${sh.overlay.kind} — "${sh.overlay.title}"</span></td></tr>`;
+      }
+      return row;
+    }).join('');
     return `
       <div class="table-wrap" style="max-height:400px;overflow-y:auto">
         <table><thead><tr><th>Shot</th><th>Setting</th><th>Action</th><th>Chars</th><th>Dur</th></tr></thead>

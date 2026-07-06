@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from core.models.guardrails import SourceRights
 
@@ -58,6 +58,31 @@ class Script(BaseModel):
         return value
 
 
+class ShotOverlay(BaseModel):
+    """LLM-authored chart/diagram panel composited over the upper third of the shot.
+
+    Drawn deterministically by the render_overlays stage (matplotlib) — diffusion
+    models cannot render legible charts. ``callout`` is big-text only (title +
+    optional caption); the chart kinds need 2-6 labels with matching values.
+    """
+    kind: Literal["bar", "line", "pie", "callout"]
+    title: str
+    labels: list[str] = Field(default_factory=list)
+    values: list[float] = Field(default_factory=list)
+    caption: str = ""                    # small unit/context note under the chart
+    duration_sec: float | None = None    # None → visible for the whole shot
+    png_uri: str | None = None           # set by render_overlays; rides the plan artifact
+
+    @model_validator(mode="after")
+    def check_data_shape(self) -> "ShotOverlay":
+        if self.kind in ("bar", "line", "pie"):
+            if not (2 <= len(self.labels) <= 6) or len(self.labels) != len(self.values):
+                raise ValueError("chart overlays need 2-6 labels with matching values")
+            if self.kind == "pie" and any(v < 0 for v in self.values):
+                raise ValueError("pie values must be non-negative")
+        return self
+
+
 class Shot(BaseModel):
     shot_id: str
     scene_ref: str
@@ -67,6 +92,7 @@ class Shot(BaseModel):
     action: str
     dialogue_line_refs: list[str] = Field(default_factory=list)
     duration_sec: float
+    overlay: ShotOverlay | None = None  # optional chart/diagram panel for this shot
 
     @field_validator("characters_on_screen")
     @classmethod

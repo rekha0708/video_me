@@ -403,3 +403,86 @@ async def test_estimate_cost_is_zero() -> None:
 # ------------------------------------------------------------------ import for clamping check
 
 from adapters.plan_shots.llm_adapter import _MIN_SHOT_SEC, _MAX_SHOT_SEC
+
+
+# ------------------------------------------------------------------ overlays
+
+def test_parse_overlay_valid_bar() -> None:
+    from adapters.plan_shots.llm_adapter import parse_overlay
+    ov = parse_overlay({"kind": "BAR", "title": "Apples vs Oranges",
+                        "labels": ["Apples", "Oranges"], "values": [3, 5]})
+    assert ov is not None
+    assert ov.kind == "bar"          # normalized to lowercase
+    assert ov.values == [3.0, 5.0]
+
+
+def test_parse_overlay_junk_returns_none() -> None:
+    from adapters.plan_shots.llm_adapter import parse_overlay
+    assert parse_overlay("not a dict") is None
+    assert parse_overlay({"kind": "bar", "title": "x", "labels": ["a"], "values": [1, 2]}) is None
+    assert parse_overlay({"kind": "hologram", "title": "x"}) is None
+    assert parse_overlay({"kind": "bar", "title": "x", "labels": ["a", "b"], "values": ["?", "!"]}) is None
+    assert parse_overlay(None) is None
+
+
+def test_parse_overlay_callout_minimal() -> None:
+    from adapters.plan_shots.llm_adapter import parse_overlay
+    ov = parse_overlay({"kind": "callout", "title": "Five a day!"})
+    assert ov is not None and ov.kind == "callout"
+
+
+def test_parse_response_attaches_overlay() -> None:
+    adapter = _adapter()
+    req = _request()
+    _, flat_lines = adapter._build_messages(req)
+    payload = _llm_shots_payload(flat_lines)
+    payload["shots"][0]["overlay"] = {
+        "kind": "bar", "title": "Count", "labels": ["One", "Two"], "values": [1, 2],
+    }
+    storyboard = adapter._parse_response(json.dumps(payload), req, flat_lines)
+    assert storyboard.shots[0].overlay is not None
+    assert storyboard.shots[0].overlay.title == "Count"
+    assert storyboard.shots[1].overlay is None
+
+
+def test_parse_response_drops_bad_overlay_keeps_shot() -> None:
+    adapter = _adapter()
+    req = _request()
+    _, flat_lines = adapter._build_messages(req)
+    payload = _llm_shots_payload(flat_lines)
+    payload["shots"][0]["overlay"] = {"kind": "bar", "title": "Bad", "labels": ["a"], "values": []}
+    storyboard = adapter._parse_response(json.dumps(payload), req, flat_lines)
+    assert storyboard.shots[0].overlay is None
+    assert len(storyboard.shots) == len(flat_lines)
+
+
+def test_prompt_contains_overlay_instructions() -> None:
+    adapter = _adapter()
+    messages, _ = adapter._build_messages(_request())
+    user = messages[1]["content"]
+    assert '"overlay"' in user
+    assert "Most shots have NO overlay" in user
+
+
+def test_build_messages_chart_hints_included_when_source_had_chart() -> None:
+    from core.models.capabilities import VisualContext, VisualSegment
+    adapter = _adapter()
+    vc = VisualContext(segments=[
+        VisualSegment(start=0, end=10, setting="studio", chart=""),
+        VisualSegment(start=10, end=20, setting="studio",
+                      chart="bar chart comparing planets"),
+    ])
+    req = PlanShotsRequest(script=_script(), cast=_cast(), visual_context=vc)
+    messages, _ = adapter._build_messages(req)
+    user = messages[1]["content"]
+    assert "bar chart comparing planets" in user
+    assert "ORIGINAL chart" in user           # rights rule present
+
+
+def test_build_messages_no_chart_hints_without_charts() -> None:
+    from core.models.capabilities import VisualContext, VisualSegment
+    adapter = _adapter()
+    vc = VisualContext(segments=[VisualSegment(start=0, end=10, setting="studio")])
+    req = PlanShotsRequest(script=_script(), cast=_cast(), visual_context=vc)
+    messages, _ = adapter._build_messages(req)
+    assert "Reference-video visual notes" not in messages[1]["content"]

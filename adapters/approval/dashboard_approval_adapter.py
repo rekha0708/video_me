@@ -43,6 +43,21 @@ def _storyboard_to_payload(storyboard: Any, critique: Any | None) -> dict[str, A
             "character_ids": shot.characters_on_screen,
             "duration_sec": shot.duration_sec,
         }
+        overlay = getattr(shot, "overlay", None)
+        if overlay is not None:
+            entry["overlay"] = {
+                "kind": overlay.kind,
+                "title": overlay.title,
+                "labels": overlay.labels,
+                "values": overlay.values,
+                "caption": overlay.caption,
+                "duration_sec": overlay.duration_sec,
+            }
+            if overlay.png_uri:
+                import base64
+                entry["overlay_png_b64"] = (
+                    base64.urlsafe_b64encode(str(overlay.png_uri).encode()).decode()
+                )
         shots.append(entry)
 
     payload: dict[str, Any] = {"shots": shots}
