@@ -101,7 +101,7 @@ class MusubiFluxAdapter(RenderCharacter):
         )
 
     async def run(self, req: RenderCharacterRequest) -> ImageSet:
-        lora_path = self._check_lora(req.member)
+        lora_path = self._check_lora(req)
         placeholder = _is_placeholder_lora(lora_path)
         if placeholder and not self._allow_placeholder_lora:
             raise RuntimeError(
@@ -131,6 +131,12 @@ class MusubiFluxAdapter(RenderCharacter):
             prompt=prompt_text,
         )
 
+        # Per-cast render tuning (from config/casts/<cast>/params.py) overrides
+        # the adapter defaults when the request carries it.
+        lora_weight = req.lora_weight if req.lora_weight is not None else self._lora_weight
+        steps = req.steps if req.steps is not None else self._steps
+        guidance = req.guidance_scale if req.guidance_scale is not None else self._guidance_scale
+
         image_uris: list[str] = []
         for i in range(self._num_images):
             out_path = out_dir / f"render_{i:02d}.png"
@@ -140,6 +146,9 @@ class MusubiFluxAdapter(RenderCharacter):
                 lora_path=lora_path if not placeholder else None,
                 out_path=out_path,
                 seed=seed,
+                lora_weight=lora_weight,
+                steps=steps,
+                guidance_scale=guidance,
             )
             image_uris.append(str(out_path))
 
@@ -157,7 +166,13 @@ class MusubiFluxAdapter(RenderCharacter):
         lora_path: Path | None,
         out_path: Path,
         seed: int,
+        lora_weight: float | None = None,
+        steps: int | None = None,
+        guidance_scale: float | None = None,
     ) -> None:
+        steps = self._steps if steps is None else steps
+        guidance_scale = self._guidance_scale if guidance_scale is None else guidance_scale
+        lora_weight = self._lora_weight if lora_weight is None else lora_weight
         # flux_2_generate_image.py treats --save_path as an output DIRECTORY and
         # invents its own filename inside it (save_images_grid: "{time_flag}_{seed}_000.png")
         # — it does not accept a literal target file path. Point it at a scratch
@@ -174,8 +189,8 @@ class MusubiFluxAdapter(RenderCharacter):
             "--text_encoder", str(_TEXT_ENCODER),
             "--prompt", prompt,
             "--image_size", str(self._width), str(self._height),
-            "--infer_steps", str(self._steps),
-            "--guidance_scale", str(self._guidance_scale),
+            "--infer_steps", str(steps),
+            "--guidance_scale", str(guidance_scale),
             "--seed", str(seed),
             "--save_path", str(scratch_dir),
             "--fp8", "--fp8_scaled",
@@ -183,7 +198,7 @@ class MusubiFluxAdapter(RenderCharacter):
             "--model_version", "dev",
         ]
         if lora_path is not None:
-            cmd += ["--lora_weight", str(lora_path), "--lora_multiplier", str(self._lora_weight)]
+            cmd += ["--lora_weight", str(lora_path), "--lora_multiplier", str(lora_weight)]
 
         logger.info("Running musubi-tuner inference: %s", " ".join(cmd[-6:]))
         proc = await asyncio.create_subprocess_exec(
@@ -211,22 +226,35 @@ class MusubiFluxAdapter(RenderCharacter):
             parts = parts[1:]
         return "_".join(parts)
 
-    def _check_lora(self, member: CastMember) -> Path:
-        name = self.lora_name(member.lora_ref)
+    def _check_lora(self, req: RenderCharacterRequest) -> Path:
+        # Prefer the explicit per-cast params filename; else derive from lora_ref.
+        if req.lora_file:
+            path = self._lora_dir / req.lora_file
+            if path.exists():
+                return path
+            raise RuntimeError(
+                f"LoRA for '{req.member.name}' not found. Expected: {path} "
+                "(from config/casts/<cast>/params.py). Complete Track B "
+                "(Flux 2.0 LoRA training) before running render_character."
+            )
+        name = self.lora_name(req.member.lora_ref)
         for ext in _LORA_EXTENSIONS:
             path = self._lora_dir / f"{name}{ext}"
             if path.exists():
                 return path
         expected = self._lora_dir / f"{name}.safetensors"
         raise RuntimeError(
-            f"LoRA for '{member.name}' not found. Expected: {expected}. "
+            f"LoRA for '{req.member.name}' not found. Expected: {expected}. "
             "Complete Track B (Flux 2.0 LoRA training) before running render_character."
         )
 
     def _build_prompt(self, req: RenderCharacterRequest, *, skip_lora: bool) -> str:
         from adapters.render_character.prompt_util import camera_phrase
 
-        parts = [req.member.visual_descriptor, f"in {req.setting}"]
+        parts = []
+        if req.trigger.strip():
+            parts.append(req.trigger.strip())
+        parts += [req.member.visual_descriptor, f"in {req.setting}"]
         framing = camera_phrase(req.camera)
         if framing:
             parts.append(framing)

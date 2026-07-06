@@ -111,6 +111,12 @@ class RenderCharacterRequest(BaseModel):
     expression: str | None = None
     shot_id: str = ""  # scopes render output per shot so per-shot backgrounds don't collide
     camera: str = ""   # Shot.camera framing (close-up/medium/reaction/wide) → render prompt
+    # Per-cast overrides from config/casts/<cast>/params.py (None/"" → adapter defaults).
+    lora_file: str = ""
+    lora_weight: float | None = None
+    steps: int | None = None
+    guidance_scale: float | None = None
+    trigger: str = ""
 
 
 class ImageSet(BaseModel):
@@ -260,6 +266,7 @@ class PublishRequest(BaseModel):
     made_for_kids: bool
     disclosure_label_required: bool
     learning_objective_summary: str
+    language: str = "en"  # tags the review folder + metadata (distinguishes both-language runs)
 
 
 class PublishResult(BaseModel):

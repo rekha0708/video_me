@@ -25,7 +25,20 @@ def _request(tmp_path: Path, **kwargs) -> PublishRequest:
             "learning_objective_summary",
             "Children learn to count to five.",
         ),
+        language=kwargs.get("language", "en"),
     )
+
+
+def test_output_dir_includes_language(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    assert "_hi_" in adapter._make_output_dir(_request(tmp_path, language="hi")).name
+    assert "_en_" in adapter._make_output_dir(_request(tmp_path, language="en")).name
+
+
+def test_metadata_records_language(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    meta = adapter._build_metadata(_request(tmp_path, language="hi"), tmp_path / "video.mp4")
+    assert meta["language"] == "hi"
 
 
 def _adapter(tmp_path: Path) -> ManualPublishAdapter:

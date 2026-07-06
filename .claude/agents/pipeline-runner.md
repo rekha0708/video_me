@@ -53,43 +53,46 @@ trained LoRAs.
 
 ## Starting services
 
-### Ollama (LLM)
+**Preferred:** `bash scripts/start_services.sh` starts every default service and
+verifies each health endpoint (auto-reinstalls Ollama, which is wiped on pod
+restart). The manual commands below are for starting a single service.
+
+### Ollama (LLM + VLM — one model for everything)
 ```bash
 ollama serve &
-ollama pull qwen2.5:7b   # first time only; ~4GB download
-ollama pull llava:7b      # first time only; used by Phase 2 critique
+ollama pull qwen3.6:35b   # first time only; ~30GB VRAM; LLM + multimodal VLM
+# Rollback: VIDEO_ME_LLM_MODEL=qwen3:14b
 # Verify: curl http://localhost:11434/api/tags | jq '.models[].name'
 ```
 
-### AUTOMATIC1111 (Stable Diffusion)
+### musubi-tuner (Flux 2.0 Dev image render — default, no server)
+Runs as a subprocess from the render_character adapter — nothing to start.
+Needs the Flux 2.0 DiT + VAE + Mistral-3 text encoder + trained LoRAs on disk
+(see Track B). ComfyUI cannot load Flux 2.0 locally, so `comfyui_flux` is only a
+fallback.
+
+### ComfyUI (LTX-2.3 video — default) — port 8188
 ```bash
-cd /path/to/stable-diffusion-webui
-./webui.sh --api --nowebui --port 7860
-# Verify: curl http://localhost:7860/sdapi/v1/sd-models | jq length
+cd /workspace/ComfyUI && python main.py --listen 0.0.0.0 --port 8188 &
+# LTX-2.3 22B distilled; ~44GB VRAM; native lip-sync (no separate lip_sync stage)
+# Verify: curl http://localhost:8188/system_stats
 ```
 
-### Chatterbox TTS (custom FastAPI wrapper)
+### Fish Audio S2 (TTS, EN + HI) — port 8025
 ```bash
-# Expects a FastAPI service wrapping Chatterbox
-# POST /synthesize  multipart: text, language, exaggeration, reference_audio
-# GET  /health      returns 200
-uvicorn chatterbox_service:app --host 0.0.0.0 --port 8020
+# FastAPI wrapper; POST /v1/tts, GET /health. ~20GB VRAM.
+# Verify: curl http://localhost:8025/health
 ```
 
-### Wan 2.7 (image-to-video)
+### Fallbacks (only when the matching *_ADAPTER override is set)
 ```bash
-# Expects a FastAPI service wrapping Wan 2.7
-# POST /generate  multipart: prompt, duration_sec, fps, image
-# GET  /health    returns 200
-uvicorn wan_service:app --host 0.0.0.0 --port 8030
-```
-
-### Wav2Lip (lip sync)
-```bash
-# Expects a FastAPI service wrapping Wav2Lip or MuseTalk
-# POST /lipsync   multipart: shot_id, video, audio
-# GET  /health    returns 200
-uvicorn lipsync_service:app --host 0.0.0.0 --port 8040
+# Wan 2.2 video (VIDEO_ME_VIDEO_ADAPTER=wan) — port 8030, ~52GB VRAM.
+#   DEFERRED LOADING: server starts model-unloaded; POST /load before use,
+#   POST /unload to free VRAM. The pipeline's gpu_sequencer does this
+#   automatically around the render phase. MuseTalk lip_sync (port 8040) only
+#   runs on the wan path and does NOT work on cartoon faces (passthrough).
+# Chatterbox TTS (VIDEO_ME_TTS_ADAPTER=chatterbox) — port 8020, EN only.
+# AUTOMATIC1111 SD 1.5 (VIDEO_ME_RENDER_ADAPTER=a1111) — port 7860.
 ```
 
 ---
@@ -227,11 +230,17 @@ The source rights weren't cleared. Either:
 - Is there enough RAM/VRAM? Whisper base needs ~1GB
 
 ### Job status = FAILED at render_character / synthesize_voice
-- Run the Track B pre-flight check — files might be missing
-- Check AUTOMATIC1111 / Chatterbox TTS health endpoints
+- Run the Track B pre-flight check — LoRA / voice files might be missing
+  (`python -m scripts.check_track_b`). render_character raises before any GPU
+  call if the LoRA is absent/placeholder. Per-cast asset paths live in
+  `config/casts/<cast>/params.py`.
+- Check musubi-tuner assets on disk (Flux DiT/VAE/text-encoder) and Fish S2 (8025) health.
 
 ### Job status = FAILED at generate_video / lip_sync
-- Check Wan 2.7 / Wav2Lip service health
+- Default: check ComfyUI (8188) health and that the LTX-2.3 workflow nodes load.
+- Wan path: confirm the model loaded — `curl :8030/health` should show
+  `model_loaded:true` after the sequencer's POST /load. A stuck load times out
+  at VIDEO_ME_WAN_LOAD_TIMEOUT_SEC (1800s) → FAILED (retryable).
 - Check work_dir for the input files (PNG from render, WAV from voice)
 
 ### General debugging

@@ -104,7 +104,8 @@ class ManualPublishAdapter(Publish):
     def _make_output_dir(self, req: PublishRequest) -> Path:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         stem = Path(req.video.uri).stem
-        return self.review_dir / f"{timestamp}_{stem}"
+        lang = (req.language or "en").strip() or "en"
+        return self.review_dir / f"{timestamp}_{lang}_{stem}"
 
     def _copy_video(self, source_uri: str, out_dir: Path) -> Path:
         """Copy the assembled MP4 to the review dir; return its new path."""
@@ -126,6 +127,7 @@ class ManualPublishAdapter(Publish):
             "made_for_kids": req.made_for_kids,
             "disclosure_label_required": req.disclosure_label_required,
             "learning_objective_summary": req.learning_objective_summary,
+            "language": req.language,
             "source_video_uri": req.video.uri,
             "source_video_duration_sec": req.video.duration_sec,
             "review_video_path": str(video_dest),

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace as _dc_replace
 from pathlib import Path
 from typing import Any, Literal
 
+from core.cast_params import load_cast_params
 from core.config import AppConfig, load_app_config
 from core.executor import StageError, check_rights, run_stage
 from core.gpu_sequencer import (
@@ -435,6 +436,14 @@ async def _render_shot_candidates(
     # Count expected candidates from the adapter's num_images setting
     num_candidates = getattr(adapters.render, "_num_images", 1)
     existing_pngs = sorted(render_dir.glob("render_??.png"))
+    if opts.resume and not existing_pngs:
+        # Back-compat: jobs rendered before per-shot keying stored images at
+        # renders/{speaker_id}/. Reuse them in place instead of re-rendering.
+        legacy_dir = work_dir / "renders" / speaker_id
+        legacy_pngs = sorted(legacy_dir.glob("render_??.png"))
+        if legacy_pngs:
+            render_dir = legacy_dir
+            existing_pngs = legacy_pngs
     critique_path = work_dir / "critique" / f"{shot.shot_id}.json"
 
     if opts.resume and len(existing_pngs) >= num_candidates and critique_path.exists():
@@ -447,6 +456,7 @@ async def _render_shot_candidates(
         render_result = ImageSet(member_id=speaker_id,
                                  images=[str(p) for p in existing_pngs[:num_candidates]])
     else:
+        params = load_cast_params(cast.id).get(speaker_id)
         render_result = await adapters.render.run(
             RenderCharacterRequest(
                 member=speaker,
@@ -454,6 +464,11 @@ async def _render_shot_candidates(
                 expression=expression,
                 shot_id=shot.shot_id,
                 camera=shot.camera,
+                lora_file=params.lora_file if params else "",
+                lora_weight=params.lora_weight if params else None,
+                steps=params.steps if params else None,
+                guidance_scale=params.guidance_scale if params else None,
+                trigger=params.trigger if params else "",
             )
         )
 
@@ -581,10 +596,13 @@ async def _generate_shot_video(
         logger.info("Skipping synthesize_voice for %s (audio exists)", shot.shot_id)
         audio_track = AudioTrack(uri=str(audio_files[0]), duration_sec=shot.duration_sec)
     else:
+        vparams = load_cast_params(cast.id).get(speaker_id)
+        voice_ref = (vparams.voice_file if vparams and vparams.voice_file
+                     else speaker.voice_profile_ref)
         audio_track = await adapters.voice.run(
             VoiceRequest(
                 text=line_text,
-                voice_profile_ref=speaker.voice_profile_ref,
+                voice_profile_ref=voice_ref,
                 speaker_id=speaker_id,
                 expression=expression,
                 language=opts.language if opts else "en",
@@ -1077,6 +1095,7 @@ async def _publish_candidate(
     script: Script,
     final_video: FinalVideo,
     *,
+    language: str = "en",
     stage_hook: Callable[[str, str], None] | None = None,
 ) -> None:
     """Publish an assembled candidate to the manual review folder."""
@@ -1088,6 +1107,7 @@ async def _publish_candidate(
             made_for_kids=ctx.config.channel_profile.made_for_kids,
             disclosure_label_required=ctx.config.channel_profile.disclosure_label_required,
             learning_objective_summary=script.learning_objective.success_phrase,
+            language=language,
         ),
         ctx.job, ctx.artifact_store, ctx.job_store,
         stage_hook=stage_hook,
@@ -1203,7 +1223,7 @@ async def _run_single_language_job(ctx: "_JobContext", opts: RunOptions) -> Job:
         if final_video is None:
             # phase="plan" or phase="render" — no video to publish, already marked complete
             return job
-        await _publish_candidate(ctx, script, final_video, stage_hook=opts.stage_hook)
+        await _publish_candidate(ctx, script, final_video, language=opts.language, stage_hook=opts.stage_hook)
 
         job.status = JobStatus.COMPLETED
         ctx.job_store.save_job(job)

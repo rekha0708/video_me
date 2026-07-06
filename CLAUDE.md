@@ -169,6 +169,8 @@ The stage runner is `core/executor.py:run_stage()`. The Phase 1 DAG is
 | `adapters/publish/manual_adapter.py` | local file copy + metadata.json |
 | `config/channels/education_kids.yaml` | Channel: 9:16, age 3-6, made_for_kids=true |
 | `config/casts/kids_duo.yaml` | final Max/Zoe cast with lora_ref + voice_profile_ref |
+| `config/casts/<cast>/params.py` | per-cast LoRA + voice + render params (weight/steps/guidance/trigger); `core/cast_params.py` loads it |
+| `docs/PIPELINE_STAGES_AND_VRAM.md` | per-stage model/service/VRAM reference |
 | `assets/kids_duo/` | Track B reference plan, LoRA notes, and voice scripts |
 | `loras/` | LoRA weight files — **MUST EXIST** for render_character (Track B) |
 | `voices/` | Reference WAV files — **MUST EXIST** for synthesize_voice (Track B) |
