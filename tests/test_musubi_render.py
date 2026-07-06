@@ -69,3 +69,42 @@ def test_check_lora_falls_back_to_lora_ref(tmp_path: Path) -> None:
     # No lora_file on the request → derive from member.lora_ref.
     path = adapter._check_lora(_req(tmp_path, lora_file=""))
     assert path.name == "kids_duo_max.safetensors"
+
+
+# ── Multi-character prompt tests ─────────────────────────────────────────────
+
+
+def _other_member() -> CastMember:
+    return CastMember(
+        id="zoe", name="Zoe", gender="girl",
+        visual_descriptor="cartoon girl with pink bow and yellow dress",
+        lora_ref="loras/kids_duo/zoe", voice_profile_ref="voices/kids_duo/zoe",
+        personality="playful", signature_expressions=["giggle"],
+    )
+
+
+def test_build_prompt_includes_other_member(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    req = RenderCharacterRequest(
+        member=_member(),
+        setting="cozy kitchen",
+        shot_id="s01",
+        camera="medium",
+        other_members=[_other_member()],
+    )
+    prompt = adapter._build_prompt(req, skip_lora=False)
+    assert "also present: cartoon girl with pink bow" in prompt
+    assert "cartoon boy in striped shirt" in prompt
+
+
+def test_build_prompt_no_other_members_unchanged(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    req_with = RenderCharacterRequest(
+        member=_member(), setting="park", shot_id="s01", camera="wide",
+        other_members=[],
+    )
+    req_without = RenderCharacterRequest(
+        member=_member(), setting="park", shot_id="s01", camera="wide",
+    )
+    assert adapter._build_prompt(req_with, skip_lora=False) == \
+           adapter._build_prompt(req_without, skip_lora=False)

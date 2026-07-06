@@ -5,7 +5,7 @@ from dataclasses import dataclass, field, replace as _dc_replace
 from pathlib import Path
 from typing import Any, Literal
 
-from core.cast_params import load_cast_params
+from core.cast_params import CastMemberParams, CastPairParams, load_cast_pair_params, load_cast_params
 from core.config import AppConfig, load_app_config
 from core.executor import StageError, check_rights, run_stage
 from core.gpu_sequencer import (
@@ -38,7 +38,7 @@ from core.models.capabilities import (
 from core.models.capabilities import AdaptScriptRequest
 from core.models.content import Script, Shot, Storyboard
 from core.models.job import Job, JobStatus
-from core.models.profile import Cast
+from core.models.profile import Cast, CastMember
 from core.observability import log_event
 from core.storage import (
     ArtifactStore,
@@ -406,6 +406,38 @@ def _resolve_line(ref: str, script: Script):
     return script.scenes[scene_idx].lines[line_idx]
 
 
+def _resolve_shot_characters(
+    shot: Shot,
+    cast: Cast,
+) -> tuple[CastMember, list[CastMember], CastMemberParams | CastPairParams | None, bool]:
+    """Resolve primary/secondary characters and LoRA params for a shot.
+
+    Returns (primary_member, other_members, render_params, using_pair_lora).
+    """
+    member_map = {m.id: m for m in cast.members}
+    char_ids = shot.characters_on_screen
+
+    is_reaction = (shot.camera or "").strip().lower() == "reaction"
+    if is_reaction and len(char_ids) >= 2:
+        primary_id = char_ids[1]
+        other_ids = [char_ids[0]]
+    else:
+        primary_id = char_ids[0]
+        other_ids = list(char_ids[1:])
+
+    primary = member_map[primary_id]
+    others = [member_map[cid] for cid in other_ids if cid in member_map]
+
+    pair_key = frozenset(char_ids)
+    pair_map = load_cast_pair_params(cast.id)
+    pair_params = pair_map.get(pair_key)
+    if pair_params and pair_params.lora_file:
+        return primary, [], pair_params, True
+
+    member_params = load_cast_params(cast.id).get(primary_id)
+    return primary, others, member_params, False
+
+
 async def _render_shot_candidates(
     shot: Shot,
     cast: Cast,
@@ -423,23 +455,17 @@ async def _render_shot_candidates(
     from core.models.capabilities import ImageCritiqueRequest, ImageCritiqueResult, ImageSet
 
     opts = options or RunOptions()
-    member_map = {m.id: m for m in cast.members}
-    speaker_id = shot.characters_on_screen[0]
-    speaker = member_map[speaker_id]
+    primary, other_members, params, using_pair = _resolve_shot_characters(shot, cast)
+    primary_id = primary.id
 
     expression = None
-    # Scope renders per shot (not per character) so shots that share a speaker
-    # get their own setting-matched image instead of colliding/reusing one.
-    render_dir = work_dir / "renders" / shot.shot_id / speaker_id
+    render_dir = work_dir / "renders" / shot.shot_id / primary_id
     render_dir.mkdir(parents=True, exist_ok=True)
 
-    # Count expected candidates from the adapter's num_images setting
     num_candidates = getattr(adapters.render, "_num_images", 1)
     existing_pngs = sorted(render_dir.glob("render_??.png"))
     if opts.resume and not existing_pngs:
-        # Back-compat: jobs rendered before per-shot keying stored images at
-        # renders/{speaker_id}/. Reuse them in place instead of re-rendering.
-        legacy_dir = work_dir / "renders" / speaker_id
+        legacy_dir = work_dir / "renders" / primary_id
         legacy_pngs = sorted(legacy_dir.glob("render_??.png"))
         if legacy_pngs:
             render_dir = legacy_dir
@@ -453,17 +479,17 @@ async def _render_shot_candidates(
     if opts.resume and len(existing_pngs) >= num_candidates:
         logger.info("Skipping render_character for %s (all %d candidates exist)",
                     shot.shot_id, num_candidates)
-        render_result = ImageSet(member_id=speaker_id,
+        render_result = ImageSet(member_id=primary_id,
                                  images=[str(p) for p in existing_pngs[:num_candidates]])
     else:
-        params = load_cast_params(cast.id).get(speaker_id)
         render_result = await adapters.render.run(
             RenderCharacterRequest(
-                member=speaker,
+                member=primary,
                 setting=shot.setting,
                 expression=expression,
                 shot_id=shot.shot_id,
                 camera=shot.camera,
+                other_members=other_members,
                 lora_file=params.lora_file if params else "",
                 lora_weight=params.lora_weight if params else None,
                 steps=params.steps if params else None,
@@ -472,13 +498,21 @@ async def _render_shot_candidates(
             )
         )
 
-    shot_prompt = f"{speaker.name} ({speaker.visual_descriptor}) in {shot.setting}; action: {shot.action}"
+    if other_members:
+        other_names = ", ".join(m.name for m in other_members)
+        shot_prompt = (
+            f"{primary.name} ({primary.visual_descriptor}) "
+            f"with {other_names} in {shot.setting}; action: {shot.action}"
+        )
+    else:
+        shot_prompt = f"{primary.name} ({primary.visual_descriptor}) in {shot.setting}; action: {shot.action}"
     critique = await adapters.image_critique.run(
         ImageCritiqueRequest(
             shot_id=shot.shot_id,
             shot_prompt=shot_prompt,
             candidate_uris=render_result.images,
-            cast_descriptor=speaker.visual_descriptor,
+            cast_descriptor=primary.visual_descriptor,
+            other_descriptors=[m.visual_descriptor for m in other_members],
         )
     )
     critique_path.parent.mkdir(parents=True, exist_ok=True)
@@ -610,6 +644,16 @@ async def _generate_shot_video(
         )
 
     # ── 2. generate_video ─────────────────────────────────────────────────────
+    video_action = shot.action
+    if len(shot.characters_on_screen) >= 2:
+        other_ids = [c for c in shot.characters_on_screen if c != speaker_id]
+        other_name = member_map[other_ids[0]].name if other_ids else ""
+        if other_name:
+            video_action = (
+                f"{speaker.name} is speaking, {other_name} is listening, "
+                f"{shot.action}, medium to wide framing, two characters visible"
+            )
+
     clip_path = work_dir / "video" / shot.shot_id / "clip.mp4"
     if opts.resume and clip_path.exists():
         logger.info("Skipping generate_video for %s (clip.mp4 exists)", shot.shot_id)
@@ -618,7 +662,7 @@ async def _generate_shot_video(
         clip = await adapters.video.run(
             VideoRequest(
                 image_uri=image_uri,
-                action=shot.action,
+                action=video_action,
                 duration_sec=shot.duration_sec,
                 shot_id=shot.shot_id,
                 setting=shot.setting,

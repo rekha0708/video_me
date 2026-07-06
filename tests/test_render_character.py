@@ -36,6 +36,7 @@ def _request(**kwargs) -> RenderCharacterRequest:
         expression=kwargs.get("expression", "wide-eyed wonder"),
         shot_id=kwargs.get("shot_id", ""),
         camera=kwargs.get("camera", ""),
+        other_members=kwargs.get("other_members", []),
     )
 
 
@@ -442,3 +443,29 @@ async def test_run_legacy_member_scoped_dir_without_shot_id(tmp_path: Path) -> N
     # Back-compat: renders/max/ (single level), not renders/max/max/
     assert (tmp_path / "renders" / "max").is_dir()
     assert not (tmp_path / "renders" / "max" / "max").exists()
+
+
+# ── Multi-character prompt tests ─────────────────────────────────────────────
+
+
+def _other_member() -> CastMember:
+    return CastMember(
+        id="zoe", name="Zoe", gender="girl",
+        visual_descriptor="cartoon girl with pink bow and yellow dress",
+        lora_ref="loras/kids_duo/zoe", voice_profile_ref="voices/kids_duo/zoe",
+        personality="playful", signature_expressions=["giggle"],
+    )
+
+
+def test_build_prompt_includes_other_member(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    req = _request(other_members=[_other_member()])
+    prompt = adapter._build_prompt(req)
+    assert "also present: cartoon girl with pink bow" in prompt
+    assert _member().visual_descriptor in prompt
+
+
+def test_build_prompt_no_other_members_unchanged(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    assert adapter._build_prompt(_request(other_members=[])) == \
+           adapter._build_prompt(_request())

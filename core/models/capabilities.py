@@ -111,6 +111,7 @@ class RenderCharacterRequest(BaseModel):
     expression: str | None = None
     shot_id: str = ""  # scopes render output per shot so per-shot backgrounds don't collide
     camera: str = ""   # Shot.camera framing (close-up/medium/reaction/wide) → render prompt
+    other_members: list[CastMember] = Field(default_factory=list)
     # Per-cast overrides from config/casts/<cast>/params.py (None/"" → adapter defaults).
     lora_file: str = ""
     lora_weight: float | None = None
@@ -169,7 +170,8 @@ class ImageCritiqueRequest(BaseModel):
     shot_id: str
     shot_prompt: str          # human-readable description of setting + action
     candidate_uris: list[str] # N local file paths (PNG)
-    cast_descriptor: str      # visual_descriptor of the speaking character
+    cast_descriptor: str      # visual_descriptor of the primary character
+    other_descriptors: list[str] = Field(default_factory=list)
     feedback_examples: list[dict] = Field(default_factory=list)  # few-shot from log
 
 

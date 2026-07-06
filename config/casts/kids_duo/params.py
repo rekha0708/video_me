@@ -33,3 +33,16 @@ MEMBERS = {
         "voice_file": "voices/kids_duo/zoe",
     },
 }
+
+# Pair LoRA for two-character shots. Keyed by frozenset of member IDs.
+# Empty lora_file until a pair LoRA is trained — the workflow falls back to
+# speaker-only LoRA + prompt-append for the second character.
+PAIRS = {
+    frozenset({"max", "zoe"}): {
+        "lora_file": "",
+        "lora_weight": 0.9,
+        "steps": 20,
+        "guidance_scale": 3.5,
+        "trigger": "",
+    },
+}

@@ -39,16 +39,17 @@ You will receive N candidate still images for a single shot and must select the 
 Return ONLY valid JSON — no markdown fences, no prose."""
 
 _USER_TEMPLATE = """\
-Character visual descriptor:
+Primary character visual descriptor:
 {cast_descriptor}
-
+{other_descriptors_block}\
 Shot context:
 {shot_prompt}
 
 You are evaluating {n} candidate images (labelled 0 to {n_minus_1}).
 
 Score each candidate on these dimensions (0.0–1.0):
-- character_consistency: does the character match their visual descriptor?
+- character_consistency: does the primary character match their visual descriptor? \
+If other characters are described above, are they also recognizably present?
 - prompt_adherence:      does the image match the shot's setting and action?
 - kids_appropriateness:  safe, clear, and engaging for ages 3–6?
 - composition:           good framing, uncluttered, character clearly visible?
@@ -65,6 +66,15 @@ Return JSON with exactly this shape:
   ],
   "overall_reasoning": "one sentence explaining the pick"
 }}"""
+
+
+def _format_other_descriptors(other_descriptors: list[str]) -> str:
+    if not other_descriptors:
+        return "\n"
+    lines = ["\nOther character(s) also in this shot:"]
+    for desc in other_descriptors:
+        lines.append(f"  - {desc}")
+    return "\n".join(lines) + "\n\n"
 
 
 def _encode_image(path: str) -> str:
@@ -155,6 +165,7 @@ class VlmImageCritiqueAdapter(CritiqueImages):
 
         user_text = _USER_TEMPLATE.format(
             cast_descriptor=req.cast_descriptor,
+            other_descriptors_block=_format_other_descriptors(req.other_descriptors),
             shot_prompt=req.shot_prompt,
             n=n,
             n_minus_1=n - 1,

@@ -21,11 +21,15 @@ from core.models.capabilities import (
     AudioTrack,
     FetchMediaResult,
     FinalVideo,
+    ImageCritiqueRequest,
     ImageCritiqueResult,
     PublishResult,
+    RenderCharacterRequest,
     TranscribeResult,
     VideoClip,
+    VideoRequest,
     VisualContext,
+    VoiceRequest,
 )
 from core.models.content import (
     ContentMetadata,
@@ -583,3 +587,363 @@ def test_queue_round_trip_stores_and_restores_cast_ref(tmp_path: Path) -> None:
     assert restored.rights_cleared is True
     assert restored.target_language == "hi"
     assert restored.phase == "all"
+
+
+# ====================================================================
+# Layer 5: Multi-character shot rendering + reaction flip
+# ====================================================================
+
+MAX_DESCRIPTOR = "cartoon boy with blue striped shirt and red sneakers"
+ZOE_DESCRIPTOR = "cartoon girl with pink bow and yellow sundress"
+
+
+def _duo_member_max() -> CastMember:
+    return CastMember(
+        id="max", name="Max", gender="boy",
+        visual_descriptor=MAX_DESCRIPTOR,
+        lora_ref="loras/kids_duo/max", voice_profile_ref="voices/kids_duo/max",
+        personality="eager teacher", signature_expressions=["grin"],
+    )
+
+
+def _duo_member_zoe() -> CastMember:
+    return CastMember(
+        id="zoe", name="Zoe", gender="girl",
+        visual_descriptor=ZOE_DESCRIPTOR,
+        lora_ref="loras/kids_duo/zoe", voice_profile_ref="voices/kids_duo/zoe",
+        personality="playful learner", signature_expressions=["giggle"],
+    )
+
+
+def _duo_cast() -> Cast:
+    return Cast(
+        id="test_duo",
+        species="human",
+        is_original_synthetic=True,
+        members=[_duo_member_max(), _duo_member_zoe()],
+    )
+
+
+def _duo_script() -> Script:
+    return Script(
+        mode="transformed",
+        learning_objective=LearningObjective(
+            concept="counting", age_range="3-6",
+            success_phrase="We can count!",
+        ),
+        scenes=[
+            Scene(
+                setting="playground",
+                characters_present=["max", "zoe"],
+                lines=[
+                    Line(speaker="max", text="Let's count!", expression="excited"),
+                    Line(speaker="zoe", text="One, two, three!", expression="happy"),
+                ],
+            )
+        ],
+        caption_text="Let's count! One, two, three!",
+        source_rights=SourceRights(kind="transformed", rights_cleared=True, notes=""),
+    )
+
+
+def _duo_storyboard() -> Storyboard:
+    return Storyboard(shots=[
+        Shot(
+            shot_id="s01", scene_ref="scene-1",
+            characters_on_screen=["max", "zoe"],
+            setting="playground", camera="medium",
+            action="Max teaches Zoe to count",
+            dialogue_line_refs=["scene-1-line-0"],
+            duration_sec=6.0,
+        ),
+        Shot(
+            shot_id="s02", scene_ref="scene-1",
+            characters_on_screen=["zoe", "max"],
+            setting="playground", camera="reaction",
+            action="Zoe reacts to counting lesson",
+            dialogue_line_refs=["scene-1-line-1"],
+            duration_sec=5.0,
+        ),
+        Shot(
+            shot_id="s03", scene_ref="scene-1",
+            characters_on_screen=["max"],
+            setting="playground", camera="close-up",
+            action="Max celebrates",
+            dialogue_line_refs=["scene-1-line-0"],
+            duration_sec=5.0,
+        ),
+    ])
+
+
+def _make_render_spy():
+    """Return (mock_render, captured_requests) for render adapter spying."""
+    captured = []
+
+    mock_render = AsyncMock()
+    async def spy_render_run(request):
+        captured.append(request)
+        from core.models.capabilities import ImageSet
+        return ImageSet(member_id=request.member.id, images=["/tmp/render_00.png"])
+    mock_render.run = spy_render_run
+    mock_render._num_images = 1
+    return mock_render, captured
+
+
+def _make_critique_mock():
+    return AsyncMock(return_value=ImageCritiqueResult(
+        winner_index=0, winner_uri="/tmp/render_00.png",
+        candidate_uris=["/tmp/render_00.png"],
+    ))
+
+
+def _make_adapters(render_mock, critique_mock):
+    adapters = MagicMock()
+    adapters.render = render_mock
+    adapters.image_critique = MagicMock()
+    adapters.image_critique.run = critique_mock
+    return adapters
+
+
+@pytest.mark.asyncio
+async def test_render_multi_char_includes_other_member(tmp_path: Path) -> None:
+    """Two-character shot passes the second member in other_members."""
+    mock_render, captured = _make_render_spy()
+    adapters = _make_adapters(mock_render, _make_critique_mock())
+
+    cast = _duo_cast()
+    shot = _duo_storyboard().shots[0]  # max+zoe, camera=medium
+
+    from core.workflow import _render_shot_candidates
+    await _render_shot_candidates(shot, cast, adapters, tmp_path)
+
+    req = captured[0]
+    assert isinstance(req, RenderCharacterRequest)
+    assert req.member.id == "max"
+    assert len(req.other_members) == 1
+    assert req.other_members[0].id == "zoe"
+    assert req.other_members[0].visual_descriptor == ZOE_DESCRIPTOR
+
+
+@pytest.mark.asyncio
+async def test_render_reaction_flips_primary(tmp_path: Path) -> None:
+    """Reaction shot renders the listener (index 1) as primary."""
+    mock_render, captured = _make_render_spy()
+    adapters = _make_adapters(mock_render, _make_critique_mock())
+
+    cast = _duo_cast()
+    shot = _duo_storyboard().shots[1]  # zoe+max, camera=reaction
+
+    from core.workflow import _render_shot_candidates
+    await _render_shot_candidates(shot, cast, adapters, tmp_path)
+
+    req = captured[0]
+    assert req.member.id == "max"  # listener (index 1) becomes primary
+    assert len(req.other_members) == 1
+    assert req.other_members[0].id == "zoe"  # speaker goes to other_members
+
+
+@pytest.mark.asyncio
+async def test_render_single_char_no_other_members(tmp_path: Path) -> None:
+    """Single-character shot has empty other_members (regression guard)."""
+    mock_render, captured = _make_render_spy()
+    adapters = _make_adapters(mock_render, _make_critique_mock())
+
+    cast = _duo_cast()
+    shot = _duo_storyboard().shots[2]  # max only, camera=close-up
+
+    from core.workflow import _render_shot_candidates
+    await _render_shot_candidates(shot, cast, adapters, tmp_path)
+
+    req = captured[0]
+    assert req.member.id == "max"
+    assert req.other_members == []
+
+
+@pytest.mark.asyncio
+async def test_critique_request_has_other_descriptors(tmp_path: Path) -> None:
+    """Two-character shot passes other_descriptors to image critique."""
+    mock_render, _ = _make_render_spy()
+    captured_critique = []
+
+    async def spy_critique(request):
+        captured_critique.append(request)
+        return ImageCritiqueResult(
+            winner_index=0, winner_uri="/tmp/render_00.png",
+            candidate_uris=["/tmp/render_00.png"],
+        )
+
+    adapters = MagicMock()
+    adapters.render = mock_render
+    adapters.image_critique = MagicMock()
+    adapters.image_critique.run = spy_critique
+
+    cast = _duo_cast()
+    shot = _duo_storyboard().shots[0]  # max+zoe
+
+    from core.workflow import _render_shot_candidates
+    await _render_shot_candidates(shot, cast, adapters, tmp_path)
+
+    creq = captured_critique[0]
+    assert isinstance(creq, ImageCritiqueRequest)
+    assert creq.cast_descriptor == MAX_DESCRIPTOR
+    assert creq.other_descriptors == [ZOE_DESCRIPTOR]
+
+
+@pytest.mark.asyncio
+async def test_render_pair_lora_used_when_available(tmp_path: Path) -> None:
+    """When a pair LoRA with non-empty lora_file exists, it's used and other_members is empty."""
+    from core.cast_params import CastPairParams, _PAIR_CACHE
+
+    mock_render, captured = _make_render_spy()
+    adapters = _make_adapters(mock_render, _make_critique_mock())
+
+    cast = _duo_cast()
+    shot = _duo_storyboard().shots[0]
+
+    pair_key = frozenset({"max", "zoe"})
+    _PAIR_CACHE[(cast.id, "config/casts")] = {
+        pair_key: CastPairParams(lora_file="duo_max_zoe.safetensors", lora_weight=0.85),
+    }
+
+    try:
+        from core.workflow import _render_shot_candidates
+        await _render_shot_candidates(shot, cast, adapters, tmp_path)
+
+        req = captured[0]
+        assert req.lora_file == "duo_max_zoe.safetensors"
+        assert req.lora_weight == 0.85
+        assert req.other_members == []
+    finally:
+        _PAIR_CACHE.clear()
+
+
+@pytest.mark.asyncio
+async def test_render_pair_lora_fallback_when_empty(tmp_path: Path) -> None:
+    """Pair LoRA with empty lora_file falls back to individual LoRA + other_members."""
+    from core.cast_params import CastPairParams, _PAIR_CACHE
+
+    mock_render, captured = _make_render_spy()
+    adapters = _make_adapters(mock_render, _make_critique_mock())
+
+    cast = _duo_cast()
+    shot = _duo_storyboard().shots[0]
+
+    pair_key = frozenset({"max", "zoe"})
+    _PAIR_CACHE[(cast.id, "config/casts")] = {
+        pair_key: CastPairParams(lora_file=""),
+    }
+
+    try:
+        from core.workflow import _render_shot_candidates
+        await _render_shot_candidates(shot, cast, adapters, tmp_path)
+
+        req = captured[0]
+        assert req.lora_file != "duo_max_zoe.safetensors"
+        assert len(req.other_members) == 1
+        assert req.other_members[0].id == "zoe"
+    finally:
+        _PAIR_CACHE.clear()
+
+
+@pytest.mark.asyncio
+async def test_video_action_enriched_for_two_chars(tmp_path: Path) -> None:
+    """Two-character shot enriches VideoRequest.action with speaker/listener roles."""
+    cast = _duo_cast()
+    script = _duo_script()
+    shot = _duo_storyboard().shots[0]  # max+zoe
+
+    captured_video = []
+
+    mock_voice = AsyncMock()
+    mock_voice.run = AsyncMock(return_value=AudioTrack(
+        uri="/tmp/audio.wav", duration_sec=3.0, speaker_id="max",
+    ))
+
+    mock_video = AsyncMock()
+    mock_video.native_lipsync = True
+    async def spy_video(request):
+        captured_video.append(request)
+        return VideoClip(uri="/tmp/clip.mp4", duration_sec=6.0, shot_id="s01")
+    mock_video.run = spy_video
+
+    adapters = MagicMock()
+    adapters.voice = mock_voice
+    adapters.video = mock_video
+    adapters.lipsync = AsyncMock()
+
+    from core.workflow import _generate_shot_video
+    await _generate_shot_video(shot, script, cast, adapters, tmp_path, "/tmp/img.png")
+
+    vreq = captured_video[0]
+    assert isinstance(vreq, VideoRequest)
+    assert "Max is speaking" in vreq.action
+    assert "Zoe is listening" in vreq.action
+    assert "two characters visible" in vreq.action
+
+
+@pytest.mark.asyncio
+async def test_video_single_char_action_unchanged(tmp_path: Path) -> None:
+    """Single-character shot leaves action string unchanged."""
+    cast = _duo_cast()
+    script = _duo_script()
+    shot = _duo_storyboard().shots[2]  # max only
+
+    captured_video = []
+
+    mock_voice = AsyncMock()
+    mock_voice.run = AsyncMock(return_value=AudioTrack(
+        uri="/tmp/audio.wav", duration_sec=3.0, speaker_id="max",
+    ))
+
+    mock_video = AsyncMock()
+    mock_video.native_lipsync = True
+    async def spy_video(request):
+        captured_video.append(request)
+        return VideoClip(uri="/tmp/clip.mp4", duration_sec=5.0, shot_id="s03")
+    mock_video.run = spy_video
+
+    adapters = MagicMock()
+    adapters.voice = mock_voice
+    adapters.video = mock_video
+    adapters.lipsync = AsyncMock()
+
+    from core.workflow import _generate_shot_video
+    await _generate_shot_video(shot, script, cast, adapters, tmp_path, "/tmp/img.png")
+
+    vreq = captured_video[0]
+    assert vreq.action == shot.action
+    assert "is speaking" not in vreq.action
+
+
+@pytest.mark.asyncio
+async def test_video_voice_uses_speaker_not_listener(tmp_path: Path) -> None:
+    """Reaction shot: voice synthesis still uses characters_on_screen[0] (speaker)."""
+    cast = _duo_cast()
+    script = _duo_script()
+    shot = _duo_storyboard().shots[1]  # zoe+max, camera=reaction
+
+    captured_voice = []
+
+    mock_voice = AsyncMock()
+    async def spy_voice(request):
+        captured_voice.append(request)
+        return AudioTrack(uri="/tmp/audio.wav", duration_sec=3.0, speaker_id="zoe")
+    mock_voice.run = spy_voice
+
+    mock_video = AsyncMock()
+    mock_video.native_lipsync = True
+    mock_video.run = AsyncMock(return_value=VideoClip(
+        uri="/tmp/clip.mp4", duration_sec=5.0, shot_id="s02",
+    ))
+
+    adapters = MagicMock()
+    adapters.voice = mock_voice
+    adapters.video = mock_video
+    adapters.lipsync = AsyncMock()
+
+    from core.workflow import _generate_shot_video
+    await _generate_shot_video(shot, script, cast, adapters, tmp_path, "/tmp/img.png")
+
+    vreq = captured_voice[0]
+    assert isinstance(vreq, VoiceRequest)
+    assert vreq.speaker_id == "zoe"  # [0] is zoe in this shot

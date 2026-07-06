@@ -1,7 +1,14 @@
 """Tests for per-cast params loading (config/casts/<cast>/params.py)."""
 from pathlib import Path
 
-from core.cast_params import CastMemberParams, load_cast_params, _CACHE
+from core.cast_params import (
+    CastMemberParams,
+    CastPairParams,
+    _CACHE,
+    _PAIR_CACHE,
+    load_cast_pair_params,
+    load_cast_params,
+)
 
 
 def _write_params(tmp_path: Path, cast_id: str, body: str) -> Path:
@@ -13,6 +20,7 @@ def _write_params(tmp_path: Path, cast_id: str, body: str) -> Path:
 
 def setup_function() -> None:
     _CACHE.clear()
+    _PAIR_CACHE.clear()
 
 
 def test_loads_real_kids_duo_params() -> None:
@@ -46,3 +54,44 @@ def test_cache_returns_same_object(tmp_path: Path) -> None:
 def test_empty_members_ok(tmp_path: Path) -> None:
     _write_params(tmp_path, "baz", "MEMBERS = {}")
     assert load_cast_params("baz", casts_dir=tmp_path) == {}
+
+
+# ── Pair params ──────────────────────────────────────────────────────────────
+
+
+def test_load_pair_params_from_kids_duo() -> None:
+    pairs = load_cast_pair_params("kids_duo")
+    key = frozenset({"max", "zoe"})
+    assert key in pairs
+    assert isinstance(pairs[key], CastPairParams)
+    assert pairs[key].lora_file == ""
+    assert pairs[key].lora_weight == 0.9
+
+
+def test_load_pair_params_missing_returns_empty(tmp_path: Path) -> None:
+    assert load_cast_pair_params("nope", casts_dir=tmp_path) == {}
+
+
+def test_load_pair_params_no_pairs_dict(tmp_path: Path) -> None:
+    _write_params(tmp_path, "nopairs", 'MEMBERS = {"a": {"lora_file": "a.safetensors"}}')
+    assert load_cast_pair_params("nopairs", casts_dir=tmp_path) == {}
+
+
+def test_load_pair_params_custom(tmp_path: Path) -> None:
+    body = (
+        'MEMBERS = {"x": {}, "y": {}}\n'
+        'PAIRS = {frozenset({"x", "y"}): {"lora_file": "xy.safetensors", "trigger": "xytok"}}\n'
+    )
+    _write_params(tmp_path, "duo", body)
+    pairs = load_cast_pair_params("duo", casts_dir=tmp_path)
+    key = frozenset({"x", "y"})
+    assert pairs[key].lora_file == "xy.safetensors"
+    assert pairs[key].trigger == "xytok"
+
+
+def test_pair_cache_returns_same_object(tmp_path: Path) -> None:
+    body = 'MEMBERS = {}\nPAIRS = {frozenset({"a", "b"}): {"lora_file": "ab.safetensors"}}\n'
+    _write_params(tmp_path, "cached", body)
+    first = load_cast_pair_params("cached", casts_dir=tmp_path)
+    second = load_cast_pair_params("cached", casts_dir=tmp_path)
+    assert first is second

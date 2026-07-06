@@ -346,3 +346,47 @@ async def test_run_propagates_api_error(tmp_path) -> None:
 async def test_estimate_cost_is_zero(tmp_path) -> None:
     cost = await _adapter().estimate_cost(_request(str(tmp_path / "video.mp4")))
     assert cost.amount == 0.0
+
+
+# ── Image critique template tests ────────────────────────────────────────────
+
+from adapters.critique.image_critique_adapter import _format_other_descriptors, _USER_TEMPLATE
+
+
+def test_image_critique_template_includes_other_descriptors() -> None:
+    block = _format_other_descriptors(["cartoon red fox with purple scarf"])
+    assert "Other character(s) also in this shot:" in block
+    assert "cartoon red fox with purple scarf" in block
+
+
+def test_image_critique_template_empty_other_descriptors() -> None:
+    block = _format_other_descriptors([])
+    assert "Other character" not in block
+
+
+def test_image_critique_template_renders_with_other_descriptors() -> None:
+    rendered = _USER_TEMPLATE.format(
+        cast_descriptor="cartoon boy with blue shirt",
+        other_descriptors_block=_format_other_descriptors(["cartoon girl with pink bow"]),
+        shot_prompt="Max with Zoe in playground",
+        n=2,
+        n_minus_1=1,
+        few_shot_block="",
+    )
+    assert "Primary character visual descriptor:" in rendered
+    assert "cartoon boy with blue shirt" in rendered
+    assert "cartoon girl with pink bow" in rendered
+    assert "also recognizably present" in rendered
+
+
+def test_image_critique_template_renders_without_other_descriptors() -> None:
+    rendered = _USER_TEMPLATE.format(
+        cast_descriptor="cartoon boy with blue shirt",
+        other_descriptors_block=_format_other_descriptors([]),
+        shot_prompt="Max in playground",
+        n=1,
+        n_minus_1=0,
+        few_shot_block="",
+    )
+    assert "Primary character visual descriptor:" in rendered
+    assert "Other character" not in rendered

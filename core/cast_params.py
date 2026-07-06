@@ -41,9 +41,18 @@ class CastMemberParams(BaseModel):
     voice_file: str = ""                   # voice_profile_ref-form override
 
 
+class CastPairParams(BaseModel):
+    lora_file: str = ""
+    lora_weight: float | None = None
+    steps: int | None = None
+    guidance_scale: float | None = None
+    trigger: str = ""
+
+
 # Loaded modules are cached per (cast_id, casts_dir) so a job doesn't re-exec
 # the params module once per shot. Cleared in tests via _CACHE.clear().
 _CACHE: dict[tuple[str, str], dict[str, CastMemberParams]] = {}
+_PAIR_CACHE: dict[tuple[str, str], dict[frozenset[str], CastPairParams]] = {}
 
 
 def load_cast_params(
@@ -70,4 +79,31 @@ def load_cast_params(
     raw: dict[str, Any] = getattr(module, "MEMBERS", {}) or {}
     result = {mid: CastMemberParams(**(vals or {})) for mid, vals in raw.items()}
     _CACHE[key] = result
+    return result
+
+
+def load_cast_pair_params(
+    cast_id: str, casts_dir: str | Path = "config/casts"
+) -> dict[frozenset[str], CastPairParams]:
+    """Return {frozenset(member_ids): CastPairParams} from config/casts/<cast_id>/params.py.
+
+    Empty dict when the cast has no params.py or no PAIRS dict (back-compat).
+    """
+    key = (cast_id, str(casts_dir))
+    if key in _PAIR_CACHE:
+        return _PAIR_CACHE[key]
+
+    path = Path(casts_dir) / cast_id / "params.py"
+    if not path.is_file():
+        _PAIR_CACHE[key] = {}
+        return {}
+
+    spec = importlib.util.spec_from_file_location(f"cast_params_{cast_id}", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+
+    raw: dict[frozenset[str], Any] = getattr(module, "PAIRS", {}) or {}
+    result = {k: CastPairParams(**(v or {})) for k, v in raw.items()}
+    _PAIR_CACHE[key] = result
     return result

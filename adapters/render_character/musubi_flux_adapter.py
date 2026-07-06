@@ -255,6 +255,8 @@ class MusubiFluxAdapter(RenderCharacter):
         if req.trigger.strip():
             parts.append(req.trigger.strip())
         parts += [req.member.visual_descriptor, f"in {req.setting}"]
+        for other in req.other_members:
+            parts.append(f"also present: {other.visual_descriptor}")
         framing = camera_phrase(req.camera)
         if framing:
             parts.append(framing)
