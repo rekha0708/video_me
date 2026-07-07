@@ -1,5 +1,6 @@
 .DS_Store
 .env
+.env.bak
 .venv/
 __pycache__/
 *.py[cod]
@@ -26,7 +27,11 @@ voices/**/*.flac
 training_logs/
 
 # musubi-tuner pre-cache (latents + text encoder outputs) — large binary files.
-assets/kids_duo/training/cache/
+assets/*/training/cache/
+
+# Service logs and published pipeline output — regenerated at runtime, not source.
+logs/
+review/
 
 # Downloaded source videos — large binaries, not committed.
 # downloads/*.mp4

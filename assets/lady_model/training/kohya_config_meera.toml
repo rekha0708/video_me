@@ -17,7 +17,7 @@ save_every_n_epochs  = 5
 
 [training_arguments]
 max_train_epochs            = 25
-train_batch_size            = 4
+train_batch_size            = 8
 gradient_accumulation_steps = 1
 learning_rate               = 1e-4
 unet_lr                     = 1e-4

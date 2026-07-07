@@ -205,6 +205,62 @@ class DashboardWorker:
 
         trigger = str(member.lora_ref).replace("\\", "/").rstrip("/").split("/")[-1]
         output_name = f"{job_config.cast.id}_{trigger}"
+        vae_path = "/workspace/ComfyUI/models/diffusion_models/ae.safetensors"
+        text_encoder_path = "/workspace/FLUX2-text-encoder/text_encoder/model-00001-of-00010.safetensors"
+
+        self.repo.update_job_status(
+            job_id,
+            DashboardJobStatus.RUNNING,
+            current_stage="lora_train",
+        )
+
+        if not os.getenv("VIDEO_ME_LORA_TRAIN_CMD"):
+            # flux_2_train_network.py reads only from the dataset's latent/text-encoder
+            # cache directory — it never reads images/captions directly. Skipping these
+            # two steps leaves the cache empty and training fails immediately with
+            # "No training items found in the dataset."
+            self.repo.record_event(
+                job_id,
+                "phase_started",
+                f"Caching latents for {job_config.cast.id}/{member.id}.",
+                stage_name="lora_cache_latents",
+            )
+            await self._run_lora_subprocess(
+                job_id,
+                "lora_cache_latents",
+                [
+                    "/workspace/.venv_musubi/bin/python3",
+                    "/workspace/musubi-tuner/src/musubi_tuner/flux_2_cache_latents.py",
+                    "--model_version",
+                    "dev",
+                    "--dataset_config",
+                    config_arg,
+                    "--vae",
+                    vae_path,
+                ],
+            )
+
+            self.repo.record_event(
+                job_id,
+                "phase_started",
+                f"Caching text encoder outputs for {job_config.cast.id}/{member.id}.",
+                stage_name="lora_cache_text_encoder",
+            )
+            await self._run_lora_subprocess(
+                job_id,
+                "lora_cache_text_encoder",
+                [
+                    "/workspace/.venv_musubi/bin/python3",
+                    "/workspace/musubi-tuner/src/musubi_tuner/flux_2_cache_text_encoder_outputs.py",
+                    "--model_version",
+                    "dev",
+                    "--dataset_config",
+                    config_arg,
+                    "--text_encoder",
+                    text_encoder_path,
+                ],
+            )
+
         if os.getenv("VIDEO_ME_LORA_TRAIN_CMD"):
             template = os.environ["VIDEO_ME_LORA_TRAIN_CMD"]
             template = template.format(
@@ -227,9 +283,9 @@ class DashboardWorker:
                 "--dit",
                 "/workspace/ComfyUI/models/diffusion_models/flux2-dev.safetensors",
                 "--vae",
-                "/workspace/ComfyUI/models/diffusion_models/ae.safetensors",
+                vae_path,
                 "--text_encoder",
-                "/workspace/FLUX2-text-encoder/text_encoder/model-00001-of-00010.safetensors",
+                text_encoder_path,
                 "--dataset_config",
                 config_arg,
                 "--flash_attn",
@@ -237,6 +293,7 @@ class DashboardWorker:
                 "bf16",
                 "--fp8_base",
                 "--fp8_scaled",
+                "--gradient_checkpointing",
                 "--optimizer_type",
                 "adamw",
                 "--learning_rate",
@@ -259,11 +316,6 @@ class DashboardWorker:
                 output_name,
             ]
 
-        self.repo.update_job_status(
-            job_id,
-            DashboardJobStatus.RUNNING,
-            current_stage="lora_train",
-        )
         self.repo.record_event(
             job_id,
             "phase_started",
@@ -271,7 +323,22 @@ class DashboardWorker:
             stage_name="lora_train",
             payload={"config_path": config_arg, "command": cmd},
         )
+        await self._run_lora_subprocess(job_id, "lora_train", cmd)
 
+        self.repo.update_job_status(job_id, DashboardJobStatus.COMPLETED, completed=True)
+        self.repo.append_completed_phase(job_id, "lora_train")
+        self.repo.record_event(
+            job_id,
+            "phase_completed",
+            f"LoRA training completed for {job_config.cast.id}/{member.id}.",
+            stage_name="lora_train",
+        )
+
+    async def _run_lora_subprocess(
+        self, job_id: str, stage_name: str, cmd: list[str]
+    ) -> None:
+        """Run one LoRA pipeline step (cache latents/text-encoder or train), streaming
+        its output to job_events, and raise if it exits non-zero."""
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=Path.cwd(),
@@ -296,21 +363,12 @@ class DashboardWorker:
                     "lora_train_log",
                     line[-1000:],
                     level=level,
-                    stage_name="lora_train",
+                    stage_name=stage_name,
                 )
 
         returncode = await proc.wait()
         if returncode != 0:
-            raise RuntimeError(f"LoRA training failed with exit code {returncode}")
-
-        self.repo.update_job_status(job_id, DashboardJobStatus.COMPLETED, completed=True)
-        self.repo.append_completed_phase(job_id, "lora_train")
-        self.repo.record_event(
-            job_id,
-            "phase_completed",
-            f"LoRA training completed for {job_config.cast.id}/{member.id}.",
-            stage_name="lora_train",
-        )
+            raise RuntimeError(f"{stage_name} failed with exit code {returncode}")
 
     def _make_stage_hook(self, job_id: str):
         """Return a callback that writes per-stage events to the dashboard repo."""

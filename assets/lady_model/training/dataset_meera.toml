@@ -4,13 +4,13 @@ cache_latents = true
 
 [[datasets]]
 resolution = [1024, 1024]
-batch_size = 16
+batch_size = 8
 enable_bucket = true
 bucket_no_upscale = false
 
   [[datasets.subsets]]
   image_dir = "assets/lady_model/training/images/meera"
   caption_extension = ".txt"
-  num_repeats = 60
+  num_repeats = 20
   keep_tokens = 1
   shuffle_caption = false
