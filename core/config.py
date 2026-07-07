@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     approval_timeout_hours: float = 24.0
 
     # --- image candidate generation + VLM critique ---
-    image_candidates: int = 3            # images generated per shot for critique
+    image_candidates: int = 1            # images generated per shot for critique
     image_critique_model: str = "qwen3.6:35b"
     image_critique_base_url: str = "http://localhost:11434/v1"
     image_critique_api_key: str = "ollama"

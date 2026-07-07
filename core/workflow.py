@@ -441,16 +441,80 @@ def _resolve_shot_characters(
     return primary, others, member_params, False
 
 
+def _shot_render_request(
+    shot: Shot,
+    primary: CastMember,
+    other_members: list[CastMember],
+    params: "CastMemberParams | None",
+) -> RenderCharacterRequest:
+    """Build the render_character request for a shot — shared by the sequential
+    and batched Phase A paths so both render identically."""
+    return RenderCharacterRequest(
+        member=primary,
+        setting=shot.setting,
+        expression=None,
+        shot_id=shot.shot_id,
+        camera=shot.camera,
+        other_members=other_members,
+        lora_file=params.lora_file if params else "",
+        lora_weight=params.lora_weight if params else None,
+        steps=params.steps if params else None,
+        guidance_scale=params.guidance_scale if params else None,
+        trigger=params.trigger if params else "",
+    )
+
+
+async def _phase_a_prefetch_renders(
+    shots: list[Shot],
+    cast: Cast,
+    adapters: _Adapters,
+    work_dir: Path,
+    options: RunOptions | None = None,
+) -> dict[str, "ImageSet"]:
+    """Batch-render candidates for every shot the resume cache can't serve.
+
+    One adapters.render.run_many() call for all pending shots lets the adapter
+    load the 64 GB Flux model once per LoRA instead of once per candidate (see
+    MusubiFluxAdapter.run_many) — with 13 shots that's ~9 min of pure model
+    loading saved per job. Returns shot_id → ImageSet, consumed by
+    _render_shot_candidates as `prefetched`; fully cached shots are excluded
+    and served by its own resume logic.
+    """
+    opts = options or RunOptions()
+    num_candidates = getattr(adapters.render, "_num_images", 1)
+    pending: list[tuple[Shot, RenderCharacterRequest]] = []
+    for shot in shots:
+        primary, other_members, params, _ = _resolve_shot_characters(shot, cast)
+        render_dir = work_dir / "renders" / shot.shot_id / primary.id
+        existing = sorted(render_dir.glob("render_??.png"))
+        if opts.resume and not existing:
+            # legacy member-keyed layout (pre shot-scoped renders)
+            existing = sorted((work_dir / "renders" / primary.id).glob("render_??.png"))
+        if opts.resume and len(existing) >= num_candidates:
+            continue
+        pending.append((shot, _shot_render_request(shot, primary, other_members, params)))
+
+    if not pending:
+        return {}
+    log_event(logger, "phase_a_batch_render", shots=len(pending),
+              candidates=len(pending) * num_candidates)
+    image_sets = await adapters.render.run_many([req for _, req in pending])
+    return {shot.shot_id: image_set for (shot, _), image_set in zip(pending, image_sets)}
+
+
 async def _render_shot_candidates(
     shot: Shot,
     cast: Cast,
     adapters: _Adapters,
     work_dir: Path,
     options: RunOptions | None = None,
+    prefetched: "ImageSet | None" = None,
 ) -> "ImageCritiqueResult":
     """Phase A: render N candidates for one shot, critique them, return the winner.
 
-    Runs render_character (N images) then VLM image critique.
+    Runs render_character (N images) then VLM image critique. `prefetched`
+    carries an ImageSet already rendered by _phase_a_prefetch_renders (batched
+    path) — the per-shot render call is skipped and critique runs on it.
     Resume: if all candidate PNGs and a cached critique result already exist,
     skips both render and critique (the VLM call is a real, non-trivial cost —
     ~20-40s per shot — that would otherwise redo on every retry/resume).
@@ -484,21 +548,11 @@ async def _render_shot_candidates(
                     shot.shot_id, num_candidates)
         render_result = ImageSet(member_id=primary_id,
                                  images=[str(p) for p in existing_pngs[:num_candidates]])
+    elif prefetched is not None:
+        render_result = prefetched
     else:
         render_result = await adapters.render.run(
-            RenderCharacterRequest(
-                member=primary,
-                setting=shot.setting,
-                expression=expression,
-                shot_id=shot.shot_id,
-                camera=shot.camera,
-                other_members=other_members,
-                lora_file=params.lora_file if params else "",
-                lora_weight=params.lora_weight if params else None,
-                steps=params.steps if params else None,
-                guidance_scale=params.guidance_scale if params else None,
-                trigger=params.trigger if params else "",
-            )
+            _shot_render_request(shot, primary, other_members, params)
         )
 
     if other_members:
@@ -1115,9 +1169,20 @@ async def _run_to_assembled_video(
             log_event(logger, "phase_a_skipped_user_images",
                       members=sorted(opts.user_images.keys()))
         else:
+            # Batch-capable adapters (musubi_flux) render every pending shot in
+            # one subprocess per LoRA — one 64 GB model load instead of one per
+            # candidate. `is True` so mock adapters' truthy attrs don't opt in.
+            prefetched: dict[str, ImageSet] = {}
+            if getattr(adapters.render, "supports_batch", False) is True:
+                prefetched = await _phase_a_prefetch_renders(
+                    shots_to_run, config.cast, adapters, ctx.work_dir, opts
+                )
             critique_results = []
             for shot in shots_to_run:
-                cr = await _render_shot_candidates(shot, config.cast, adapters, ctx.work_dir, opts)
+                cr = await _render_shot_candidates(
+                    shot, config.cast, adapters, ctx.work_dir, opts,
+                    prefetched=prefetched.get(shot.shot_id),
+                )
                 critique_results.append(cr)
 
         # ── Image approval gate (single UI for all shots) ─────────────────────

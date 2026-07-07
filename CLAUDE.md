@@ -24,7 +24,7 @@ content are blocked, not silently passed.
 - **Video generation**: LTX-2.3 22B distilled v1.1 via ComfyUI (replaces Wan 2.7 resident server). Native audio-video sync in one diffusion pass — MuseTalk stage skipped. Adapter: `LtxAdapter` (port 8188). 8-step distilled: ~1 min/shot (was ~21 min with Wan).
 - **Plan critique loop**: after `plan_shots`, `LlmPlanCritiqueAdapter` scores 5 dimensions (character_fit, scene_achievability, pacing, kids_safety, visual_clarity). All must be ≥ 0.75 to pass. Up to 3 re-plan iterations with specific fix notes injected.
 - **Human approval gate (storyboard)**: after critique passes, web UI at `http://localhost:8765` shows shot table + score bars. Approve → render. Reject + notes → one more re-plan cycle. 2nd rejection → job FAILED. CI bypass: `VIDEO_ME_AUTO_APPROVE_PLAN=true`.
-- **Image candidate generation**: render_character generates N images per shot (default 3). `VlmImageCritiqueAdapter` (qwen3.6:35b, natively multimodal) scores all candidates on 5 dimensions and picks the best. Self-learning: each pick + human override is appended to `assets/kids_duo/critique_feedback.jsonl`; last 5 entries are injected as few-shot context on the next run.
+- **Image candidate generation**: render_character generates N images per shot (default 1 — operator decision 2026-07-07: Flux candidates are near-identical, so extra candidates waste GPU; raise via `VIDEO_ME_IMAGE_CANDIDATES` if variety is needed). `VlmImageCritiqueAdapter` (qwen3.6:35b, natively multimodal) scores all candidates on 5 dimensions and picks the best. Self-learning: each pick + human override is appended to `assets/kids_duo/critique_feedback.jsonl`; last 5 entries are injected as few-shot context on the next run.
 - **Human approval gate (images)**: after all shots are rendered and critiqued, web UI at `http://localhost:8765 (shared port)` shows a grid of winner images. Operator can override any pick, then clicks Approve. Overrides are written back to the feedback log. CI bypass: `VIDEO_ME_AUTO_APPROVE_IMAGES=true`.
 - **Single VLM for everything**: qwen3.6:35b (MoE 35B, natively multimodal via early-fusion training, MMMU 81.7) handles ALL stages — text LLM + image critique + video frame critique. Drops qwen2.5-vl:32b entirely. VRAM: ~30 GB (qwen3.6:35b) + ~44 GB (LTX-2.3) + ~20 GB (Flux 2.0) + ~20 GB (Fish S2) = ~114 GB peak on G200 (143 GB). 29 GB headroom.
 - **TTS**: Fish Audio S2 (`FishS2TtsAdapter`, port 8025). Supports English and Hindi (80+ languages, voice cloning from reference WAV). Replaces Chatterbox TTS. Fallback: `VIDEO_ME_TTS_ADAPTER=chatterbox`.
@@ -99,7 +99,7 @@ check_rights()  ◄─── BLOCKS job (status=BLOCKED) if rights_cleared=False
 [approval gate]      Web UI localhost:8765 → human approves/rejects; 2nd rejection = FAILED
     │
     ▼ (per shot — Phase A)
-    ├── [render_character ×N]  ComfyUI + Flux.1-dev + Flux LoRA → N candidate PNGs (default N=3)
+    ├── [render_character ×N]  musubi-tuner Flux 2.0 + LoRA → N candidate PNGs (default N=1, batched per LoRA)
     └── [critique_images]      qwen2.5-vl:32b → picks best; logs to critique_feedback.jsonl
     │
     ▼

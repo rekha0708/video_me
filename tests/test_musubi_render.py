@@ -108,3 +108,167 @@ def test_build_prompt_no_other_members_unchanged(tmp_path: Path) -> None:
     )
     assert adapter._build_prompt(req_with, skip_lora=False) == \
            adapter._build_prompt(req_without, skip_lora=False)
+
+
+# ── Batched subprocess tests (run / run_many via --from_file) ────────────────
+
+
+class _FakeProc:
+    def __init__(self, returncode: int = 0, stdout: bytes = b"") -> None:
+        self.returncode = returncode
+        self._stdout = stdout
+
+    async def communicate(self):
+        return self._stdout, None
+
+
+def _install_fake_subprocess(monkeypatch, calls: list[list[str]], *, returncode: int = 0,
+                             skip_seeds: set[int] | None = None) -> None:
+    """Replace create_subprocess_exec with a fake that reads the prompts file
+    and writes one musubi-named PNG per line into --save_path."""
+
+    async def fake_exec(*cmd, **_kwargs):
+        cmd = list(cmd)
+        calls.append(cmd)
+        if returncode == 0:
+            save_path = Path(cmd[cmd.index("--save_path") + 1])
+            prompts_file = Path(cmd[cmd.index("--from_file") + 1])
+            for line in prompts_file.read_text().splitlines():
+                if not line.strip():
+                    continue
+                seed = int(line.split(" --d ")[1].split()[0])
+                if skip_seeds and seed in skip_seeds:
+                    continue
+                # musubi save_images_grid naming: {time_flag}_{seed}_{i:03d}.png
+                (save_path / f"20990101-000000-000_{seed}_000.png").write_bytes(b"png")
+        return _FakeProc(returncode=returncode, stdout=b"boom" if returncode else b"")
+
+    import adapters.render_character.musubi_flux_adapter as mod
+    monkeypatch.setattr(mod.asyncio, "create_subprocess_exec", fake_exec)
+
+
+def _real_lora(tmp_path: Path, name: str = "kids_duo_max") -> None:
+    lora_dir = tmp_path / "loras"
+    lora_dir.mkdir(exist_ok=True)
+    (lora_dir / f"{name}.safetensors").write_bytes(b"weights")
+
+
+@pytest.mark.asyncio
+async def test_run_batches_all_candidates_into_one_subprocess(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """3 candidates → ONE subprocess with a 3-line prompts file (one model load)."""
+    _real_lora(tmp_path)
+    adapter = MusubiFluxAdapter(
+        work_dir=tmp_path / "renders", lora_dir=tmp_path / "loras", num_images=3
+    )
+    calls: list[list[str]] = []
+    _install_fake_subprocess(monkeypatch, calls)
+
+    result = await adapter.run(_req(tmp_path))
+
+    assert len(calls) == 1
+    cmd = calls[0]
+    assert "--from_file" in cmd and "--prompt" not in cmd
+    assert result.images == [
+        str(tmp_path / "renders" / "s01" / "max" / f"render_{i:02d}.png") for i in range(3)
+    ]
+    for uri in result.images:
+        assert Path(uri).exists()
+
+
+@pytest.mark.asyncio
+async def test_run_many_prompt_lines_have_unique_seeds_and_params(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _real_lora(tmp_path)
+    adapter = MusubiFluxAdapter(
+        work_dir=tmp_path / "renders", lora_dir=tmp_path / "loras", num_images=2
+    )
+    calls: list[list[str]] = []
+    captured: dict[str, str] = {}
+
+    async def fake_exec(*cmd, **_kwargs):
+        cmd = list(cmd)
+        calls.append(cmd)
+        prompts_file = Path(cmd[cmd.index("--from_file") + 1])
+        captured["prompts"] = prompts_file.read_text()
+        save_path = Path(cmd[cmd.index("--save_path") + 1])
+        for line in captured["prompts"].splitlines():
+            seed = int(line.split(" --d ")[1].split()[0])
+            (save_path / f"20990101-000000-000_{seed}_000.png").write_bytes(b"png")
+        return _FakeProc()
+
+    import adapters.render_character.musubi_flux_adapter as mod
+    monkeypatch.setattr(mod.asyncio, "create_subprocess_exec", fake_exec)
+
+    await adapter.run_many(
+        [_req(tmp_path, shot_id="s01"), _req(tmp_path, shot_id="s02")]
+    )
+
+    lines = captured["prompts"].strip().splitlines()
+    assert len(lines) == 4  # 2 shots × 2 candidates, one subprocess
+    assert len(calls) == 1
+    seeds = [int(l.split(" --d ")[1].split()[0]) for l in lines]
+    assert seeds == [0, 1, 2, 3]  # globally unique per line → unambiguous file mapping
+    for line in lines:
+        assert " --s 20" in line and " --g 3.5" in line
+
+
+@pytest.mark.asyncio
+async def test_run_many_groups_by_lora(tmp_path: Path, monkeypatch) -> None:
+    """Different members (different LoRAs) → one subprocess per LoRA group."""
+    _real_lora(tmp_path, "kids_duo_max")
+    _real_lora(tmp_path, "kids_duo_zoe")
+    adapter = MusubiFluxAdapter(
+        work_dir=tmp_path / "renders", lora_dir=tmp_path / "loras", num_images=1
+    )
+    calls: list[list[str]] = []
+    _install_fake_subprocess(monkeypatch, calls)
+
+    results = await adapter.run_many([
+        _req(tmp_path, shot_id="s01"),
+        RenderCharacterRequest(
+            member=_other_member(), setting="park", shot_id="s02", camera="wide"
+        ),
+        _req(tmp_path, shot_id="s03"),
+    ])
+
+    assert len(calls) == 2  # max group (s01+s03) + zoe group (s02)
+    loras = [cmd[cmd.index("--lora_weight") + 1] for cmd in calls]
+    assert any("kids_duo_max" in l for l in loras)
+    assert any("kids_duo_zoe" in l for l in loras)
+    assert [r.member_id for r in results] == ["max", "zoe", "max"]
+    for r in results:
+        assert all(Path(u).exists() for u in r.images)
+
+
+def test_sanitize_prompt_line_strips_newlines_and_dashes() -> None:
+    out = MusubiFluxAdapter._sanitize_prompt_line("boy in shirt\n, in kitchen --extra")
+    assert "\n" not in out
+    assert "--" not in out
+    assert "boy in shirt , in kitchen" in out
+
+
+@pytest.mark.asyncio
+async def test_run_many_missing_output_raises(tmp_path: Path, monkeypatch) -> None:
+    _real_lora(tmp_path)
+    adapter = MusubiFluxAdapter(
+        work_dir=tmp_path / "renders", lora_dir=tmp_path / "loras", num_images=2
+    )
+    calls: list[list[str]] = []
+    _install_fake_subprocess(monkeypatch, calls, skip_seeds={1})
+
+    with pytest.raises(RuntimeError, match="no image for"):
+        await adapter.run(_req(tmp_path))
+
+
+@pytest.mark.asyncio
+async def test_run_many_subprocess_failure_raises(tmp_path: Path, monkeypatch) -> None:
+    _real_lora(tmp_path)
+    adapter = _adapter(tmp_path)
+    calls: list[list[str]] = []
+    _install_fake_subprocess(monkeypatch, calls, returncode=1)
+
+    with pytest.raises(RuntimeError, match="exit 1"):
+        await adapter.run(_req(tmp_path))
