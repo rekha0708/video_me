@@ -1,0 +1,16 @@
+# Unified Alternate TOML Dataset Block Format
+[dataset_arguments]
+cache_latents = true
+
+[[datasets]]
+resolution = [1024, 1024]
+batch_size = 16
+enable_bucket = true
+bucket_no_upscale = false
+
+  [[datasets.subsets]]
+  image_dir = "assets/male_model/training/images/rudra"
+  caption_extension = ".txt"
+  num_repeats = 60
+  keep_tokens = 1
+  shuffle_caption = false

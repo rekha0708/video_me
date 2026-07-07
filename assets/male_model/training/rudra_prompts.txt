@@ -1,0 +1,80 @@
+# Rudra — LoRA Training Image Generation Prompts (male_model cast)
+# Generate with musubi-tuner + Flux 2.0 base model (or any external photoreal tool).
+# Photorealistic character — do NOT reuse the kids_duo cartoon suffixes.
+#
+# Rudra's roles in videos: singing, dancing, ramp walk, and sitting on a chair
+# sharing knowledge. The prompt set below covers all four, plus core identity
+# shots that lock his face/hair for the LoRA.
+#
+# SHARED POSITIVE SUFFIX (append to every prompt):
+#   photorealistic editorial photography, soft natural studio lighting, shallow depth of field,
+#   neutral seamless light grey studio background, sharp focus on face, natural skin texture,
+#   high-fashion magazine quality, 85mm portrait lens look
+#
+# SHARED NEGATIVE PROMPT:
+#   child, teenager, underage, exaggerated muscles, vulgar pose, explicit nudity,
+#   cheap styling, messy hair, distorted face, bad hands, extra fingers, awkward pose,
+#   low-quality image, blurry face, unnatural expression, oversexualized, cartoonish,
+#   plastic skin, 3d render, illustration, watermark, text, background clutter,
+#   crowd, other people, different hair style, clean shaven, heavy full beard
+#
+# SETTINGS: Guidance Scale 3.5 (Flux) / 7 (SDXL-class tools)  |  Steps 25  |  Dimensions 1024×1024
+# Generate 1 image per prompt, save as: rudra_001.png through rudra_020.png
+#
+# IDENTITY LOCK (same in every prompt): face, hair, skin tone, facial hair.
+# His YAML allows "light stubble or beard" — for training it is LOCKED to
+# well-groomed light stubble in every image. Outfits may vary by role
+# (runway look, dance outfit, stage blazer, smart blazer for knowledge sharing) —
+# keep each outfit premium and consistent within its role block so the LoRA
+# learns the FACE, not one costume.
+# ──────────────────────────────────────────────────────────────────────
+
+# CORE IDENTITY — face and body reference (no props)
+
+[001] full body front view, male_model_rudra, adult Indian man in his late 20s, warm brown skin, thick black neatly styled hair, deep brown eyes, bold eyebrows, strong jawline, well-groomed light stubble, fitted black tailored shirt and dark trousers, silver wristwatch, standing tall with relaxed shoulders and chin slightly lifted, arms relaxed at sides, calm confident expression
+
+[002] full body side profile view, male_model_rudra, adult Indian man in his late 20s, warm brown skin, thick black neatly styled hair, strong jawline, well-groomed light stubble, fitted black tailored shirt and dark trousers, silver wristwatch, standing tall with upright powerful posture, composed face
+
+[003] close-up face front view, male_model_rudra, adult Indian man in his late 20s, warm brown skin, thick black neatly styled hair, deep brown eyes, bold eyebrows, strong jawline, well-groomed light stubble, calm composed face with sharp intense eyes, direct confident eye contact
+
+[004] close-up face 3/4 view, male_model_rudra, adult Indian man in his late 20s, warm brown skin, thick black neatly styled hair, deep brown eyes, bold eyebrows, strong jawline, well-groomed light stubble, head slightly turned while maintaining eye contact, slight knowing smile
+
+[005] close-up face front view, male_model_rudra, adult Indian man in his late 20s, warm brown skin, thick black neatly styled hair, deep brown eyes, strong jawline, well-groomed light stubble, warm masculine smile, soft natural light on face
+
+# RAMP WALK — runway model energy
+
+[006] full body front view, male_model_rudra, adult Indian man in his late 20s, thick black neatly styled hair, deep brown eyes, strong jawline, well-groomed light stubble, designer Indo-western bandhgala runway outfit, silver wristwatch, mid-stride ramp walk directly toward the camera, purposeful confident stride, direct intense runway gaze, high-fashion model posture
+
+[007] full body 3/4 view, male_model_rudra, adult Indian man in his late 20s, thick black neatly styled hair, strong jawline, well-groomed light stubble, designer Indo-western bandhgala runway outfit, silver wristwatch, confident ramp walk stride, arms swinging naturally, chin lifted, composed runway expression
+
+[008] full body view, male_model_rudra, adult Indian man in his late 20s, thick black neatly styled hair, strong jawline, well-groomed light stubble, designer Indo-western bandhgala runway outfit, silver wristwatch, end-of-runway pose, one hand in pocket, weight shifted to one leg, looking straight at the camera with an intense calm gaze
+
+[009] full body 3/4 back view, male_model_rudra, adult Indian man in his late 20s, thick black neatly styled hair, strong jawline, well-groomed light stubble, designer Indo-western bandhgala runway outfit with structured shoulders, turning at the end of the ramp, looking back over his shoulder at the camera, adjusting his cuff elegantly
+
+# DANCING — controlled, energetic movement
+
+[010] full body view, male_model_rudra, adult Indian man in his late 20s, thick black neatly styled hair, deep brown eyes, strong jawline, well-groomed light stubble, fitted modern kurta with dark jeans, silver wristwatch, mid-dance pose with one arm raised and the other across his chest, weight on one leg, charismatic confident expression
+
+[011] full body 3/4 view, male_model_rudra, adult Indian man in his late 20s, thick black hair with slight movement, strong jawline, well-groomed light stubble, fitted modern kurta with dark jeans, silver wristwatch, dynamic dance spin with arms extended, energetic yet controlled movement, radiant confident smile
+
+[012] full body view, male_model_rudra, adult Indian man in his late 20s, thick black neatly styled hair, strong jawline, well-groomed light stubble, fitted modern kurta with dark jeans, silver wristwatch, bhangra-fusion dance pose with both arms raised high, one knee lifted, joyful commanding energy
+
+[013] waist up view, male_model_rudra, adult Indian man in his late 20s, thick black neatly styled hair, deep brown eyes, strong jawline, well-groomed light stubble, fitted modern kurta, silver wristwatch, mid-dance shoulder movement, hands in an expressive rhythmic gesture at chest height, playful but controlled expression
+
+# SINGING — stage performance
+
+[014] waist up front view, male_model_rudra, adult Indian man in his late 20s, warm brown skin, thick black neatly styled hair, deep brown eyes, strong jawline, well-groomed light stubble, dark tailored blazer with subtle sheen over a black t-shirt, singing into a handheld microphone held in one hand, eyes softly closed, emotional heartfelt expression
+
+[015] waist up 3/4 view, male_model_rudra, adult Indian man in his late 20s, warm brown skin, thick black neatly styled hair, deep brown eyes, strong jawline, well-groomed light stubble, dark tailored blazer with subtle sheen over a black t-shirt, singing into a handheld microphone, other hand raised expressively, engaging the audience with a warm confident gaze
+
+[016] full body view, male_model_rudra, adult Indian man in his late 20s, warm brown skin, thick black neatly styled hair, strong jawline, well-groomed light stubble, dark tailored blazer with subtle sheen over a black t-shirt, dark trousers, standing at a microphone stand singing, one hand on the mic stand, commanding stage presence, soft spotlight feel
+
+# KNOWLEDGE SHARING — seated, presenter energy
+
+[017] full body view, male_model_rudra, adult Indian man in his late 20s, warm brown skin, thick black neatly styled hair, deep brown eyes, strong jawline, well-groomed light stubble, structured navy blazer over a crisp shirt, dark trousers, silver wristwatch, sitting upright on a modern chair with one ankle resting on the opposite knee, hands gesturing mid-explanation, warm engaging expression, talk-show host energy
+
+[018] waist up front view, male_model_rudra, adult Indian man in his late 20s, warm brown skin, thick black neatly styled hair, deep brown eyes, bold eyebrows, strong jawline, well-groomed light stubble, structured navy blazer over a crisp shirt, seated on a chair leaning slightly forward with elbows on knees, one hand raised making a point, confident articulate expression, speaking directly to the camera
+
+[019] waist up 3/4 view, male_model_rudra, adult Indian man in his late 20s, warm brown skin, thick black neatly styled hair, deep brown eyes, strong jawline, well-groomed light stubble, structured navy blazer over a crisp shirt, seated on a chair holding a small notebook in one hand, explaining with an open-palm gesture, thoughtful warm smile
+
+[020] full body 3/4 view, male_model_rudra, adult Indian man in his late 20s, warm brown skin, thick black neatly styled hair, deep brown eyes, strong jawline, well-groomed light stubble, structured navy blazer over a crisp shirt, dark trousers, silver wristwatch, sitting relaxed on a chair with hands loosely clasped, attentive listening pose, calm composed face with sharp expressive eyes

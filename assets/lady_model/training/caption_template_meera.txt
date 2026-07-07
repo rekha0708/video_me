@@ -1,0 +1,42 @@
+# Meera — Caption Template (lady_model cast)
+#
+# For each training image, create a sidecar .txt file with the SAME filename stem.
+# Example: meera_001.png → meera_001.txt
+#
+# Base caption (copy this for every image, then append the role/pose tag from the list below).
+# Note: outfit and props (mic, chair) are described in the APPENDED tag, not the base —
+# this keeps the LoRA bound to her face/hair/identity, not to one costume or prop.
+
+lady_model_meera, adult Indian woman in her late 20s, warm brown skin, long black hair in soft polished waves, almond-shaped dark brown eyes, bold defined eyebrows, refined glamorous makeup with strong eyeliner and soft rose lip, statement gold jhumka earrings, photorealistic editorial photography, soft natural studio lighting, neutral light grey studio background
+
+# ── Append one role/pose tag per image ────────────────────────────────
+#
+# CORE IDENTITY
+# meera_001.txt → base + ", fitted elegant black Indo-western dress, full body front view, standing tall, arms relaxed, confident composed expression"
+# meera_002.txt → base + ", fitted elegant black Indo-western dress, full body side profile, upright graceful posture"
+# meera_003.txt → base + ", close-up face front view, calm composed face with expressive eyes, direct eye contact"
+# meera_004.txt → base + ", close-up face 3/4 view, head slightly turned, slight mysterious smile"
+# meera_005.txt → base + ", close-up face, warm elegant smile, soft natural light on face"
+#
+# RAMP WALK
+# meera_006.txt → base + ", designer Indo-western runway gown, full body, mid-stride ramp walk toward camera, intense runway gaze"
+# meera_007.txt → base + ", designer Indo-western runway gown, full body 3/4 view, confident ramp walk stride, chin lifted"
+# meera_008.txt → base + ", designer Indo-western runway gown, full body, end-of-runway pose, hand on waist, intense glamorous gaze"
+# meera_009.txt → base + ", designer Indo-western runway gown, full body 3/4 back view, runway turn, looking back over shoulder"
+#
+# DANCING
+# meera_010.txt → base + ", elegant flowing dance outfit, full body, mid-dance pose, arms raised gracefully overhead, joyful expression"
+# meera_011.txt → base + ", elegant flowing dance outfit, full body 3/4 view, spinning twirl, outfit flaring, radiant smile"
+# meera_012.txt → base + ", elegant flowing dance outfit, full body, classical-fusion dance pose, expressive hand gestures"
+# meera_013.txt → base + ", elegant flowing dance outfit, waist up, mid-dance shoulder movement, expressive hands near face, playful expression"
+#
+# SINGING
+# meera_014.txt → base + ", elegant shimmering stage dress, waist up, singing into handheld microphone, eyes softly closed, heartfelt expression"
+# meera_015.txt → base + ", elegant shimmering stage dress, waist up 3/4 view, singing into microphone, other hand raised expressively"
+# meera_016.txt → base + ", elegant shimmering stage dress, full body, singing at a microphone stand, one hand on mic stand, graceful stage presence"
+#
+# KNOWLEDGE SHARING
+# meera_017.txt → base + ", smart elegant blazer, full body, sitting on a modern chair with legs crossed, gesturing mid-explanation, warm engaging expression"
+# meera_018.txt → base + ", smart elegant blazer, waist up, seated leaning slightly forward, one hand raised making a point, speaking to camera"
+# meera_019.txt → base + ", smart elegant blazer, waist up 3/4 view, seated holding a notebook, open-palm explaining gesture, thoughtful smile"
+# meera_020.txt → base + ", smart elegant blazer, full body 3/4 view, sitting relaxed with hands on lap, attentive listening pose"

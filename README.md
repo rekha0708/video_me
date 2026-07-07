@@ -41,6 +41,57 @@ docker compose up -d
 VIDEO_ME_JOB_STORE=postgres VIDEO_ME_ARTIFACT_STORE=s3 python -m scripts.run_noop_job
 ```
 
+## Downloading Instagram videos
+
+For public videos, the generic downloader works:
+
+```bash
+python download_video.py "https://www.instagram.com/reel/..."
+```
+
+For login-required reels/posts, prefer reusing an already logged-in browser session:
+
+```bash
+python ig_video_downloader.py "https://www.instagram.com/reel/..." --cookies-from-browser chrome
+```
+
+By default, the Instagram downloader prefers a single MP4 file. Instagram sometimes serves the
+highest quality as separate video-only and audio-only streams; use `--best-quality` only when
+`ffmpeg` is installed so `yt-dlp` can merge them:
+
+```bash
+brew install ffmpeg
+python ig_video_downloader.py "https://www.instagram.com/reel/..." \
+  --cookies-from-browser chrome --best-quality
+```
+
+If Chrome uses a non-default profile, pass the profile that is logged into Instagram:
+
+```bash
+python ig_video_downloader.py "https://www.instagram.com/reel/..." \
+  --cookies-from-browser chrome --browser-profile "Default"
+python ig_video_downloader.py "https://www.instagram.com/reel/..." \
+  --cookies-from-browser chrome --browser-profile "Profile 1"
+```
+
+If browser cookie extraction is not available, export Instagram cookies to a Netscape-format
+`cookies.txt` file and pass it explicitly:
+
+```bash
+python ig_video_downloader.py "https://www.instagram.com/reel/..." --cookies ~/Downloads/cookies.txt
+```
+
+Do not pass Instagram username/password credentials to this script. `yt-dlp` does not support
+Instagram password login; it needs cookies from a browser session where Instagram is already
+logged in. If you already typed `--username` alongside cookie auth, the script ignores it and
+uses the cookies.
+
+```bash
+python ig_video_downloader.py "https://www.instagram.com/reel/..." --cookies-from-browser chrome
+```
+
+Only download content you have rights or permission to use before sending it into the pipeline.
+
 ## Running the Phase 1 pipeline (requires Track B + D)
 
 ```python

@@ -1,0 +1,42 @@
+# Rudra — Caption Template (male_model cast)
+#
+# For each training image, create a sidecar .txt file with the SAME filename stem.
+# Example: rudra_001.png → rudra_001.txt
+#
+# Base caption (copy this for every image, then append the role/pose tag from the list below).
+# Note: outfit and props (mic, chair, notebook) are described in the APPENDED tag, not the
+# base — this keeps the LoRA bound to his face/hair/identity, not to one costume or prop.
+
+male_model_rudra, adult Indian man in his late 20s, warm brown skin, thick black neatly styled hair, deep brown eyes, bold eyebrows, strong jawline, well-groomed light stubble, photorealistic editorial photography, soft natural studio lighting, neutral light grey studio background
+
+# ── Append one role/pose tag per image ────────────────────────────────
+#
+# CORE IDENTITY
+# rudra_001.txt → base + ", fitted black tailored shirt and dark trousers, full body front view, standing tall, arms relaxed, calm confident expression"
+# rudra_002.txt → base + ", fitted black tailored shirt and dark trousers, full body side profile, upright powerful posture"
+# rudra_003.txt → base + ", close-up face front view, calm composed face with sharp intense eyes, direct eye contact"
+# rudra_004.txt → base + ", close-up face 3/4 view, head slightly turned, slight knowing smile"
+# rudra_005.txt → base + ", close-up face, warm masculine smile, soft natural light on face"
+#
+# RAMP WALK
+# rudra_006.txt → base + ", designer Indo-western bandhgala runway outfit, full body, mid-stride ramp walk toward camera, intense runway gaze"
+# rudra_007.txt → base + ", designer Indo-western bandhgala runway outfit, full body 3/4 view, confident ramp walk stride, chin lifted"
+# rudra_008.txt → base + ", designer Indo-western bandhgala runway outfit, full body, end-of-runway pose, one hand in pocket, intense calm gaze"
+# rudra_009.txt → base + ", designer Indo-western bandhgala runway outfit, full body 3/4 back view, runway turn, looking back over shoulder, adjusting cuff"
+#
+# DANCING
+# rudra_010.txt → base + ", fitted modern kurta with dark jeans, full body, mid-dance pose, one arm raised, charismatic expression"
+# rudra_011.txt → base + ", fitted modern kurta with dark jeans, full body 3/4 view, dynamic dance spin, arms extended, radiant confident smile"
+# rudra_012.txt → base + ", fitted modern kurta with dark jeans, full body, bhangra-fusion pose, both arms raised, one knee lifted, joyful energy"
+# rudra_013.txt → base + ", fitted modern kurta, waist up, mid-dance shoulder movement, expressive rhythmic hand gesture, playful controlled expression"
+#
+# SINGING
+# rudra_014.txt → base + ", dark tailored blazer over black t-shirt, waist up, singing into handheld microphone, eyes softly closed, heartfelt expression"
+# rudra_015.txt → base + ", dark tailored blazer over black t-shirt, waist up 3/4 view, singing into microphone, other hand raised expressively"
+# rudra_016.txt → base + ", dark tailored blazer over black t-shirt, full body, singing at a microphone stand, one hand on mic stand, commanding stage presence"
+#
+# KNOWLEDGE SHARING
+# rudra_017.txt → base + ", structured navy blazer over crisp shirt, full body, sitting on a modern chair, ankle on knee, gesturing mid-explanation, warm engaging expression"
+# rudra_018.txt → base + ", structured navy blazer over crisp shirt, waist up, seated leaning forward, one hand raised making a point, speaking to camera"
+# rudra_019.txt → base + ", structured navy blazer over crisp shirt, waist up 3/4 view, seated holding a notebook, open-palm explaining gesture, thoughtful smile"
+# rudra_020.txt → base + ", structured navy blazer over crisp shirt, full body 3/4 view, sitting relaxed with hands clasped, attentive listening pose"

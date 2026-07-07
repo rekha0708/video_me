@@ -1,0 +1,78 @@
+# Meera — LoRA Training Image Generation Prompts (lady_model cast)
+# Generate with musubi-tuner + Flux 2.0 base model (or any external photoreal tool).
+# Photorealistic character — do NOT reuse the kids_duo cartoon suffixes.
+#
+# Meera's roles in videos: singing, dancing, ramp walk, and sitting on a chair
+# sharing knowledge. The prompt set below covers all four, plus core identity
+# shots that lock her face/hair for the LoRA.
+#
+# SHARED POSITIVE SUFFIX (append to every prompt):
+#   photorealistic editorial photography, soft natural studio lighting, shallow depth of field,
+#   neutral seamless light grey studio background, sharp focus on face, glowing natural skin,
+#   high-fashion magazine quality, 85mm portrait lens look
+#
+# SHARED NEGATIVE PROMPT:
+#   child, teenager, underage, overly exaggerated body, vulgar pose, explicit nudity,
+#   cheap styling, messy hair, distorted face, bad hands, extra fingers, awkward pose,
+#   low-quality image, blurry face, unnatural expression, oversexualized, cartoonish,
+#   plastic skin, 3d render, illustration, watermark, text, background clutter,
+#   crowd, other people, different hair style
+#
+# SETTINGS: Guidance Scale 3.5 (Flux) / 7 (SDXL-class tools)  |  Steps 25  |  Dimensions 1024×1024
+# Generate 1 image per prompt, save as: meera_001.png through meera_020.png
+#
+# IDENTITY LOCK (same in every prompt): face, hair, skin tone, makeup.
+# Outfits may vary by role (stage dress for singing, dance outfit, runway look,
+# smart-elegant for knowledge sharing) — but keep each outfit premium and consistent
+# within its role block so the LoRA learns the FACE, not one costume.
+# ──────────────────────────────────────────────────────────────────────
+
+# CORE IDENTITY — face and body reference (no props)
+
+[001] full body front view, lady_model_meera, adult Indian woman in her late 20s, warm brown skin, long black hair in soft polished waves, almond-shaped dark brown eyes, bold defined eyebrows, refined glamorous makeup with strong eyeliner and soft rose lip, fitted elegant black Indo-western dress, statement gold jhumka earrings, standing tall with relaxed shoulders and chin slightly lifted, arms relaxed at sides, confident composed expression
+
+[002] full body side profile view, lady_model_meera, adult Indian woman in her late 20s, warm brown skin, long black hair in soft polished waves, refined glamorous makeup, fitted elegant black Indo-western dress, statement gold jhumka earrings, standing tall with upright graceful posture, calm composed face
+
+[003] close-up face front view, lady_model_meera, adult Indian woman in her late 20s, warm brown skin, long black hair in soft polished waves framing her face, almond-shaped dark brown eyes, bold defined eyebrows, strong eyeliner, defined lashes, soft rose lip, statement gold jhumka earrings, calm composed face with expressive eyes, direct confident eye contact
+
+[004] close-up face 3/4 view, lady_model_meera, adult Indian woman in her late 20s, warm brown skin, long black hair in soft polished waves, almond-shaped dark brown eyes, bold defined eyebrows, refined glamorous makeup, statement gold jhumka earrings, head slightly turned while maintaining eye contact, slight mysterious smile
+
+[005] close-up face front view, lady_model_meera, adult Indian woman in her late 20s, warm brown skin, long black hair in soft polished waves, almond-shaped dark brown eyes, refined glamorous makeup with glowing skin, statement gold jhumka earrings, warm elegant smile, soft natural light on face
+
+# RAMP WALK — runway model energy
+
+[006] full body front view, lady_model_meera, adult Indian woman in her late 20s, long black hair in soft polished waves, almond-shaped dark brown eyes, refined glamorous makeup, designer Indo-western runway gown, statement gold jhumka earrings, mid-stride ramp walk directly toward the camera, one foot crossing in front of the other, direct intense runway gaze, high-fashion model posture
+
+[007] full body 3/4 view, lady_model_meera, adult Indian woman in her late 20s,  long black hair in soft polished waves, refined glamorous makeup, designer Indo-western runway gown, statement gold jhumka earrings, confident ramp walk stride, arms swinging naturally, chin lifted, composed runway expression
+
+[008] full body view, lady_model_meera, adult Indian woman in her late 20s, long black hair in soft polished waves, refined glamorous makeup, designer Indo-western runway gown, statement gold jhumka earrings, end-of-runway pose, one hand on waist, weight on one hip, looking straight at the camera with an intense glamorous gaze
+
+[009] full body 3/4 back view, lady_model_meera, adult Indian woman in her late 20s, long black hair in soft polished waves, refined glamorous makeup, designer Indo-western runway gown with elegant back detail, statement gold jhumka earrings, turning at the end of the ramp, looking back over her shoulder at the camera
+
+# DANCING — graceful, controlled movement
+
+[010] full body view, lady_model_meera, adult Indian woman in her late 20s, long black hair in soft polished waves in motion, almond-shaped dark brown eyes, refined glamorous makeup, elegant flowing dance outfit with subtle Indian embroidery, statement gold jhumka earrings, mid-dance pose with arms raised gracefully above her head, one hip shifted, joyful confident expression
+
+[011] full body 3/4 view, lady_model_meera, adult Indian woman in her late 20s,long black hair flowing with movement, refined glamorous makeup, elegant flowing dance outfit with subtle Indian embroidery, statement gold jhumka earrings, spinning dance twirl with the outfit flaring, arms extended elegantly, radiant smile
+
+[012] full body view, lady_model_meera, adult Indian woman in her late 20s, long black hair in soft polished waves, refined glamorous makeup, elegant flowing dance outfit with subtle Indian embroidery, statement gold jhumka earrings, classical-fusion dance pose, one arm curved overhead and the other extended to the side, expressive hand gestures, poised graceful expression
+
+[013] waist up view, lady_model_meera, adult Indian woman in her late 20s, long black hair in motion, almond-shaped dark brown eyes, refined glamorous makeup, elegant flowing dance outfit, statement gold jhumka earrings, mid-dance shoulder movement, hands in expressive dance gesture near her face, playful confident expression
+
+# SINGING — stage performance
+
+[014] waist up front view, lady_model_meera, adult Indian woman in her late 20s, warm brown skin, long black hair in soft polished waves, almond-shaped dark brown eyes, refined glamorous makeup, elegant stage dress with subtle shimmer, statement gold jhumka earrings, singing into a handheld microphone held in one hand, eyes softly closed, emotional heartfelt expression
+
+[015] waist up 3/4 view, lady_model_meera, adult Indian woman in her late 20s, warm brown skin, long black hair in soft polished waves, almond-shaped dark brown eyes, refined glamorous makeup, elegant stage dress with subtle shimmer, statement gold jhumka earrings, singing into a handheld microphone, other hand raised expressively, engaging the audience with a warm confident gaze
+
+[016] full body view, lady_model_meera, adult Indian woman in her late 20s, warm brown skin, long black hair in soft polished waves, refined glamorous makeup, elegant stage dress with subtle shimmer, statement gold jhumka earrings, standing at a microphone stand singing, one hand on the mic stand, graceful stage presence, soft spotlight feel
+
+# KNOWLEDGE SHARING — seated, presenter energy
+
+[017] full body view, lady_model_meera, adult Indian woman in her late 20s, warm brown skin, long black hair in soft polished waves, almond-shaped dark brown eyes, refined glamorous makeup, smart elegant blazer over a chic top, statement gold jhumka earrings, sitting upright on a modern chair with legs elegantly crossed, hands gesturing mid-explanation, warm engaging expression, talk-show host energy
+
+[018] waist up front view, lady_model_meera, adult Indian woman in her late 20s, warm brown skin, long black hair in soft polished waves, almond-shaped dark brown eyes, bold defined eyebrows, refined glamorous makeup, smart elegant blazer over a chic top, statement gold jhumka earrings, seated on a chair leaning slightly forward, one hand raised making a point, confident articulate expression, speaking directly to the camera
+
+[019] waist up 3/4 view, lady_model_meera, adult Indian woman in her late 20s, warm brown skin, long black hair in soft polished waves, almond-shaped dark brown eyes, refined glamorous makeup, smart elegant blazer over a chic top, statement gold jhumka earrings, seated on a chair holding a small notebook in one hand, explaining with an open-palm gesture, thoughtful warm smile
+
+[020] full body 3/4 view, lady_model_meera, adult Indian woman in her late 20s, warm brown skin, long black hair in soft polished waves, almond-shaped dark brown eyes, refined glamorous makeup, smart elegant blazer over a chic top, statement gold jhumka earrings, sitting relaxed on a chair with hands resting on her lap, attentive listening pose, calm composed face with expressive eyes
