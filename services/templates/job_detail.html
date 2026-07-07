@@ -165,6 +165,8 @@
   {% set pipeline_stages = [('render_character','Render'),('synthesize_voice','Voice'),('generate_video','Video')] %}
 {% elif job.phase == 'assemble' %}
   {% set pipeline_stages = [('assemble_video','Assemble'),('publish','Publish')] %}
+{% elif job.phase == 'lora_train' %}
+  {% set pipeline_stages = [('lora_train','LoRA Train')] %}
 {% else %}
   {% set pipeline_stages = all_stages %}
 {% endif %}

@@ -42,6 +42,10 @@
           <input type="radio" name="source_kind" value="story_images"
                  onchange="toggleSourceMode('story_images')"> Story + Images
         </label>
+        <label class="radio-label">
+          <input type="radio" name="source_kind" value="lora_training"
+                 onchange="toggleSourceMode('lora_training')"> LoRA Training
+        </label>
       </div>
     </div>
 
@@ -92,6 +96,26 @@
       <div id="nj-images-slots"></div>
     </div>
 
+    {# ── LoRA training upload ── #}
+    <div class="form-row" id="nj-lora-row" style="display:none">
+      <label>Cast Member</label>
+      <select id="nj-lora-member" style="width:100%"></select>
+
+      <label style="margin-top:10px">Training Images</label>
+      <input type="file" id="nj-lora-files" accept="image/png,image/jpeg,image/webp" multiple
+             onchange="rebuildLoraCaptionRows()">
+      <div class="form-hint">
+        Images are added to the member's existing Musubi training dataset and then Flux2 LoRA training is queued.
+      </div>
+
+      <label style="margin-top:10px">Captions</label>
+      <div id="nj-lora-caption-rows"></div>
+      <div class="form-hint">
+        Optional per image. Blank captions use the cast member descriptor. Each saved image gets a same-name .txt sidecar.
+      </div>
+      <div class="form-hint" id="nj-lora-upload-status"></div>
+    </div>
+
     {# ── Phase ── #}
     <div class="form-row">
       <label>Phase</label>
@@ -102,6 +126,7 @@
         <option value="render" id="opt-render">render — render images &rarr; voice &rarr; video per shot</option>
         <option value="assemble" id="opt-assemble">assemble — concat shots &rarr; final video</option>
         <option value="all" selected>all — full pipeline (end-to-end)</option>
+        <option value="lora_train" id="opt-lora_train">lora train — train selected cast member LoRA</option>
       </select>
       <div class="form-hint" id="phase-hint"></div>
     </div>
@@ -152,6 +177,14 @@ const DEFAULT_CAST_ID = "{{ default_cast_id }}";
 let _castsCache = null;
 let _currentCastMembers = [];
 
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
 async function loadCasts() {
   try {
     const resp = await fetch("/api/casts");
@@ -173,6 +206,7 @@ function onCastChange(castId) {
   const cast = (_castsCache || []).find(c => c.id === castId);
   _currentCastMembers = cast ? cast.members : [];
   rebuildImageSlots(_currentCastMembers);
+  rebuildLoraMemberOptions(_currentCastMembers);
   updateStoryPlaceholder(_currentCastMembers);
 }
 
@@ -184,6 +218,43 @@ function rebuildImageSlots(members) {
     + `<span style="min-width:60px;font-weight:600">${m.name}</span>`
     + `<input type="file" id="nj-img-${m.id}" accept="image/png,image/jpeg,image/webp" data-member-id="${m.id}">`
     + `<span class="form-hint" id="nj-img-status-${m.id}"></span>`
+    + `</div>`
+  ).join("");
+}
+
+function rebuildLoraMemberOptions(members) {
+  const sel = document.getElementById("nj-lora-member");
+  if (!sel) return;
+  sel.innerHTML = members.map(m =>
+    `<option value="${m.id}">${m.name} (${m.id})</option>`
+  ).join("");
+  rebuildLoraCaptionRows();
+}
+
+function loraCaptionPlaceholder() {
+  const memberId = document.getElementById("nj-lora-member")?.value || "";
+  const castId = document.getElementById("nj-cast")?.value || "";
+  const member = _currentCastMembers.find(m => m.id === memberId);
+  const name = member ? member.name : memberId || "character";
+  const trigger = memberId ? `${castId}_${memberId}`.toLowerCase() : "trigger_token";
+  return `${trigger}, ${name}, describe outfit, pose, camera angle, background, lighting`;
+}
+
+function rebuildLoraCaptionRows() {
+  const filesInput = document.getElementById("nj-lora-files");
+  const container = document.getElementById("nj-lora-caption-rows");
+  if (!filesInput || !container) return;
+  const files = Array.from(filesInput.files || []);
+  if (!files.length) {
+    container.innerHTML = '<div class="form-hint">Choose image files to add captions.</div>';
+    return;
+  }
+  const placeholder = escapeHtml(loraCaptionPlaceholder());
+  container.innerHTML = files.map((file, idx) =>
+    `<div style="border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:8px">`
+    + `<div class="td-mono" style="font-size:12px;margin-bottom:6px">${escapeHtml(file.name)}</div>`
+    + `<textarea id="nj-lora-caption-${idx}" rows="3" style="width:100%;font-family:monospace;font-size:12px"`
+    + ` placeholder="${placeholder}"></textarea>`
     + `</div>`
   ).join("");
 }
@@ -200,7 +271,10 @@ function updateStoryPlaceholder(members) {
     + "Or just paste free text — it will be auto-segmented.";
 }
 
-document.addEventListener("DOMContentLoaded", loadCasts);
+document.addEventListener("DOMContentLoaded", () => {
+  loadCasts();
+  toggleSourceMode('url');
+});
 
 const PHASE_HINTS = {
   "noop":        "Runs a mock pipeline in-memory — no services needed.",
@@ -209,6 +283,7 @@ const PHASE_HINTS = {
   "render":      "Renders character images, synthesizes voice, generates video per shot.",
   "assemble":    "Concatenates rendered shots into a final video and publishes.",
   "all":         "Full end-to-end pipeline — all stages in sequence.",
+  "lora_train":  "Uploads training image(s), then launches kohya Flux LoRA training for one cast member.",
 };
 
 function updatePhaseHint(phase) {
@@ -226,13 +301,22 @@ function toggleSourceMode(mode) {
     (mode === "story" || mode === "story_images") ? "" : "none";
   document.getElementById("nj-images-row").style.display =
     mode === "story_images" ? "" : "none";
+  document.getElementById("nj-lora-row").style.display =
+    mode === "lora_training" ? "" : "none";
 
   // Restrict phase options for story modes.
   const isStory = STORY_MODES.has(mode);
+  const isLora = mode === "lora_training";
   RESTRICTED_PHASES.forEach(p => {
     const opt = document.getElementById("opt-" + p);
-    if (opt) opt.disabled = isStory;
+    if (opt) opt.disabled = isStory || isLora;
   });
+  ["noop", "transcribe", "all"].forEach(p => {
+    const opt = document.querySelector(`#nj-phase option[value="${p}"]`);
+    if (opt) opt.disabled = isLora && p !== "noop";
+  });
+  const loraOpt = document.getElementById("opt-lora_train");
+  if (loraOpt) loraOpt.disabled = !isLora;
   const transcribeOpt = document.getElementById("opt-transcribe");
   if (transcribeOpt) {
     transcribeOpt.textContent = isStory
@@ -241,12 +325,17 @@ function toggleSourceMode(mode) {
   }
   // If current selection is a restricted phase, switch to 'all'.
   const sel = document.getElementById("nj-phase");
+  if (isLora) sel.value = "lora_train";
   if (isStory && RESTRICTED_PHASES.has(sel.value)) sel.value = "all";
+  if (!isLora && sel.value === "lora_train") sel.value = "all";
+  updatePhaseHint(sel.value);
 
   // Update rights checkbox label.
   const label = document.getElementById("nj-rights-label");
   if (label) {
-    label.textContent = isStory
+    label.textContent = isLora
+      ? "I confirm I own/have rights to these training images"
+      : isStory
       ? "I confirm I own/have rights to this story and images"
       : "I confirm this source is cleared for transformative use";
   }
@@ -305,6 +394,22 @@ async function uploadCharacterImage(memberId) {
   return { member_id: memberId, path: data.path };
 }
 
+async function uploadLoraTrainingImage(memberId, file, caption) {
+  const formData = new FormData();
+  formData.append("member_id", memberId);
+  formData.append("file", file);
+  if (caption) formData.append("caption", caption);
+  const castSel = document.getElementById("nj-cast");
+  if (castSel && castSel.value) formData.append("cast_ref", castSel.value);
+  const resp = await fetch("/api/uploads/lora-training-image", { method: "POST", body: formData });
+  if (!resp.ok) {
+    const data = await resp.json();
+    throw new Error(data.detail?.message || "LoRA image upload failed");
+  }
+  const data = await resp.json();
+  return data.path;
+}
+
 async function submitNewJob(e) {
   e.preventDefault();
   const errEl = document.getElementById("nj-error");
@@ -318,6 +423,7 @@ async function submitNewJob(e) {
     let sourceUrl = "";
     let storyText = null;
     const characterImages = {};
+    let loraTraining = null;
 
     if (sourceKind === "url") {
       sourceUrl = document.getElementById("nj-url").value.trim();
@@ -328,6 +434,21 @@ async function submitNewJob(e) {
     } else if (sourceKind === "story" || sourceKind === "story_images") {
       storyText = document.getElementById("nj-story-text").value.trim();
       if (!storyText) throw new Error("Story text is required.");
+    } else if (sourceKind === "lora_training") {
+      const memberId = document.getElementById("nj-lora-member").value;
+      const files = Array.from(document.getElementById("nj-lora-files").files || []);
+      if (!memberId) throw new Error("Select a cast member.");
+      if (!files.length) throw new Error("Choose at least one LoRA training image.");
+      const statusEl = document.getElementById("nj-lora-upload-status");
+      const paths = [];
+      for (let i = 0; i < files.length; i++) {
+        statusEl.textContent = `Uploading ${i + 1}/${files.length}…`;
+        const caption = document.getElementById(`nj-lora-caption-${i}`)?.value.trim() || "";
+        paths.push(await uploadLoraTrainingImage(memberId, files[i], caption));
+      }
+      statusEl.textContent = `${paths.length} image(s) staged.`;
+      sourceUrl = "lora-training://dashboard-upload";
+      loraTraining = { cast_member_id: memberId, image_paths: paths };
     }
 
     if (sourceKind === "story_images") {
@@ -357,6 +478,7 @@ async function submitNewJob(e) {
     if (castSel && castSel.value) body.cast_ref = castSel.value;
     if (storyText) body.story_text = storyText;
     if (Object.keys(characterImages).length) body.character_images = characterImages;
+    if (loraTraining) body.lora_training = loraTraining;
 
     const res = await fetch("/api/jobs", {
       method: "POST",

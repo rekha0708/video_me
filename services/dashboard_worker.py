@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 import signal
 import socket
 import traceback as _traceback
@@ -151,6 +152,8 @@ class DashboardWorker:
 
         if req.phase == "noop":
             await self._run_noop(req, job_id)
+        elif req.phase == "lora_train":
+            await self._run_lora_training(req, job_id)
         else:
             await self._run_pipeline(req, job_id)
 
@@ -169,6 +172,144 @@ class DashboardWorker:
             job_id,
             "job_completed" if status == DashboardJobStatus.COMPLETED else "job_failed",
             f"Noop pipeline finished: {job.status.value}",
+        )
+
+    async def _run_lora_training(
+        self, req: CreateDashboardJobRequest, job_id: str
+    ) -> None:
+        from services.dashboard_api import _find_lora_config_path
+
+        training = req.lora_training
+        if training is None:
+            raise ValueError("lora_training payload is required")
+
+        job_config = self._config_for_job(req)
+        member = next(
+            (m for m in job_config.cast.members if m.id == training.cast_member_id),
+            None,
+        )
+        if member is None:
+            raise ValueError(
+                f"Unknown cast member '{training.cast_member_id}' for cast '{job_config.cast.id}'"
+            )
+
+        config_path = _find_lora_config_path(member.id)
+        try:
+            config_arg = str(config_path.resolve().relative_to(Path.cwd().resolve()))
+        except ValueError:
+            config_arg = str(config_path.resolve())
+
+        for image_path in training.image_paths:
+            if not Path(image_path).is_file():
+                raise FileNotFoundError(f"Training image not found: {image_path}")
+
+        trigger = str(member.lora_ref).replace("\\", "/").rstrip("/").split("/")[-1]
+        output_name = f"{job_config.cast.id}_{trigger}"
+        if os.getenv("VIDEO_ME_LORA_TRAIN_CMD"):
+            template = os.environ["VIDEO_ME_LORA_TRAIN_CMD"]
+            template = template.format(
+                config_path=config_arg,
+                dataset_config=config_arg,
+                output_name=output_name,
+                cast_id=job_config.cast.id,
+                member_id=member.id,
+            )
+            cmd = shlex.split(template)
+            if "{config_path}" not in os.environ["VIDEO_ME_LORA_TRAIN_CMD"] and "{dataset_config}" not in os.environ["VIDEO_ME_LORA_TRAIN_CMD"]:
+                cmd.extend(["--dataset_config", config_arg])
+        else:
+            cmd = [
+                "/workspace/.venv_musubi/bin/accelerate",
+                "launch",
+                "/workspace/musubi-tuner/src/musubi_tuner/flux_2_train_network.py",
+                "--model_version",
+                "dev",
+                "--dit",
+                "/workspace/ComfyUI/models/diffusion_models/flux2-dev.safetensors",
+                "--vae",
+                "/workspace/ComfyUI/models/diffusion_models/ae.safetensors",
+                "--text_encoder",
+                "/workspace/FLUX2-text-encoder/text_encoder/model-00001-of-00010.safetensors",
+                "--dataset_config",
+                config_arg,
+                "--flash_attn",
+                "--mixed_precision",
+                "bf16",
+                "--fp8_base",
+                "--fp8_scaled",
+                "--optimizer_type",
+                "adamw",
+                "--learning_rate",
+                "1e-4",
+                "--network_module",
+                "networks.lora_flux_2",
+                "--network_dim",
+                "32",
+                "--network_alpha",
+                "16",
+                "--max_train_epochs",
+                "25",
+                "--save_every_n_epochs",
+                "5",
+                "--seed",
+                "42",
+                "--output_dir",
+                "loras/",
+                "--output_name",
+                output_name,
+            ]
+
+        self.repo.update_job_status(
+            job_id,
+            DashboardJobStatus.RUNNING,
+            current_stage="lora_train",
+        )
+        self.repo.record_event(
+            job_id,
+            "phase_started",
+            f"Training LoRA for {job_config.cast.id}/{member.id} with {len(training.image_paths)} image(s).",
+            stage_name="lora_train",
+            payload={"config_path": config_arg, "command": cmd},
+        )
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=Path.cwd(),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        assert proc.stdout is not None
+        line_count = 0
+        async for raw_line in proc.stdout:
+            line = raw_line.decode(errors="replace").rstrip()
+            if not line:
+                continue
+            line_count += 1
+            level = (
+                DashboardEventLevel.WARNING
+                if "warning" in line.lower()
+                else DashboardEventLevel.INFO
+            )
+            if line_count <= 40 or line_count % 25 == 0:
+                self.repo.record_event(
+                    job_id,
+                    "lora_train_log",
+                    line[-1000:],
+                    level=level,
+                    stage_name="lora_train",
+                )
+
+        returncode = await proc.wait()
+        if returncode != 0:
+            raise RuntimeError(f"LoRA training failed with exit code {returncode}")
+
+        self.repo.update_job_status(job_id, DashboardJobStatus.COMPLETED, completed=True)
+        self.repo.append_completed_phase(job_id, "lora_train")
+        self.repo.record_event(
+            job_id,
+            "phase_completed",
+            f"LoRA training completed for {job_config.cast.id}/{member.id}.",
+            stage_name="lora_train",
         )
 
     def _make_stage_hook(self, job_id: str):

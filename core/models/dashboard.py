@@ -75,17 +75,21 @@ class DashboardArtifactKind(StrEnum):
 
 
 class DashboardSource(BaseModel):
-    kind: Literal["url", "upload", "file", "story", "story_images"] = "url"
+    kind: Literal["url", "upload", "file", "story", "story_images", "lora_training"] = "url"
     url: str = ""
 
     @model_validator(mode="after")
     def _require_url_for_media_kinds(self) -> "DashboardSource":
         self.url = self.url.strip()
-        if self.kind in ("story", "story_images"):
-            # Story jobs have no media source; the url column is NOT NULL and
-            # shown in the jobs list, so give it a descriptive placeholder.
+        if self.kind in ("story", "story_images", "lora_training"):
+            # Story / LoRA jobs have no media source; the url column is NOT NULL
+            # and shown in the jobs list, so give it a descriptive placeholder.
             if not self.url:
-                self.url = "story://direct-input"
+                self.url = (
+                    "lora-training://dashboard-upload"
+                    if self.kind == "lora_training"
+                    else "story://direct-input"
+                )
         elif not self.url:
             raise ValueError("source url is required")
         return self
@@ -103,12 +107,26 @@ class DashboardJobOverrides(BaseModel):
     auto_approve_images: bool | None = None
 
 
+class LoraTrainingRequest(BaseModel):
+    cast_member_id: str = ""
+    image_paths: list[str] = Field(default_factory=list)
+
+
 class CreateDashboardJobRequest(BaseModel):
     source: DashboardSource
     rights_cleared: bool = False
     target_language: Literal["en", "hi", "both"] = "en"
     mode: Literal["standard", "critique"] = "standard"
-    phase: Literal["transcribe", "script_plan", "plan", "render", "assemble", "all", "noop"] = "all"
+    phase: Literal[
+        "transcribe",
+        "script_plan",
+        "plan",
+        "render",
+        "assemble",
+        "all",
+        "noop",
+        "lora_train",
+    ] = "all"
     run_critique: bool = False
     overrides: DashboardJobOverrides = Field(default_factory=DashboardJobOverrides)
     idempotency_key: str | None = None
@@ -117,6 +135,7 @@ class CreateDashboardJobRequest(BaseModel):
     cast_ref: str | None = None
     story_text: str | None = None
     character_images: dict[str, str] = Field(default_factory=dict)
+    lora_training: LoraTrainingRequest | None = None
 
     @model_validator(mode="after")
     def _require_story_fields(self) -> "CreateDashboardJobRequest":
@@ -125,13 +144,22 @@ class CreateDashboardJobRequest(BaseModel):
                 raise ValueError("story_text is required for story source kinds")
         if self.source.kind == "story_images" and not self.character_images:
             raise ValueError("story_images requires at least one character image")
+        if self.phase == "lora_train":
+            if self.source.kind != "lora_training":
+                raise ValueError("lora_train phase requires source.kind='lora_training'")
+            if self.lora_training is None:
+                raise ValueError("lora_training is required for lora_train phase")
+            if not self.lora_training.cast_member_id.strip():
+                raise ValueError("lora_training.cast_member_id is required")
+            if not self.lora_training.image_paths:
+                raise ValueError("lora_training.image_paths requires at least one image")
         return self
 
 
 class DashboardJobRecord(BaseModel):
     job_id: str
     source_url: str
-    source_kind: Literal["url", "upload", "file", "story", "story_images"]
+    source_kind: Literal["url", "upload", "file", "story", "story_images", "lora_training"]
     status: DashboardJobStatus
     phase: str
     target_language: str

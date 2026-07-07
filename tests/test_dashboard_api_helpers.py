@@ -6,7 +6,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from core.storage import LocalArtifactStore
-from services.dashboard_api import _artifact_flags, _stepper_state
+from services.dashboard_api import (
+    _artifact_flags,
+    _lora_dataset_image_dir,
+    _next_training_image_path,
+    _stepper_state,
+)
 from adapters.approval.dashboard_image_approval_adapter import _build_request_payload
 
 _has_fastapi = importlib.util.find_spec("fastapi") is not None
@@ -161,6 +166,57 @@ def test_stepper_all_queued_job_infers_from_artifacts() -> None:
     state = _stepper_state(_job(current_stage=None), flags)
     assert state["phase"] == "script_plan"
     assert state["completed"] == ["transcribe"]
+
+
+# ---------------------------------------------------------- LoRA training utils
+
+
+def test_lora_dataset_image_dir_maps_workspace_path_to_checkout(tmp_path: Path) -> None:
+    config_path = tmp_path / "kohya_config_meera.toml"
+    config_path.write_text(
+        """
+[[dataset.general]]
+resolution = 1024
+
+[[dataset.general.subsets]]
+image_dir = "/workspace/video_me/assets/lady_model/training/images/meera"
+caption_extension = ".txt"
+"""
+    )
+
+    image_dir = _lora_dataset_image_dir(config_path, cwd=tmp_path)
+
+    assert image_dir == tmp_path / "assets/lady_model/training/images/meera"
+
+
+def test_lora_dataset_image_dir_reads_musubi_dataset_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "musubi_dataset_meera.toml"
+    config_path.write_text(
+        """
+[general]
+caption_extension = ".txt"
+
+[[datasets]]
+image_directory = "/workspace/video_me/assets/lady_model/training/images/meera"
+cache_directory = "/workspace/video_me/assets/lady_model/training/cache/meera"
+"""
+    )
+
+    image_dir = _lora_dataset_image_dir(config_path, cwd=tmp_path)
+
+    assert image_dir == tmp_path / "assets/lady_model/training/images/meera"
+
+
+def test_next_training_image_path_uses_next_member_index(tmp_path: Path) -> None:
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    (image_dir / "meera_001.png").write_bytes(b"")
+    (image_dir / "meera_009.webp").write_bytes(b"")
+    (image_dir / "other_100.png").write_bytes(b"")
+
+    next_path = _next_training_image_path(image_dir, "Meera", ".png")
+
+    assert next_path == image_dir / "meera_010.png"
 
 
 # -------------------------------------------------------- story phase restriction

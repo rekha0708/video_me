@@ -42,7 +42,7 @@
           <td class="td-muted truncate" style="max-width:220px"
               title="{{ job.source_url }}">
             {% set sk = job.source_kind | default('url') %}
-            {% if sk in ('story', 'story_images') %}
+            {% if sk in ('story', 'story_images', 'lora_training') %}
             <span class="badge badge-info" style="font-size:10px;padding:1px 5px;margin-right:4px">{{ sk }}</span>
             {% endif %}
             {{ job.source_url }}

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -79,6 +80,64 @@ _STAGE_TO_MACRO = {
 }
 
 _MACRO_ORDER = ["transcribe", "script_plan", "render", "assemble"]
+
+
+def _workspace_path(path_value: str, *, cwd: Path | None = None) -> Path:
+    """Map training TOML paths from /workspace/video_me to this checkout."""
+    cwd = (cwd or Path.cwd()).resolve()
+    if path_value.startswith("/workspace/video_me/"):
+        return cwd / path_value.removeprefix("/workspace/video_me/")
+    path = Path(path_value).expanduser()
+    return path if path.is_absolute() else cwd / path
+
+
+def _find_lora_config_path(member_id: str, *, cwd: Path | None = None) -> Path:
+    cwd = (cwd or Path.cwd()).resolve()
+    normalized = member_id.strip().lower()
+    matches = sorted(cwd.glob(f"assets/**/training/musubi_dataset_{normalized}.toml"))
+    if not matches:
+        matches = sorted(cwd.glob(f"assets/**/training/kohya_config_{normalized}.toml"))
+    if not matches:
+        raise FileNotFoundError(
+            f"No LoRA training config found for member '{member_id}' "
+            f"(expected assets/**/training/musubi_dataset_{normalized}.toml "
+            f"or kohya_config_{normalized}.toml)."
+        )
+    return matches[0]
+
+
+def _lora_dataset_image_dir(config_path: Path, *, cwd: Path | None = None) -> Path:
+    data = tomllib.loads(config_path.read_text())
+    for dataset in data.get("datasets", []):
+        image_dir = dataset.get("image_directory")
+        if image_dir:
+            return _workspace_path(str(image_dir), cwd=cwd)
+        for subset in dataset.get("subsets", []):
+            image_dir = subset.get("image_dir")
+            if image_dir:
+                return _workspace_path(str(image_dir), cwd=cwd)
+    for group in data.get("dataset", {}).get("general", []):
+        for subset in group.get("subsets", []):
+            image_dir = subset.get("image_dir")
+            if image_dir:
+                return _workspace_path(str(image_dir), cwd=cwd)
+    raise ValueError(f"No dataset image directory found in {config_path}")
+
+
+def _next_training_image_path(image_dir: Path, member_id: str, suffix: str) -> Path:
+    image_dir.mkdir(parents=True, exist_ok=True)
+    prefix = member_id.strip().lower()
+    max_seen = 0
+    for image in image_dir.iterdir():
+        if not image.is_file() or image.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+            continue
+        stem = image.stem.lower()
+        if not stem.startswith(prefix):
+            continue
+        tail = stem.removeprefix(prefix).lstrip("_-")
+        if tail.isdigit():
+            max_seen = max(max_seen, int(tail))
+    return image_dir / f"{prefix}_{max_seen + 1:03d}{suffix.lower()}"
 
 
 def _artifact_flags(artifact_store: Any, work_dir: Path, job_id: str) -> dict[str, bool]:
@@ -379,6 +438,68 @@ def create_app(
         dest.write_bytes(content)
         return _base_response({"path": str(dest), "member_id": member_id, "filename": dest.name})
 
+    @app.post("/api/uploads/lora-training-image")
+    async def upload_lora_training_image(
+        member_id: str = Form(...),
+        file: UploadFile = File(...),
+        cast_ref: str = Form(default=""),
+        caption: str = Form(default=""),
+    ) -> dict[str, Any]:
+        from core.models.profile import Cast
+
+        target_cast = config.cast
+        if cast_ref and cast_ref != config.cast.id:
+            cast_path = Path(f"config/casts/{cast_ref}.yaml")
+            if not cast_path.exists():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"code": "UNKNOWN_CAST", "message": f"No cast config for '{cast_ref}'", "retryable": False},
+                )
+            target_cast = load_yaml_model(cast_path, Cast)
+
+        member = next((m for m in target_cast.members if m.id == member_id), None)
+        if member is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "INVALID_MEMBER", "message": f"Unknown cast member: {member_id}", "retryable": False},
+            )
+
+        ext = Path(file.filename or "img.png").suffix.lower()
+        if ext not in _IMAGE_EXTENSIONS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "INVALID_FORMAT", "message": f"Image must be PNG, JPG, or WebP (got {ext})", "retryable": False},
+            )
+        content = await file.read()
+        if len(content) > 25 * 1_048_576:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "FILE_TOO_LARGE", "message": "Image must be under 25 MB", "retryable": False},
+            )
+
+        try:
+            config_path = _find_lora_config_path(member_id)
+            image_dir = _lora_dataset_image_dir(config_path)
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "LORA_CONFIG_MISSING", "message": str(exc), "retryable": False},
+            ) from exc
+
+        dest = _next_training_image_path(image_dir, member_id, ext)
+        dest.write_bytes(content)
+
+        trigger = str(member.lora_ref).replace("\\", "/").rstrip("/").split("/")[-1]
+        final_caption = caption.strip() or f"{target_cast.id}_{trigger}, {member.visual_descriptor.strip()}"
+        dest.with_suffix(".txt").write_text(final_caption + "\n")
+
+        return _base_response({
+            "path": str(dest),
+            "caption_path": str(dest.with_suffix(".txt")),
+            "member_id": member_id,
+            "config_path": str(config_path),
+        })
+
     @app.post("/api/jobs")
     def create_job(
         body: CreateDashboardJobRequest,
@@ -442,6 +563,48 @@ def create_app(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail={"code": "BAD_CHARACTER_IMAGE",
                                 "message": f"Image for '{member_id}' not found: {image_path}",
+                                "retryable": False},
+                    )
+
+        if body.phase == "lora_train":
+            from core.models.profile import Cast
+
+            if body.cast_ref and body.cast_ref != config.cast.id:
+                cast_path = Path(f"config/casts/{body.cast_ref}.yaml")
+                if not cast_path.exists():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={"code": "UNKNOWN_CAST",
+                                "message": f"No cast config for '{body.cast_ref}'",
+                                "retryable": False},
+                    )
+                cast_ids = {m.id for m in load_yaml_model(cast_path, Cast).members}
+            else:
+                cast_ids = {m.id for m in config.cast.members}
+
+            training = body.lora_training
+            assert training is not None
+            member_id = training.cast_member_id
+            if member_id not in cast_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"code": "INVALID_MEMBER",
+                            "message": f"Unknown cast member: {member_id}. Expected: {sorted(cast_ids)}",
+                            "retryable": False},
+                )
+            try:
+                _find_lora_config_path(member_id)
+            except FileNotFoundError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"code": "LORA_CONFIG_MISSING", "message": str(exc), "retryable": False},
+                ) from exc
+            for image_path in training.image_paths:
+                if not Path(image_path).is_file():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={"code": "BAD_LORA_IMAGE",
+                                "message": f"Training image not found: {image_path}",
                                 "retryable": False},
                     )
 

@@ -13,6 +13,7 @@ from core.models.dashboard import (
     DashboardJobStatus,
     DashboardQueueStatus,
     DashboardSource,
+    LoraTrainingRequest,
 )
 from services.dashboard_repository import DashboardRepository
 from services.dashboard_worker import DashboardWorker
@@ -39,6 +40,18 @@ def _plan_request() -> CreateDashboardJobRequest:
         source=DashboardSource(url="https://example.com/v"),
         rights_cleared=True,
         phase="plan",
+    )
+
+
+def _lora_request(image_path: Path) -> CreateDashboardJobRequest:
+    return CreateDashboardJobRequest(
+        source=DashboardSource(kind="lora_training", url=""),
+        rights_cleared=True,
+        phase="lora_train",
+        lora_training=LoraTrainingRequest(
+            cast_member_id="max",
+            image_paths=[str(image_path)],
+        ),
     )
 
 
@@ -107,6 +120,30 @@ def test_config_for_job_no_overrides_returns_base_config(tmp_path: Path) -> None
     req = _noop_request()  # no overrides set — all fields default to None
 
     assert worker._config_for_job(req) is worker.config
+
+
+def test_lora_train_request_requires_lora_source_kind(tmp_path: Path) -> None:
+    image = tmp_path / "max.png"
+    image.write_bytes(b"")
+
+    with pytest.raises(ValueError):
+        CreateDashboardJobRequest(
+            source=DashboardSource(url="https://example.com/v"),
+            rights_cleared=True,
+            phase="lora_train",
+            lora_training=LoraTrainingRequest(cast_member_id="max", image_paths=[str(image)]),
+        )
+
+
+def test_lora_train_request_accepts_lora_source_kind(tmp_path: Path) -> None:
+    image = tmp_path / "max.png"
+    image.write_bytes(b"")
+
+    req = _lora_request(image)
+
+    assert req.source.kind == "lora_training"
+    assert req.source.url == "lora-training://dashboard-upload"
+    assert req.phase == "lora_train"
 
 
 def test_resolve_approval_approved(tmp_path: Path) -> None:
