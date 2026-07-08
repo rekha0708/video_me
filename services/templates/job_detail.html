@@ -113,17 +113,40 @@
   </div>
   {% endif %}
 
-  {# Retry button — show when the current phase FAILED; re-queues the same phase,
-     which resumes from cached per-stage artifacts instead of starting over. #}
-  {% if status == 'failed' %}
+  {# Re-run controls — show when the job is FAILED or COMPLETED.
+     Lets the operator pick which phase to start from and optionally swap
+     the video model (e.g. LTX vs Wan) while keeping cached renders. #}
+  {% if status in ('failed', 'completed') %}
   <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
-    <button class="btn btn-primary" id="retry-btn"
-            onclick="retryJob('{{ job.job_id }}', this)">
-      ↻ Retry phase '{{ job.phase }}'
-    </button>
-    <span class="text-muted" style="margin-left:10px;font-size:13px">
-      Re-queues this job for the same phase — stages that already completed are skipped.
-    </span>
+    <div class="flex items-center gap-8" style="flex-wrap:wrap">
+      <label style="font-size:13px;font-weight:500">Re-run from</label>
+      <select id="rerun-phase" style="font-size:13px;padding:3px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg)">
+        {% set rerun_phases = [
+          ('all',         'All (full pipeline)'),
+          ('script_plan', 'Script + Plan'),
+          ('render',      'Render'),
+          ('assemble',    'Assemble'),
+        ] %}
+        {% for val, label in rerun_phases %}
+        <option value="{{ val }}" {% if val == job.phase %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+
+      <label style="font-size:13px;font-weight:500;margin-left:8px">Video model</label>
+      <select id="rerun-video-adapter" style="font-size:13px;padding:3px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg)">
+        {% set current_va = (job.request.get('overrides', {}).get('video_adapter')) or 'ltx' %}
+        <option value="" {% if current_va == 'ltx' %}selected{% endif %}>LTX (default)</option>
+        <option value="wan" {% if current_va == 'wan' %}selected{% endif %}>Wan</option>
+      </select>
+
+      <button class="btn btn-primary" id="retry-btn"
+              onclick="retryJob('{{ job.job_id }}', this)">
+        ↻ Re-run
+      </button>
+    </div>
+    <div class="text-muted" style="margin-top:6px;font-size:12px">
+      Stages that already completed are skipped — cached images are reused, voice/video/assemble run fresh.
+    </div>
   </div>
   {% endif %}
 </div>
@@ -524,12 +547,22 @@ async function advancePhase(jobId, btn) {
 }
 
 async function retryJob(jobId, btn) {
+  const phase = document.getElementById("rerun-phase")?.value || "";
+  const videoAdapter = document.getElementById("rerun-video-adapter")?.value || "";
+  const phaseLabel = phase || "same phase";
+  if (!confirm(`Re-run job ${jobId} from "${phaseLabel}"?\n\nStages that already completed will be skipped.`)) return;
   const label = btn.textContent;
-  if (!confirm(`Retry job ${jobId}?\n\nStages that already completed in this phase will be skipped.`)) return;
   btn.disabled = true;
   btn.textContent = "Queuing…";
+  const body = {};
+  if (phase) body.phase = phase;
+  if (videoAdapter) body.video_adapter = videoAdapter;
   try {
-    const res = await fetch(`/api/jobs/${jobId}/retry`, { method: "POST" });
+    const res = await fetch(`/api/jobs/${jobId}/retry`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body),
+    });
     if (res.ok) {
       const data = await res.json();
       btn.textContent = `Queued: ${data.phase} ✓`;

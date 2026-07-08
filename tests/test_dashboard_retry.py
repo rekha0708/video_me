@@ -126,3 +126,49 @@ def test_retry_resets_status_to_queued(tmp_path: Path) -> None:
     job = repo.get_job(job_id)
     from core.models.dashboard import DashboardJobStatus
     assert job.status == DashboardJobStatus.QUEUED
+
+
+def test_retry_with_phase_override(tmp_path: Path) -> None:
+    """Operator can re-run a completed job from a specific phase — e.g.
+    'assemble' to redo only the final concat, keeping all cached renders."""
+    client, repo = _make_client_and_repo(tmp_path)
+    job_id = _seed_job(repo, status="completed", phase="all")
+    resp = client.post(f"/api/jobs/{job_id}/retry", json={"phase": "assemble"})
+    assert resp.status_code == 200
+    assert resp.json()["phase"] == "assemble"
+    queue = repo.list_queue(job_id)
+    latest = queue[-1]
+    assert latest.payload["phase"] == "assemble"
+
+
+def test_retry_with_phase_and_video_adapter(tmp_path: Path) -> None:
+    """Phase + video adapter can be overridden together."""
+    client, repo = _make_client_and_repo(tmp_path)
+    job_id = _seed_job(repo, status="completed", phase="all", video_adapter="ltx")
+    resp = client.post(
+        f"/api/jobs/{job_id}/retry",
+        json={"phase": "render", "video_adapter": "wan"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["phase"] == "render"
+    queue = repo.list_queue(job_id)
+    latest = queue[-1]
+    assert latest.payload["phase"] == "render"
+    assert latest.payload["overrides"]["video_adapter"] == "wan"
+
+
+def test_retry_rejects_invalid_phase(tmp_path: Path) -> None:
+    client, repo = _make_client_and_repo(tmp_path)
+    job_id = _seed_job(repo, status="completed")
+    resp = client.post(f"/api/jobs/{job_id}/retry", json={"phase": "bogus"})
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["code"] == "INVALID_PHASE"
+
+
+def test_retry_without_phase_uses_job_phase(tmp_path: Path) -> None:
+    """When no phase is supplied the job's own phase is used (backwards compat)."""
+    client, repo = _make_client_and_repo(tmp_path)
+    job_id = _seed_job(repo, status="failed", phase="render")
+    resp = client.post(f"/api/jobs/{job_id}/retry")
+    assert resp.status_code == 200
+    assert resp.json()["phase"] == "render"

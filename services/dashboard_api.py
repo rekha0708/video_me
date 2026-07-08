@@ -1034,13 +1034,15 @@ def create_app(
         "video_adapter", "render_adapter", "tts_adapter", "llm_model",
     )
 
+    _RERUN_PHASES = ("transcribe", "script_plan", "render", "assemble", "all")
+
     @app.post("/api/jobs/{job_id}/retry")
     def retry_job(
         job_id: str,
         body: dict[str, Any] | None = Body(default=None),
         _: None = Depends(require_write_auth),
     ) -> dict[str, Any]:
-        """Re-queue a failed OR completed job for the SAME phase it was on.
+        """Re-queue a failed OR completed job, optionally from a different phase.
 
         script_plan/render/assemble already resume from cached per-stage
         artifacts (see core/workflow.py's `_stage()` helper), so re-queuing
@@ -1050,10 +1052,14 @@ def create_app(
         fresh. That makes this the fast way to re-test generate_video or
         assemble_video changes without paying for a fresh render.
 
-        Optional JSON body can override video_adapter/render_adapter/
-        tts_adapter/llm_model for the re-run (e.g. compare ltx vs wan
-        against the same cached character renders) without touching the
-        job's original overrides.
+        Optional JSON body fields:
+        - ``phase`` — run from a specific phase instead of the job's
+          original phase.  E.g. ``"assemble"`` to redo only the final
+          concat, or ``"render"`` to redo voice/video/assemble while
+          keeping cached character images.
+        - ``video_adapter`` / ``render_adapter`` / ``tts_adapter`` /
+          ``llm_model`` — swap an adapter for this re-run without
+          touching the job's original overrides.
         """
         job = repo.get_job(job_id)
         if job is None:
@@ -1075,7 +1081,24 @@ def create_app(
                 },
             )
 
-        retry_request = {**job.request, "phase": job.phase}
+        rerun_phase = job.phase
+        if body and body.get("phase"):
+            requested_phase = body["phase"]
+            if requested_phase not in _RERUN_PHASES:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "code": "INVALID_PHASE",
+                        "message": (
+                            f"Invalid phase '{requested_phase}'. "
+                            f"Must be one of: {', '.join(_RERUN_PHASES)}."
+                        ),
+                        "retryable": False,
+                    },
+                )
+            rerun_phase = requested_phase
+
+        retry_request = {**job.request, "phase": rerun_phase}
         if body:
             overrides = dict(retry_request.get("overrides") or {})
             for key in _RETRYABLE_OVERRIDE_KEYS:
@@ -1093,12 +1116,12 @@ def create_app(
         repo.record_event(
             job_id,
             "job_retried",
-            f"Job re-queued for phase '{job.phase}' (was {job.status.value}).",
-            payload={"phase": job.phase, "queue_id": queue_item.queue_id},
+            f"Job re-queued for phase '{rerun_phase}' (was {job.status.value}).",
+            payload={"phase": rerun_phase, "queue_id": queue_item.queue_id},
         )
         return _base_response({
             "job_id": job_id,
-            "phase": job.phase,
+            "phase": rerun_phase,
             "queue_id": queue_item.queue_id,
             "status": DashboardJobStatus.QUEUED.value,
         })
