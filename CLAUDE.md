@@ -17,7 +17,7 @@ content are blocked, not silently passed.
 
 **Default adapter stack is code-enforced in `core/config.py`: `musubi_flux` (image) / `ltx` (video) / `fish_s2` (TTS).** The image stage runs **musubi-tuner** as a subprocess — ComfyUI cannot load Flux 2.0 locally (no Mistral 3 encoder node; the `Flux2*` ComfyUI nodes are paid BFL cloud API), so `comfyui_flux` is a fallback, not the default. ComfyUI (8188) is still required for the **LTX-2.3 video** stage.
 
-**Test status:** 404 tests, all passing. Local Mac/py3.13 venv: **399 pass / 5 skipped** (FastAPI-dependent dashboard tests skip when fastapi not installed).
+**Test status:** 539 tests (verified 2026-07-08). Local Mac/py3.13 venv: **533 pass / 6 skipped** (tests needing optional deps — fastapi, matplotlib — skip when not installed). Exact current count: `python -m pytest --collect-only -q`.
 
 - **LLM**: qwen3.6:35b (MoE 35B). Thinking mode disabled via `extra_body={"think": False}` + no `response_format`. `max_tokens=16384`. `json_repair` fallback. Used for all LLM stages including plan critique.
 - **Image generation**: Flux 2.0 Dev (32B, Nov 2025) + Flux LoRA, run **locally via musubi-tuner** (replaces A1111 + SD 1.5). Default adapter: `MusubiFluxAdapter` (subprocess, no server). `ComfyUIFluxAdapter` (port 8188) is a fallback but ComfyUI can't load Flux 2.0 locally — it needs the paid BFL cloud API / a custom Mistral 3 node.
@@ -100,7 +100,7 @@ check_rights()  ◄─── BLOCKS job (status=BLOCKED) if rights_cleared=False
     │
     ▼ (per shot — Phase A)
     ├── [render_character ×N]  musubi-tuner Flux 2.0 + LoRA → N candidate PNGs (default N=1, batched per LoRA)
-    └── [critique_images]      qwen2.5-vl:32b → picks best; logs to critique_feedback.jsonl
+    └── [critique_images]      qwen3.6:35b → picks best; logs to critique_feedback.jsonl (skipped when N=1)
     │
     ▼
 [approve_images]     Web UI localhost:8765 (shared port) → image grid; operator confirms/overrides per shot
@@ -129,64 +129,38 @@ The stage runner is `core/executor.py:run_stage()`. The Phase 1 DAG is
 
 ---
 
-## Key file map
+## Where to find detail (read only what you need)
+
+**Generated code map** — `docs/code_map/` is auto-generated from the AST by
+`python -m scripts.generate_code_map` and kept in sync by `tests/test_code_map.py`
+(the suite fails if the map is stale). Trust it over any prose file list.
+
+- `docs/code_map/INDEX.md` — every module, one line each (incl. tests)
+- `docs/code_map/adapters.md` — capability → adapter mapping + every adapter class/method signature
+- `docs/code_map/core.md` — workflow, executor, storage, models, config APIs
+- `docs/code_map/services.md` — dashboard API/worker/repository + GPU service servers
+- `docs/code_map/scripts.md` — setup/check/utility scripts
+- `docs/code_map/api.md` — all dashboard HTTP routes (method, path, handler, purpose)
+- `docs/code_map/models.md` — every Pydantic model with fields and defaults
+- `docs/code_map/env.md` — every `VIDEO_ME_*` env var with type and default
+- `docs/code_map/dependencies.md` — module import graph
+- `docs/code_map/LIMITATIONS.md` — **curated** per-stage weak points, coupling, fragility
+
+**Key entry points** (stable; everything else is in the map):
 
 | Path | Purpose |
 |---|---|
-| `core/workflow.py` | `run_pipeline_job()` — Phase 1 DAG; `run_with_critique()` — Phase 2 loop; `run_noop_job()` — Phase 0 compat |
+| `core/workflow.py` | `run_pipeline_job()` — Phase 1 DAG; `run_with_critique()` — Phase 2 loop |
 | `core/executor.py` | `run_stage()` health-check→invoke→persist; `check_rights()` gate |
-| `core/models/capabilities.py` | All typed request/result Pydantic models |
-| `core/models/content.py` | Script, Scene, Line, Shot, Storyboard, LearningObjective |
-| `core/models/profile.py` | ChannelProfile, CastMember, Cast |
-| `core/models/guardrails.py` | SourceRights, SourceRightsKind |
-| `core/config.py` | Settings (env/pydantic-settings) + AppConfig + load_app_config() |
-| `core/storage.py` | SQLite/Postgres job store + local/S3 artifact store |
-| `adapters/fetch_media/ytdlp_adapter.py` | yt-dlp + ffmpeg subprocess |
-| `adapters/transcribe/whisper_adapter.py` | faster-whisper local inference |
-| `adapters/analyze_content/llm_adapter.py` | Ollama/OpenAI-compat LLM |
-| `adapters/analyze_visuals/vlm_adapter.py` | VLM samples source-video frames → per-segment VisualContext (settings/props); best-effort, empty for story jobs |
-| `adapters/adapt_script/llm_adapter.py` | Ollama/OpenAI-compat LLM + guardrail injection + VisualContext grounding |
-| `adapters/plan_shots/llm_adapter.py` | Ollama/OpenAI-compat LLM + shot structure derivation |
-| `adapters/render_character/musubi_flux_adapter.py` | musubi-tuner Flux 2.0 local inference (**default**) |
-| `adapters/render_character/comfyui_flux_adapter.py` | ComfyUI + Flux 2.0 Dev + LoRA (fallback; needs BFL cloud API) |
-| `adapters/render_character/diffusion_adapter.py` | AUTOMATIC1111 SD API (fallback) |
-| `adapters/synthesize_voice/fish_s2_adapter.py` | Fish Audio S2 HTTP API (EN + HI, default) |
-| `adapters/synthesize_voice/tts_adapter.py` | Chatterbox TTS HTTP API (EN only, fallback) |
-| `adapters/generate_video/ltx_adapter.py` | LTX-2.3 22B via ComfyUI (default, native lip-sync) |
-| `adapters/generate_video/wan_adapter.py` | Wan 2.2 HTTP API (fallback) |
-| `adapters/lip_sync/lip_sync_adapter.py` | MuseTalk HTTP API (skipped when VIDEO_ADAPTER=ltx) |
-| `adapters/critique/plan_critique_adapter.py` | LLM plan critique — 5 dimensions, pass/revise |
-| `adapters/critique/image_critique_adapter.py` | VLM image critique — N candidates → best pick; self-learning feedback log |
-| `adapters/approval/web_approval_adapter.py` | Human approval web UI at localhost:8765 (storyboard) |
-| `adapters/approval/image_approval_adapter.py` | Human image approval grid at localhost:8765 (shared port); records overrides |
-| `adapters/approval/dashboard_image_approval_adapter.py` | Dashboard-integrated image approval (shared port 8080) |
-| `adapters/story_ingest/parser.py` | Structured story parser (`start-end: text` per line) |
-| `adapters/story_ingest/llm_adapter.py` | LLM-based story segmenter (fallback for free-text stories) |
-| `core/gpu_sequencer.py` | VRAM coordination for Wan deferred loading |
-| `assets/kids_duo/critique_feedback.jsonl` | Per-cast self-learning log (critique picks + human overrides) |
-| `adapters/assemble_video/ffmpeg_adapter.py` | ffmpeg subprocess |
-| `adapters/critique/vlm_adapter.py` | OpenAI-compatible VLM/LLM critique adapter |
-| `adapters/publish/manual_adapter.py` | local file copy + metadata.json |
+| `core/capabilities/base.py` | ALL stage ABCs (single file, not per-stage) |
+| `core/config.py` | `Settings` (env, prefix `VIDEO_ME_`) + `load_app_config()` |
+| `services/dashboard_api.py` | Dashboard FastAPI app (port 8080); worker: `services/dashboard_worker.py` |
+| `config/casts/kids_duo.yaml` + `config/casts/<cast>/params.py` | Cast definition + per-cast LoRA/voice/render params |
 | `config/channels/education_kids.yaml` | Channel: 9:16, age 3-6, made_for_kids=true |
-| `config/casts/kids_duo.yaml` | final Max/Zoe cast with lora_ref + voice_profile_ref |
-| `config/casts/<cast>/params.py` | per-cast LoRA + voice + render params (weight/steps/guidance/trigger); `core/cast_params.py` loads it |
-| `docs/PIPELINE_STAGES_AND_VRAM.md` | per-stage model/service/VRAM reference |
-| `assets/kids_duo/` | Track B reference plan, LoRA notes, and voice scripts |
-| `loras/` | LoRA weight files — **MUST EXIST** for render_character (Track B) |
-| `voices/` | Reference WAV files — **MUST EXIST** for synthesize_voice (Track B) |
+| `loras/`, `voices/` | Track B weights + reference WAVs — **MUST EXIST** before rendering/TTS |
 | `review/` | Output: `<timestamp>_<stem>/video.mp4` + `metadata.json` sidecar |
-| `services/dashboard_api.py` | Dashboard FastAPI app: job CRUD, approval gates, upload, chat, health |
-| `services/templates/job_new.html` | `/jobs/new` — 4-mode job creation (URL / file / story / story+images) |
-| `services/templates/jobs_list.html` | Job list with source-kind badges |
-| `services/templates/job_detail.html` | Job detail with stepper, artifact cards, phase controls |
-| `services/templates/approval_images.html` | Image approval grid (origin-aware labels: VLM vs user) |
-| `scripts/check_track_b.py` | Track B asset placement check |
-| `scripts/check_runtime_readiness.py` | runtime dependency/service/asset readiness check |
-| `scripts/setup_gpu.sh` | one-command GPU-machine setup + validation |
-| `scripts/setup_gpu.py` / `setup.py gpu` | lower-level GPU-machine setup helper |
-| `tests/` | 400 tests; no external services needed. All passing on Mac/py3.13 |
-| `BUILD_PROGRESS.md` | Full implementation journal + decision log |
-| `Agent.md` | Lead Designer agent charter |
+| `docs/PIPELINE_STAGES_AND_VRAM.md` | per-stage model/service/VRAM reference |
+| `docs/BUILD_PROGRESS.md` | Full implementation journal + decision log |
 
 ---
 
@@ -327,24 +301,11 @@ python -m pytest tests/test_workflow.py::test_stage_call_order -v
 python -m pytest --cov=core --cov=adapters --cov-report=term-missing -q
 ```
 
-Test count by file:
-- `test_workflow.py` — 28 (DAG orchestration, settings wiring, rights blocking, critique loop)
-- `test_critique.py` — 26 (VLM critique adapter, frame sampling, preflight, parsing)
-- `test_plan_shots.py` — 29
-- `test_assemble_video.py` — 32
-- `test_publish.py` — 26
-- `test_adapt_script.py` — ~30
-- `test_synthesize_voice.py` — 27
-- `test_render_character.py` — 29
-- `test_lip_sync.py` — 20
-- `test_generate_video.py` — 18
-- `test_transcribe.py`, `test_analyze_content.py`, `test_fetch_media.py` — ~10–15 each
-- `test_runtime_readiness.py` — 7
-- `test_setup_gpu.py` — 4
-- `test_gpu_sequencer.py` — 9 (Wan VRAM sequencing)
-- `test_story_ingest.py` — 14 (story parser + LLM segmenter)
-- `test_dashboard_api_helpers.py` — 21 (artifact flags, stepper, approval origin, uploads, phase restriction)
-- `test_executor.py`, `test_phase0_models.py`, `test_phase0_workflow.py` — Phase 0 tests
+For the per-file breakdown, run `python -m pytest --collect-only -q` or see the test entries in
+`docs/code_map/INDEX.md` — do not maintain hardcoded per-file counts here (they rot).
+
+`tests/test_code_map.py` guards `docs/code_map/` freshness: if it fails, run
+`python -m scripts.generate_code_map` and commit the regenerated map.
 
 ---
 
@@ -435,7 +396,7 @@ artifacts — use the Advance button on an existing job to continue from a later
 ## Adding a new adapter (pattern reference)
 
 1. Create `adapters/<stage>/<name>_adapter.py`
-2. Subclass the ABC from `core/capabilities/<stage>.py`
+2. Subclass the ABC from `core/capabilities/base.py` (all stage ABCs live in that one file)
 3. Implement `health()`, `estimate_cost()`, `run()` — lazy-import heavy deps inside methods
 4. **Track B gate**: call `_check_lora()` / `_check_voice()` BEFORE `import httpx`
 5. **Stage-ordering errors**: raise `FileNotFoundError("upstream_stage must run before this_stage")`
@@ -459,7 +420,7 @@ These are enforced in code — pipeline blocks or raises, never silently skips.
 3. **Children's safety** — human approval required before any real publish; `ManualPublishAdapter` writes to review folder only
 4. **Made-for-kids + COPPA** — `ChannelProfile.made_for_kids=True`; no child-level data in any model
 5. **AI disclosure** — `disclosure_label_required=True` burns label onto video via ffmpeg drawtext
-6. **Phase gating** — do not advance past a phase until its acceptance criteria pass (see `orchestration-build-plan.md §9`)
+6. **Phase gating** — do not advance past a phase until its acceptance criteria pass (see `docs/orchestration-build-plan.md §9`)
 
 ---
 
