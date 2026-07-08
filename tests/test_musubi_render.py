@@ -139,8 +139,8 @@ def _install_fake_subprocess(monkeypatch, calls: list[list[str]], *, returncode:
                 seed = int(line.split(" --d ")[1].split()[0])
                 if skip_seeds and seed in skip_seeds:
                     continue
-                # musubi save_images_grid naming: {time_flag}_{seed}_{i:03d}.png
-                (save_path / f"20990101-000000-000_{seed}_000.png").write_bytes(b"png")
+                # musubi save_images_grid naming: {time_flag}_{seed}__{i:03d}.png
+                (save_path / f"20990101-000000-000_{seed}__000.png").write_bytes(b"png")
         return _FakeProc(returncode=returncode, stdout=b"boom" if returncode else b"")
 
     import adapters.render_character.musubi_flux_adapter as mod
@@ -196,7 +196,7 @@ async def test_run_many_prompt_lines_have_unique_seeds_and_params(
         save_path = Path(cmd[cmd.index("--save_path") + 1])
         for line in captured["prompts"].splitlines():
             seed = int(line.split(" --d ")[1].split()[0])
-            (save_path / f"20990101-000000-000_{seed}_000.png").write_bytes(b"png")
+            (save_path / f"20990101-000000-000_{seed}__000.png").write_bytes(b"png")
         return _FakeProc()
 
     import adapters.render_character.musubi_flux_adapter as mod

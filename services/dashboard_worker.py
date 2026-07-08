@@ -443,7 +443,11 @@ class DashboardWorker:
         phase = req.phase if req.phase != "all" else "all"
         # script_plan/render/assemble resume from artifacts saved by the previous
         # phase; story jobs always resume so the seeded artifacts are picked up.
-        resume = is_story or phase in ("script_plan", "render", "assemble")
+        # A prior core Job row means this is a retry/continuation of an earlier
+        # attempt — resume from its cached per-stage artifacts regardless of
+        # phase, instead of rerunning the whole pipeline from fetch_media.
+        had_prior_run = create_job_store(job_config.settings).get_job(job_id) is not None
+        resume = is_story or had_prior_run or phase in ("script_plan", "render", "assemble")
         options = RunOptions(
             phase=phase,
             resume=resume,
@@ -455,9 +459,7 @@ class DashboardWorker:
         # resume_job_id restores an existing core Job row (prior phase / retry).
         # A fresh story job has no core row yet — pass job_id only, so a new row
         # is created while the seeded artifacts are still found under it.
-        core_job_exists = (
-            resume and create_job_store(job_config.settings).get_job(job_id) is not None
-        )
+        core_job_exists = resume and had_prior_run
 
         self.repo.record_event(
             job_id, "phase_started", f"Starting pipeline phase={phase}.", stage_name=phase

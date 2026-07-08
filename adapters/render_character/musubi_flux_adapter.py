@@ -37,9 +37,10 @@ def _is_placeholder_lora(path: Path) -> bool:
         return False
 
 
-# Output files are named "{time_flag}_{seed}_{index:03d}.png" by musubi-tuner's
-# save_images_grid; the seed token is how we map batch outputs back to prompts.
-_OUTPUT_SEED_RE = re.compile(r"_(\d+)_\d{3}\.png$")
+# Output files are named "{time_flag}_{seed}__{index:03d}.png" (double underscore
+# before the index) by musubi-tuner's save_images_grid; the seed token is how we
+# map batch outputs back to prompts.
+_OUTPUT_SEED_RE = re.compile(r"_(\d+)__\d{3}\.png$")
 
 
 @dataclass

@@ -230,7 +230,11 @@ def test_story_job_rejected_with_invalid_phase(tmp_path: Path) -> None:
     from core.config import AppConfig, Settings
     from core.models.profile import ChannelProfile, Cast, CastMember
 
-    settings = Settings(data_dir=str(tmp_path / "data"), artifact_dir=str(tmp_path / "art"))
+    settings = Settings(
+        data_dir=str(tmp_path / "data"),
+        artifact_dir=str(tmp_path / "art"),
+        sqlite_path=str(tmp_path / "test.db"),
+    )
     cfg = AppConfig(
         settings=settings,
         channel_profile=ChannelProfile(
@@ -316,7 +320,11 @@ def _make_test_client(tmp_path: Path):
     from core.config import AppConfig, Settings
     from core.models.profile import ChannelProfile, Cast, CastMember
 
-    settings = Settings(data_dir=str(tmp_path / "data"), artifact_dir=str(tmp_path / "art"))
+    settings = Settings(
+        data_dir=str(tmp_path / "data"),
+        artifact_dir=str(tmp_path / "art"),
+        sqlite_path=str(tmp_path / "test.db"),
+    )
     cfg = AppConfig(
         settings=settings,
         channel_profile=ChannelProfile(
