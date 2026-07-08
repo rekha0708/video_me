@@ -24,11 +24,22 @@
       </span>
     </div>
     <div class="page-subtitle">
-      {{ job.source_url | truncate(72) }} &nbsp;·&nbsp; phase: {{ job.phase }}
+      {% set sk = job.source_kind | default('url') %}
+      <span class="badge badge-info" style="font-size:10px;padding:1px 5px">{{ sk }}</span>
+      &nbsp;{{ job.source_url | truncate(72) }} &nbsp;·&nbsp; phase: {{ job.phase }}
       &nbsp;·&nbsp; lang: {{ job.target_language }}
-      {% set video_override = job.request.get('overrides', {}).get('video_adapter') %}
+      {% set cast_ref = job.request.get('cast_ref') %}
+      {% if cast_ref %}
+        &nbsp;·&nbsp; cast: <span class="td-mono">{{ cast_ref }}</span>
+      {% endif %}
+      {% set overrides = job.request.get('overrides', {}) %}
+      {% set video_override = overrides.get('video_adapter') %}
       {% if video_override %}
         &nbsp;·&nbsp; video: <span class="td-mono">{{ video_override }}</span>
+      {% endif %}
+      {% set llm_override = overrides.get('llm_model') %}
+      {% if llm_override %}
+        &nbsp;·&nbsp; llm: <span class="td-mono">{{ llm_override }}</span>
       {% endif %}
       {% if job.current_stage %}
         &nbsp;·&nbsp; stage: <span id="current-stage">{{ job.current_stage }}</span>

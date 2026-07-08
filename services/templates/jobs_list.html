@@ -20,8 +20,10 @@
         <tr>
           <th>Job ID</th>
           <th>Status</th>
+          <th>Cast</th>
           <th>Phase</th>
           <th>Source</th>
+          <th>Models</th>
           <th>Stage</th>
           <th>Created</th>
           <th></th>
@@ -29,6 +31,8 @@
       </thead>
       <tbody id="jobs-tbody">
         {% for job in jobs %}
+        {% set req = job.request or {} %}
+        {% set overrides = req.get('overrides', {}) or {} %}
         <tr data-job-id="{{ job.job_id }}">
           <td class="td-mono">
             <a href="/jobs/{{ job.job_id }}" class="row-link">{{ job.job_id }}</a>
@@ -38,14 +42,17 @@
               {{ job.status | replace('_', ' ') }}
             </span>
           </td>
+          <td class="td-mono td-muted">{{ req.get('cast_ref') or '—' }}</td>
           <td class="td-muted">{{ job.phase }}</td>
-          <td class="td-muted truncate" style="max-width:220px"
+          <td class="td-muted truncate" style="max-width:200px"
               title="{{ job.source_url }}">
             {% set sk = job.source_kind | default('url') %}
-            {% if sk in ('story', 'story_images', 'lora_training') %}
             <span class="badge badge-info" style="font-size:10px;padding:1px 5px;margin-right:4px">{{ sk }}</span>
-            {% endif %}
             {{ job.source_url }}
+          </td>
+          <td class="td-muted" style="font-size:12px;line-height:1.6">
+            <div>video: {{ overrides.get('video_adapter') or '<span class="text-muted">default</span>' | safe }}</div>
+            <div>llm: {{ overrides.get('llm_model') or '<span class="text-muted">default</span>' | safe }}</div>
           </td>
           <td class="td-muted td-stage">{{ job.current_stage or '—' }}</td>
           <td class="td-muted">{{ job.created_at.strftime('%m-%d %H:%M') if job.created_at else '—' }}</td>
