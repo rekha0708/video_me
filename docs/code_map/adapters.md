@@ -158,7 +158,7 @@ Video-assembly adapters.
 ### `adapters/assemble_video/ffmpeg_adapter.py`
 
 - **class `FfmpegAssembleAdapter(AssembleVideo)`** — assemble_video adapter: stitch synced clips → add audio → burn captions
-  - `__init__(self, work_dir: Path, ffmpeg_bin: str='ffmpeg', width: int=_DEFAULT_WIDTH, height: int=_DEFAULT_HEIGHT, video_codec: str='libx264', audio_codec: str='aac', crf: int=23, font_size: int=50, font_color: str='white', caption_margin: int=_DEFAULT_CAPTION_MARGIN, caption_wrap_width: int=_DEFAULT_WRAP_WIDTH) -> None`
+  - `__init__(self, work_dir: Path, ffmpeg_bin: str='ffmpeg', width: int=_DEFAULT_WIDTH, height: int=_DEFAULT_HEIGHT, video_codec: str='libx264', audio_codec: str='aac', crf: int=23, font_size: int=50, font_color: str='white', caption_margin: int=_DEFAULT_CAPTION_MARGIN, caption_wrap_width: int=_DEFAULT_WRAP_WIDTH, crossfade_sec: float=_DEFAULT_CROSSFADE_SEC, target_fps: int=_DEFAULT_TARGET_FPS) -> None`
   - `async health(self) -> HealthStatus`
   - `async estimate_cost(self, req: AssembleRequest) -> CostEstimate`
   - `async run(self, req: AssembleRequest) -> FinalVideo`
@@ -166,8 +166,12 @@ Video-assembly adapters.
   - `_write_concat_list(self, clips: list, work_dir: Path) -> Path` — Write ffmpeg concat demuxer file with absolute paths.
   - `_write_caption_file(self, caption_text: str, work_dir: Path) -> Path` — Write word-wrapped caption text; drawtext reads it via textfile=.
   - `_usable_overlays(self, overlays: list) -> list` — Cap the overlay input count and drop entries whose PNG is missing.
-  - `_build_filter(self, caption_file: Path, disclosure_required: bool, overlays: list=()) -> str` — Build the -filter_complex: scale+pad → overlay panels → caption → disclosure.
+  - `_build_filter(self, caption_file: Path, disclosure_required: bool, overlays: list=(), *, base_video_label: str='[0:v]', overlay_input_offset: int=2) -> str` — Build the video half of -filter_complex: scale+pad → overlay panels →
+  - `_crossfade_transition(self, req: AssembleRequest) -> float` — Per-boundary crossfade duration, or 0.0 if crossfading isn't usable.
+  - `_build_crossfade_video_chain(self, n: int, durations: list[float], transition: float) -> tuple[str, str]` — xfade chain over n pre-indexed [0:v]..[n-1:v] inputs. Returns
+  - `_build_crossfade_audio_chain(self, n: int, input_offset: int, transition: float) -> tuple[str, str]` — acrossfade chain over n audio inputs starting at input_offset.
   - `_build_ffmpeg_args(self, concat_file: Path, audio_path: Path, caption_file: Path, output_path: Path, req: AssembleRequest, overlays: list=()) -> list[str]`
+  - `_build_crossfade_ffmpeg_args(self, caption_file: Path, output_path: Path, req: AssembleRequest, overlays: list, transition: float) -> list[str]` — One -i per clip + one -i per per-shot audio track, joined with
   - `async _run_ffmpeg(self, cmd: list[str]) -> None` — Run ffmpeg; raise RuntimeError with stderr tail if it exits non-zero.
 
 ### `adapters/critique/__init__.py`
@@ -251,7 +255,7 @@ Video-generation adapters.
   - `async health(self) -> HealthStatus`
   - `async estimate_cost(self, req: VideoRequest) -> CostEstimate`
   - `async run(self, req: VideoRequest) -> VideoClip`
-  - `_build_prompt(self, action: str, setting: str='') -> str`
+  - `_build_prompt(self, action: str, setting: str='', style_suffix: str='') -> str`
   - `_build_workflow(self, image_name: str, prompt_text: str, num_frames: int, seed: int, audio_name: str | None=None) -> dict`
   - `_minimal_ltx_workflow(self, image_name: str, prompt_text: str, num_frames: int, seed: int, audio_name: str | None=None) -> dict` — Minimal LTX-Video i2v workflow for smoke testing without a template file.
   - `async _upload_image(self, client, image_path: Path) -> str`

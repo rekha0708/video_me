@@ -47,6 +47,15 @@ def _write_audio(tmp_path: Path) -> AudioTrack:
     return AudioTrack(uri=str(path), duration_sec=5.0, speaker_id=None)
 
 
+def _per_shot_audio(tmp_path: Path, n: int, duration: float = 2.5) -> list[AudioTrack]:
+    tracks = []
+    for i in range(n):
+        path = tmp_path / f"shot_audio_{i}.wav"
+        path.write_bytes(_make_wav_bytes(duration))
+        tracks.append(AudioTrack(uri=str(path), duration_sec=duration))
+    return tracks
+
+
 def _request(tmp_path: Path, **kwargs) -> AssembleRequest:
     clips = kwargs.get("clips") or [
         _write_clip(tmp_path, "s01.mp4", 2.5),
@@ -56,6 +65,7 @@ def _request(tmp_path: Path, **kwargs) -> AssembleRequest:
     return AssembleRequest(
         clips=clips,
         audio=audio,
+        audio_tracks=kwargs.get("audio_tracks", []),
         caption_text=kwargs.get(
             "caption_text", "How many apples? Let us count them! One two three four five!"
         ),
@@ -514,3 +524,110 @@ async def test_run_with_overlays_passes_them_through(tmp_path: Path, monkeypatch
     assert str(overlays[0].png_uri) in captured["cmd"]
     filter_arg = captured["cmd"][captured["cmd"].index("-filter_complex") + 1]
     assert "overlay=" in filter_arg
+
+
+# ------------------------------------------------------------------ crossfade
+
+def test_crossfade_transition_zero_without_audio_tracks(tmp_path: Path) -> None:
+    """No per-shot audio_tracks (legacy caller) → crossfading disabled."""
+    adapter = _adapter(tmp_path)
+    req = _request(tmp_path)  # audio_tracks defaults to []
+    assert adapter._crossfade_transition(req) == 0.0
+
+
+def test_crossfade_transition_zero_for_single_clip(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    clips = [_write_clip(tmp_path, "s01.mp4", 5.0)]
+    req = _request(tmp_path, clips=clips, audio_tracks=_per_shot_audio(tmp_path, 1))
+    assert adapter._crossfade_transition(req) == 0.0
+
+
+def test_crossfade_transition_zero_when_audio_tracks_count_mismatches(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    clips = [_write_clip(tmp_path, "s01.mp4", 5.0), _write_clip(tmp_path, "s02.mp4", 5.0)]
+    req = _request(tmp_path, clips=clips, audio_tracks=_per_shot_audio(tmp_path, 1))
+    assert adapter._crossfade_transition(req) == 0.0
+
+
+def test_crossfade_transition_uses_configured_value(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path, crossfade_sec=0.3)
+    clips = [_write_clip(tmp_path, "s01.mp4", 5.0), _write_clip(tmp_path, "s02.mp4", 5.0)]
+    req = _request(tmp_path, clips=clips, audio_tracks=_per_shot_audio(tmp_path, 2, 5.0))
+    assert adapter._crossfade_transition(req) == pytest.approx(0.3)
+
+
+def test_crossfade_transition_clamped_for_short_clips(tmp_path: Path) -> None:
+    """A 0.3s default shouldn't eat more than half of a very short clip."""
+    adapter = _adapter(tmp_path, crossfade_sec=0.3)
+    clips = [_write_clip(tmp_path, "s01.mp4", 0.3), _write_clip(tmp_path, "s02.mp4", 5.0)]
+    req = _request(tmp_path, clips=clips, audio_tracks=_per_shot_audio(tmp_path, 2, 0.3))
+    transition = adapter._crossfade_transition(req)
+    assert 0.0 <= transition < 0.3
+
+
+def test_crossfade_video_chain_offsets_account_for_shrinkage(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    stmts, out_label = adapter._build_crossfade_video_chain(
+        n=3, durations=[3.0, 3.0, 3.0], transition=0.3
+    )
+    assert "offset=2.700" in stmts   # 3.0 - 0.3
+    assert "offset=5.400" in stmts   # (3.0+3.0-0.3) - 0.3
+    assert out_label == "vx2"
+    assert stmts.count("xfade=") == 2
+
+
+def test_crossfade_audio_chain_uses_acrossfade(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    stmts, out_label = adapter._build_crossfade_audio_chain(n=3, input_offset=3, transition=0.3)
+    assert "[3:a][4:a]acrossfade=d=0.300[ax1]" in stmts
+    assert "[ax1][5:a]acrossfade=d=0.300[ax2]" in stmts
+    assert out_label == "ax2"
+
+
+async def test_run_uses_crossfade_when_audio_tracks_provided(tmp_path: Path, monkeypatch) -> None:
+    adapter = _adapter(tmp_path, crossfade_sec=0.3)
+    captured: dict = {}
+
+    async def spy_ffmpeg(cmd):
+        captured["cmd"] = cmd
+        await _noop_ffmpeg(cmd)
+
+    monkeypatch.setattr(adapter, "_run_ffmpeg", spy_ffmpeg)
+    clips = [
+        _write_clip(tmp_path, "s01.mp4", 3.0),
+        _write_clip(tmp_path, "s02.mp4", 3.0),
+        _write_clip(tmp_path, "s03.mp4", 3.0),
+    ]
+    req = _request(tmp_path, clips=clips, audio_tracks=_per_shot_audio(tmp_path, 3, 3.0))
+
+    result = await adapter.run(req)
+
+    assert result.duration_sec == pytest.approx(8.4)  # 9.0 - 2*0.3
+    cmd = captured["cmd"]
+    assert "-f" not in cmd or "concat" not in cmd  # no concat demuxer in crossfade mode
+    for clip in clips:
+        assert str(Path(clip.uri).resolve()) in cmd
+    filter_arg = cmd[cmd.index("-filter_complex") + 1]
+    assert "xfade=" in filter_arg
+    assert "acrossfade=" in filter_arg
+    assert "drawtext" in filter_arg  # caption/disclosure chain still applied
+
+
+async def test_run_falls_back_to_concat_without_audio_tracks(tmp_path: Path, monkeypatch) -> None:
+    """Backward compat: a caller that never sets audio_tracks keeps the old
+    hard-cut concat path — total duration is the plain sum, unshrunk."""
+    adapter = _adapter(tmp_path, crossfade_sec=0.3)
+    captured: dict = {}
+
+    async def spy_ffmpeg(cmd):
+        captured["cmd"] = cmd
+        await _noop_ffmpeg(cmd)
+
+    monkeypatch.setattr(adapter, "_run_ffmpeg", spy_ffmpeg)
+    clips = [_write_clip(tmp_path, "s01.mp4", 3.0), _write_clip(tmp_path, "s02.mp4", 3.0)]
+    req = _request(tmp_path, clips=clips)  # no audio_tracks
+
+    result = await adapter.run(req)
+
+    assert result.duration_sec == pytest.approx(6.0)
+    assert "concat" in captured["cmd"]

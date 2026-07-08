@@ -205,7 +205,7 @@ def create_app(
     """
 
     try:
-        from fastapi import Depends, FastAPI, Header, HTTPException, status
+        from fastapi import Body, Depends, FastAPI, Header, HTTPException, status
     except ImportError as exc:  # pragma: no cover - exercised only without extras
         raise RuntimeError(
             "Dashboard API requires FastAPI. Install with `pip install -e \".[dashboard]\"`."
@@ -1030,18 +1030,30 @@ def create_app(
             "status": DashboardJobStatus.QUEUED.value,
         })
 
+    _RETRYABLE_OVERRIDE_KEYS = (
+        "video_adapter", "render_adapter", "tts_adapter", "llm_model",
+    )
+
     @app.post("/api/jobs/{job_id}/retry")
     def retry_job(
         job_id: str,
+        body: dict[str, Any] | None = Body(default=None),
         _: None = Depends(require_write_auth),
     ) -> dict[str, Any]:
-        """Re-queue a failed job for the SAME phase it was on.
+        """Re-queue a failed OR completed job for the SAME phase it was on.
 
         script_plan/render/assemble already resume from cached per-stage
         artifacts (see core/workflow.py's `_stage()` helper), so re-queuing
-        the same phase skips whatever already succeeded and picks up again
-        at the stage that failed — it does not restart the phase from
-        scratch.
+        skips whatever already succeeded — a failed job picks up again at
+        the stage that failed; a completed phase="all" job skips straight
+        past the (already-rendered) images and redoes voice/video/assemble
+        fresh. That makes this the fast way to re-test generate_video or
+        assemble_video changes without paying for a fresh render.
+
+        Optional JSON body can override video_adapter/render_adapter/
+        tts_adapter/llm_model for the re-run (e.g. compare ltx vs wan
+        against the same cached character renders) without touching the
+        job's original overrides.
         """
         job = repo.get_job(job_id)
         if job is None:
@@ -1050,17 +1062,27 @@ def create_app(
                 detail={"code": "JOB_NOT_FOUND", "message": f"Job not found: {job_id}",
                         "retryable": False},
             )
-        if job.status != DashboardJobStatus.FAILED:
+        if job.status not in (DashboardJobStatus.FAILED, DashboardJobStatus.COMPLETED):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
-                    "code": "JOB_NOT_FAILED",
-                    "message": f"Job must be in 'failed' status to retry (current: {job.status.value}).",
+                    "code": "JOB_NOT_RETRYABLE",
+                    "message": (
+                        "Job must be in 'failed' or 'completed' status to retry "
+                        f"(current: {job.status.value})."
+                    ),
                     "retryable": False,
                 },
             )
 
         retry_request = {**job.request, "phase": job.phase}
+        if body:
+            overrides = dict(retry_request.get("overrides") or {})
+            for key in _RETRYABLE_OVERRIDE_KEYS:
+                value = body.get(key)
+                if value:
+                    overrides[key] = value
+            retry_request["overrides"] = overrides
 
         repo.update_job_status(job_id, DashboardJobStatus.QUEUED)
         queue_item = repo.enqueue_action(
@@ -1071,7 +1093,7 @@ def create_app(
         repo.record_event(
             job_id,
             "job_retried",
-            f"Job re-queued for phase '{job.phase}' after failure.",
+            f"Job re-queued for phase '{job.phase}' (was {job.status.value}).",
             payload={"phase": job.phase, "queue_id": queue_item.queue_id},
         )
         return _base_response({

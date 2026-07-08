@@ -10,8 +10,24 @@ from core.observability import log_event
 
 logger = logging.getLogger(__name__)
 
-_PROMPT_PREFIX = "children's cartoon animation, vibrant colors"
 _PROMPT_SUFFIX = "smooth motion, expressive, high quality"
+
+# Cross-shot color/exposure stability — every clip in a stitched video is sampled
+# independently, so without this each cut can show a visible grey/brightness jump.
+_STABILITY_SUFFIX = (
+    "consistent cinematic color grading, stable exposure, stable lighting, "
+    "natural colors, smooth temporal consistency"
+)
+
+# Default style when a cast's params.py doesn't set style_suffix — preserves the
+# original kids_duo (cartoon) look for any cast that hasn't opted into something else.
+_DEFAULT_STYLE_SUFFIX = "children's cartoon animation, vibrant colors"
+
+_NEGATIVE_PROMPT = (
+    "blurry, low quality, deformed, distorted, static, flicker, flashing light, "
+    "grey filter, desaturation, sudden brightness change, lens flare, bloom, "
+    "glowing artifacts, color shift, exposure shift"
+)
 
 # Default FPS — LTX-Video 2.3 natively supports up to 50 FPS; 24 is standard.
 _DEFAULT_FPS: int = 24
@@ -36,6 +52,7 @@ class LtxAdapter(GenerateVideo):
       "__IMAGE__"     — LoadImage        (image field)
       "__AUDIO__"     — LoadAudio        (audio field, optional)
       "__PROMPT__"    — CLIPTextEncode   (text field)
+      "__NEGATIVE__"  — CLIPTextEncode   (text field, artifact/color-stability negative prompt)
       "__FRAMES__"    — LTXVConditioning (length field)
       "__STEPS__"     — LTXVScheduler    (steps field)
       "__SEED__"      — RandomNoise      (noise_seed field)
@@ -102,7 +119,7 @@ class LtxAdapter(GenerateVideo):
         out_dir = self.work_dir / req.shot_id
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        prompt = self._build_prompt(req.action, req.setting)
+        prompt = self._build_prompt(req.action, req.setting, req.style_suffix)
         num_frames = max(9, int(req.duration_sec * self._fps))
         # LTX frame count must be (divisible by 8) + 1
         num_frames = ((num_frames - 1) // 8) * 8 + 1
@@ -153,13 +170,14 @@ class LtxAdapter(GenerateVideo):
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _build_prompt(self, action: str, setting: str = "") -> str:
-        # Order: style → subject/action → environment → quality. The setting
-        # steers lighting/scene mood; the first-frame image still dominates.
-        parts = [_PROMPT_PREFIX, action]
+    def _build_prompt(self, action: str, setting: str = "", style_suffix: str = "") -> str:
+        # Order: style → subject/action → environment → quality/stability. The
+        # setting steers lighting/scene mood; the first-frame image still dominates.
+        parts = [style_suffix or _DEFAULT_STYLE_SUFFIX, action]
         if setting.strip():
             parts.append(setting.strip())
         parts.append(_PROMPT_SUFFIX)
+        parts.append(_STABILITY_SUFFIX)
         return ", ".join(parts)
 
     def _build_workflow(
@@ -181,6 +199,8 @@ class LtxAdapter(GenerateVideo):
                     inputs["audio"] = audio_name
                 elif title == "__PROMPT__":
                     inputs["text"] = prompt_text
+                elif title == "__NEGATIVE__":
+                    inputs["text"] = _NEGATIVE_PROMPT
                 elif title == "__FRAMES__":
                     inputs["length"] = num_frames
                 elif title == "__STEPS__":
@@ -213,7 +233,7 @@ class LtxAdapter(GenerateVideo):
                 "class_type": "LTXVConditioning",
                 "inputs": {
                     "positive": prompt_text,
-                    "negative": "blurry, low quality, deformed",
+                    "negative": _NEGATIVE_PROMPT,
                     "frame_rate": self._fps,
                     "length": num_frames,
                     "batch_size": 1,

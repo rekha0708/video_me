@@ -235,6 +235,7 @@ A rendered overlay PNG + the absolute time window it is visible in the final vid
 - `shot_id: str`
 - `setting: str` = `''`
 - `audio_uri: str | None` = `None`
+- `style_suffix: str` = `''`
 
 ### `VideoClip` (BaseModel) — `core/models/capabilities.py`
 
@@ -310,6 +311,7 @@ A rendered overlay PNG + the absolute time window it is visible in the final vid
 - `made_for_kids: bool` = `True`
 - `disclosure_label_required: bool` = `True`
 - `overlays: list[OverlayWindow]` = `Field(default_factory=list)`
+- `audio_tracks: list[AudioTrack]` = `Field(default_factory=list)`
 
 ### `FinalVideo` (BaseModel) — `core/models/capabilities.py`
 

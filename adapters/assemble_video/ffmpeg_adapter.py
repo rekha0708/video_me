@@ -26,6 +26,12 @@ _DEFAULT_CAPTION_MARGIN: int = 100
 _OVERLAY_Y: int = 80
 _MAX_OVERLAY_INPUTS: int = 10
 
+# Crossfade at clip boundaries — each 5-8s shot is sampled independently by the
+# video model, so a hard cut can show a visible grey/brightness jump. Small
+# enough to stay unnoticeable as a "transition" while smoothing the seam.
+_DEFAULT_CROSSFADE_SEC: float = 0.3
+_DEFAULT_TARGET_FPS: int = 24
+
 
 class FfmpegAssembleAdapter(AssembleVideo):
     """
@@ -70,6 +76,8 @@ class FfmpegAssembleAdapter(AssembleVideo):
         font_color: str = "white",
         caption_margin: int = _DEFAULT_CAPTION_MARGIN,
         caption_wrap_width: int = _DEFAULT_WRAP_WIDTH,
+        crossfade_sec: float = _DEFAULT_CROSSFADE_SEC,
+        target_fps: int = _DEFAULT_TARGET_FPS,
     ) -> None:
         self.work_dir = work_dir
         self._ffmpeg_bin = ffmpeg_bin
@@ -81,6 +89,8 @@ class FfmpegAssembleAdapter(AssembleVideo):
         self._font_size = font_size
         self._font_color = font_color
         self._caption_margin = caption_margin
+        self._crossfade_sec = crossfade_sec
+        self._target_fps = target_fps
         self._caption_wrap_width = caption_wrap_width
 
     async def health(self) -> HealthStatus:
@@ -116,7 +126,9 @@ class FfmpegAssembleAdapter(AssembleVideo):
         audio_path = Path(req.audio.uri)
         overlays = self._usable_overlays(req.overlays)
 
-        total_duration = sum(c.duration_sec for c in req.clips)
+        transition = self._crossfade_transition(req)
+        raw_duration = sum(c.duration_sec for c in req.clips)
+        total_duration = raw_duration - transition * (len(req.clips) - 1)
 
         log_event(
             logger,
@@ -125,6 +137,7 @@ class FfmpegAssembleAdapter(AssembleVideo):
             total_duration_sec=total_duration,
             disclosure_required=req.disclosure_label_required,
             overlay_count=len(overlays),
+            crossfade_sec=transition,
         )
 
         cmd = self._build_ffmpeg_args(
@@ -184,9 +197,17 @@ class FfmpegAssembleAdapter(AssembleVideo):
         return usable
 
     def _build_filter(
-        self, caption_file: Path, disclosure_required: bool, overlays: list = (),
+        self,
+        caption_file: Path,
+        disclosure_required: bool,
+        overlays: list = (),
+        *,
+        base_video_label: str = "[0:v]",
+        overlay_input_offset: int = 2,
     ) -> str:
-        """Build the -filter_complex: scale+pad → overlay panels → caption → disclosure."""
+        """Build the video half of -filter_complex: scale+pad → overlay panels →
+        caption → disclosure. base_video_label is the already-processed input
+        (either the raw concat stream [0:v], or a crossfaded chain's output)."""
         scale_pad = (
             f"scale={self._width}:{self._height}"
             ":force_original_aspect_ratio=decrease,"
@@ -203,12 +224,12 @@ class FfmpegAssembleAdapter(AssembleVideo):
         )
 
         if overlays:
-            # Chain: [0:v]scale+pad[base0]; [base0][2:v]overlay[base1]; ...; caption last.
-            # Overlay inputs start at index 2 (0 = concat video, 1 = audio).
-            stmts = [f"[0:v]{scale_pad}[base0]"]
+            # Chain: <base>scale+pad[base0]; [base0][N:v]overlay[base1]; ...; caption last.
+            # Overlay inputs start at overlay_input_offset (legacy: 2 = concat + audio).
+            stmts = [f"{base_video_label}{scale_pad}[base0]"]
             for i, ov in enumerate(overlays):
                 stmts.append(
-                    f"[base{i}][{2 + i}:v]overlay="
+                    f"[base{i}][{overlay_input_offset + i}:v]overlay="
                     f"x=(W-w)/2:y={_OVERLAY_Y}"
                     f":enable='between(t,{ov.start_sec:.3f},{ov.end_sec:.3f})'"
                     f"[base{i + 1}]"
@@ -216,7 +237,7 @@ class FfmpegAssembleAdapter(AssembleVideo):
             head = f"[base{len(overlays)}]{caption}"
             chain = ";".join(stmts) + ";" + head
         else:
-            chain = f"[0:v]{scale_pad},{caption}"
+            chain = f"{base_video_label}{scale_pad},{caption}"
 
         if disclosure_required:
             disclosure = (
@@ -227,6 +248,68 @@ class FfmpegAssembleAdapter(AssembleVideo):
 
         return f"{chain}[v]"
 
+    def _crossfade_transition(self, req: AssembleRequest) -> float:
+        """Per-boundary crossfade duration, or 0.0 if crossfading isn't usable.
+
+        Requires >=2 clips and a parallel per-shot audio_tracks list (so video
+        xfade and audio acrossfade shrink the timeline by the exact same
+        amount at the exact same points — otherwise dialogue gets clipped at
+        the tail). Clamped so it never eats more than a fraction of the
+        shortest clip.
+        """
+        if self._crossfade_sec <= 0 or len(req.clips) < 2:
+            return 0.0
+        if len(req.audio_tracks) != len(req.clips):
+            return 0.0
+        shortest = min(c.duration_sec for c in req.clips)
+        return max(0.0, min(self._crossfade_sec, shortest / 2 - 0.05))
+
+    def _build_crossfade_video_chain(
+        self, n: int, durations: list[float], transition: float,
+    ) -> tuple[str, str]:
+        """xfade chain over n pre-indexed [0:v]..[n-1:v] inputs. Returns
+        (filter statements joined by ';', final output label)."""
+        scale_pad = (
+            f"fps={self._target_fps},"
+            f"scale={self._width}:{self._height}"
+            ":force_original_aspect_ratio=decrease,"
+            f"pad={self._width}:{self._height}"
+            ":(ow-iw)/2:(oh-ih)/2:color=black,setsar=1"
+        )
+        stmts = []
+        labels = []
+        for i in range(n):
+            lbl = f"vs{i}"
+            stmts.append(f"[{i}:v]{scale_pad}[{lbl}]")
+            labels.append(lbl)
+
+        prev = labels[0]
+        cum = durations[0]
+        for i in range(1, n):
+            offset = max(cum - transition, 0.0)
+            out = f"vx{i}"
+            stmts.append(
+                f"[{prev}][{labels[i]}]xfade=transition=fade"
+                f":duration={transition:.3f}:offset={offset:.3f}[{out}]"
+            )
+            cum = cum + durations[i] - transition
+            prev = out
+        return ";".join(stmts), prev
+
+    def _build_crossfade_audio_chain(
+        self, n: int, input_offset: int, transition: float,
+    ) -> tuple[str, str]:
+        """acrossfade chain over n audio inputs starting at input_offset."""
+        stmts = []
+        prev = f"{input_offset}:a"
+        for i in range(1, n):
+            out = f"ax{i}"
+            stmts.append(
+                f"[{prev}][{input_offset + i}:a]acrossfade=d={transition:.3f}[{out}]"
+            )
+            prev = out
+        return ";".join(stmts), prev
+
     def _build_ffmpeg_args(
         self,
         concat_file: Path,
@@ -236,6 +319,13 @@ class FfmpegAssembleAdapter(AssembleVideo):
         req: AssembleRequest,
         overlays: list = (),
     ) -> list[str]:
+        transition = self._crossfade_transition(req)
+
+        if transition > 0:
+            return self._build_crossfade_ffmpeg_args(
+                caption_file, output_path, req, overlays, transition
+            )
+
         vf = self._build_filter(caption_file, req.disclosure_label_required, overlays)
         args = [
             self._ffmpeg_bin, "-y",
@@ -250,6 +340,51 @@ class FfmpegAssembleAdapter(AssembleVideo):
             "-filter_complex", vf,
             "-map", "[v]",
             "-map", "1:a",
+            "-c:v", self._video_codec,
+            "-crf", str(self._crf),
+            "-preset", "medium",
+            "-c:a", self._audio_codec,
+            "-b:a", "128k",
+            "-movflags", "+faststart",
+            "-shortest",
+            str(output_path),
+        ]
+        return args
+
+    def _build_crossfade_ffmpeg_args(
+        self,
+        caption_file: Path,
+        output_path: Path,
+        req: AssembleRequest,
+        overlays: list,
+        transition: float,
+    ) -> list[str]:
+        """One -i per clip + one -i per per-shot audio track, joined with
+        xfade/acrossfade instead of a hard-cut concat demuxer."""
+        n = len(req.clips)
+        durations = [c.duration_sec for c in req.clips]
+
+        video_stmts, video_label = self._build_crossfade_video_chain(n, durations, transition)
+        audio_stmts, audio_label = self._build_crossfade_audio_chain(n, n, transition)
+
+        caption_filter = self._build_filter(
+            caption_file, req.disclosure_label_required, overlays,
+            base_video_label=f"[{video_label}]",
+            overlay_input_offset=2 * n,
+        )
+        vf = f"{video_stmts};{audio_stmts};{caption_filter}"
+
+        args = [self._ffmpeg_bin, "-y"]
+        for clip in req.clips:
+            args += ["-i", str(Path(clip.uri).resolve())]
+        for track in req.audio_tracks:
+            args += ["-i", str(Path(track.uri).resolve())]
+        for ov in overlays:
+            args += ["-i", str(ov.png_uri)]
+        args += [
+            "-filter_complex", vf,
+            "-map", "[v]",
+            "-map", f"[{audio_label}]",
             "-c:v", self._video_codec,
             "-crf", str(self._crf),
             "-preset", "medium",

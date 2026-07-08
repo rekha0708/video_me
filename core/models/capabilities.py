@@ -175,6 +175,8 @@ class VideoRequest(BaseModel):
     shot_id: str
     setting: str = ""             # per-shot scene/environment description for the video prompt
     audio_uri: str | None = None  # set when video adapter has native_lipsync=True
+    # Same per-cast style_suffix as RenderCharacterRequest ("" → adapter's cartoon default).
+    style_suffix: str = ""
 
 
 class VideoClip(BaseModel):
@@ -263,6 +265,9 @@ class AssembleRequest(BaseModel):
     made_for_kids: bool = True
     disclosure_label_required: bool = True
     overlays: list[OverlayWindow] = Field(default_factory=list)  # chart panels, time-windowed
+    # Per-shot tracks (same order as clips), used for crossfading clip boundaries.
+    # Empty ([]) → adapter falls back to plain concat + the pre-combined `audio` above.
+    audio_tracks: list[AudioTrack] = Field(default_factory=list)
 
 
 class FinalVideo(BaseModel):

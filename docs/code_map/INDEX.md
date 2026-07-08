@@ -121,6 +121,7 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `tests/test_generate_video.py` — (no module docstring)
 - `tests/test_gpu_sequencer.py` — (no module docstring)
 - `tests/test_lip_sync.py` — (no module docstring)
+- `tests/test_ltx_render.py` — Unit tests for LtxAdapter prompt/workflow building (no ComfyUI calls).
 - `tests/test_musubi_render.py` — Unit tests for MusubiFluxAdapter param-driven behavior (no subprocess).
 - `tests/test_phase0_models.py` — (no module docstring)
 - `tests/test_phase0_workflow.py` — (no module docstring)

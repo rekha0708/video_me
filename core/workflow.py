@@ -733,12 +733,12 @@ async def _generate_shot_video(
     log_event(logger, "shot_video_started", shot_id=shot.shot_id, speaker=speaker_id)
 
     # ── 1. synthesize_voice ───────────────────────────────────────────────────
+    vparams = load_cast_params(cast.id).get(speaker_id)
     audio_files = sorted((work_dir / "audio" / speaker_id).glob("*.wav"))
     if opts.resume and audio_files:
         logger.info("Skipping synthesize_voice for %s (audio exists)", shot.shot_id)
         audio_track = AudioTrack(uri=str(audio_files[0]), duration_sec=shot.duration_sec)
     else:
-        vparams = load_cast_params(cast.id).get(speaker_id)
         voice_ref = (vparams.voice_file if vparams and vparams.voice_file
                      else speaker.voice_profile_ref)
         audio_track = await adapters.voice.run(
@@ -775,6 +775,7 @@ async def _generate_shot_video(
                 shot_id=shot.shot_id,
                 setting=shot.setting,
                 audio_uri=audio_track.uri if native_lipsync else None,
+                style_suffix=vparams.style_suffix if vparams else "",
             )
         )
 
@@ -1283,6 +1284,7 @@ async def _run_to_assembled_video(
             made_for_kids=config.channel_profile.made_for_kids,
             disclosure_label_required=config.channel_profile.disclosure_label_required,
             overlays=overlay_windows,
+            audio_tracks=audio_tracks,
         ),
         job, artifact_store, job_store,
         stage_hook=opts.stage_hook,

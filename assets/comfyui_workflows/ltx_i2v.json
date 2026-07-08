@@ -33,10 +33,10 @@
   "5": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "blurry, low quality, deformed, distorted, static",
+      "text": "blurry, low quality, deformed, distorted, static, flicker, flashing light, grey filter, desaturation, sudden brightness change, lens flare, bloom, glowing artifacts, color shift, exposure shift",
       "clip": ["3", 0]
     },
-    "_meta": {"title": "Negative Prompt"}
+    "_meta": {"title": "__NEGATIVE__"}
   },
   "6": {
     "class_type": "LTXVConditioning",
