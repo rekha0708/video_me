@@ -610,6 +610,21 @@ class DashboardWorker:
             self.repo.record_event(job_id, "phase_completed", "Phase 'transcribe' done.", stage_name="transcribe")
             return
 
+        job_settings = self._config_for_job(req).settings
+        if bool(getattr(job_settings, "auto_approve_transcript", False)):
+            # Operator disabled this gate at job creation (unattended run).
+            self.repo.update_job_status(job_id, DashboardJobStatus.COMPLETED, completed=True)
+            self.repo.append_completed_phase(job_id, "transcribe")
+            self.repo.record_event(
+                job_id,
+                "approval_granted",
+                "Transcript auto-approved (review gate disabled for this job). "
+                "Phase 'transcribe' done.",
+                stage_name="transcribe",
+            )
+            logger.info("Job %s: transcript auto-approved (gate disabled)", job_id)
+            return
+
         iteration = 1
         while iteration <= self._TRANSCRIPT_REVIEW_MAX_ITERATIONS:
             approval = self.repo.create_approval_request(

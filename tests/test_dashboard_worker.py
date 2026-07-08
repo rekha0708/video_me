@@ -408,3 +408,39 @@ async def test_image_adapter_auto_approve_returns_winner_uris(tmp_path: Path) ->
     assert result.approved_uris == ["/tmp/a.png", "/tmp/b1.png"]
     assert result.overrides == {}
     assert repo.get_pending_approval(job.job_id) is None
+
+
+@pytest.mark.asyncio
+async def test_transcript_gate_auto_approve_short_circuits(tmp_path: Path) -> None:
+    from core.models.dashboard import DashboardJobOverrides
+
+    worker, repo = _make_worker(tmp_path)
+    req = _plan_request().model_copy(update={
+        "overrides": DashboardJobOverrides(auto_approve_transcript=True)
+    })
+    job, _ = repo.create_queued_job(req)
+
+    with patch.object(worker, "_load_transcript_artifact",
+                      return_value={"segments": [{"text": "hello"}]}):
+        await worker._run_transcript_review_gate(req, job.job_id)
+
+    saved = repo.get_job(job.job_id)
+    assert saved is not None
+    assert saved.status == DashboardJobStatus.COMPLETED
+    assert "transcribe" in saved.completed_phases
+    assert repo.get_pending_approval(job.job_id) is None  # no review gate created
+    events = [e.event_type for e in repo.list_events(job.job_id)]
+    assert "approval_granted" in events
+
+
+def test_overrides_merge_auto_approve_transcript(tmp_path: Path) -> None:
+    from core.models.dashboard import DashboardJobOverrides
+
+    worker, _ = _make_worker(tmp_path)
+    req = _plan_request().model_copy(update={
+        "overrides": DashboardJobOverrides(auto_approve_transcript=True)
+    })
+    cfg = worker._config_for_job(req)
+    assert cfg.settings.auto_approve_transcript is True
+    # default stays gated
+    assert worker._config_for_job(_plan_request()).settings.auto_approve_transcript is False

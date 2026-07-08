@@ -105,6 +105,7 @@ class DashboardJobOverrides(BaseModel):
     image_candidates: int | None = Field(default=None, ge=1, le=10)
     auto_approve_plan: bool | None = None
     auto_approve_images: bool | None = None
+    auto_approve_transcript: bool | None = None
 
 
 class LoraTrainingRequest(BaseModel):

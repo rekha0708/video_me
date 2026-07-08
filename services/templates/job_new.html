@@ -163,6 +163,10 @@
         <input type="checkbox" name="auto_approve_images" id="nj-auto-approve-images">
         <span>Skip image approval (auto-accept rendered picks)</span>
       </label>
+      <label class="checkbox-row">
+        <input type="checkbox" name="auto_approve_transcript" id="nj-auto-approve-transcript">
+        <span>Skip transcript review (story / transcribe phase)</span>
+      </label>
       <div class="form-hint">
         For unattended long runs: the job proceeds without waiting for human
         review at the checked gates. Leave unchecked to review in the dashboard.
@@ -489,6 +493,7 @@ async function submitNewJob(e) {
     if (videoAdapter) overrides.video_adapter = videoAdapter;
     if (document.getElementById("nj-auto-approve-plan").checked) overrides.auto_approve_plan = true;
     if (document.getElementById("nj-auto-approve-images").checked) overrides.auto_approve_images = true;
+    if (document.getElementById("nj-auto-approve-transcript").checked) overrides.auto_approve_transcript = true;
     const body = {
       source: { kind: sourceKind, url: sourceUrl },
       rights_cleared: document.getElementById("nj-rights").checked,

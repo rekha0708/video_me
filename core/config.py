@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     # --- plan critique loop ---
     max_plan_iterations: int = 3          # max LLM critique re-plans before failing
     auto_approve_plan: bool = False       # set True in CI / smoke tests to skip approval UI
+    auto_approve_transcript: bool = False  # skip the story/transcribe review gate (dashboard jobs)
 
     # --- human approval web UI (storyboard) ---
     approval_port: int = 8765
