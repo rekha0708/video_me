@@ -26,5 +26,6 @@ MEMBERS = {
             "photorealistic, cinematic lighting, natural skin texture, "
             "sharp focus, high detail, realistic photography"
         ),
+        "voice_file": "voices/lady_model/meera",
     },
 }
