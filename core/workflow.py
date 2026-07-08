@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace as _dc_replace
 from pathlib import Path
@@ -25,6 +26,7 @@ from core.models.capabilities import (
     ImageApprovalRequest,
     ImageCritiqueRequest,
     ImageCritiqueResult,
+    ImageSet,
     LipSyncRequest,
     PlanShotsRequest,
     PublishRequest,
@@ -455,6 +457,7 @@ def _shot_render_request(
         expression=None,
         shot_id=shot.shot_id,
         camera=shot.camera,
+        action=shot.action,
         other_members=other_members,
         lora_file=params.lora_file if params else "",
         lora_weight=params.lora_weight if params else None,
@@ -496,10 +499,42 @@ async def _phase_a_prefetch_renders(
 
     if not pending:
         return {}
+
+    # Dedup identically specified shots (same member/setting/camera/action/params
+    # → byte-identical render prompt): render the first occurrence, copy its PNGs
+    # into each duplicate's dir. With action in the prompt this only fires when
+    # the plan itself repeats a shot spec, so it can't flatten visual variety.
+    unique: dict[str, tuple[Shot, RenderCharacterRequest]] = {}
+    duplicates: dict[str, list[Shot]] = {}
+    for shot, req in pending:
+        fingerprint = req.model_dump_json(exclude={"shot_id"})
+        if fingerprint in unique:
+            duplicates.setdefault(fingerprint, []).append(shot)
+        else:
+            unique[fingerprint] = (shot, req)
+
     log_event(logger, "phase_a_batch_render", shots=len(pending),
-              candidates=len(pending) * num_candidates)
-    image_sets = await adapters.render.run_many([req for _, req in pending])
-    return {shot.shot_id: image_set for (shot, _), image_set in zip(pending, image_sets)}
+              unique_renders=len(unique),
+              candidates=len(unique) * num_candidates)
+    image_sets = await adapters.render.run_many(
+        [req for _, req in unique.values()]
+    )
+
+    out: dict[str, ImageSet] = {}
+    for (fingerprint, (rep_shot, rep_req)), image_set in zip(unique.items(), image_sets):
+        out[rep_shot.shot_id] = image_set
+        for dup_shot in duplicates.get(fingerprint, []):
+            dup_dir = work_dir / "renders" / dup_shot.shot_id / rep_req.member.id
+            dup_dir.mkdir(parents=True, exist_ok=True)
+            copied: list[str] = []
+            for src in image_set.images:
+                dst = dup_dir / Path(src).name
+                shutil.copyfile(src, dst)
+                copied.append(str(dst))
+            out[dup_shot.shot_id] = ImageSet(member_id=image_set.member_id, images=copied)
+            log_event(logger, "render_deduplicated",
+                      shot_id=dup_shot.shot_id, source_shot=rep_shot.shot_id)
+    return out
 
 
 async def _render_shot_candidates(
@@ -554,6 +589,21 @@ async def _render_shot_candidates(
         render_result = await adapters.render.run(
             _shot_render_request(shot, primary, other_members, params)
         )
+
+    if len(render_result.images) == 1:
+        # Nothing to rank — skip the ~30-40s VLM call and auto-pick the single
+        # candidate. The human image-approval gate stays as the quality check.
+        critique = ImageCritiqueResult(
+            winner_index=0,
+            winner_uri=render_result.images[0],
+            candidate_uris=list(render_result.images),
+            overall_reasoning="single candidate — VLM critique skipped",
+            origin="single",
+        )
+        log_event(logger, "image_critique_skipped_single", shot_id=shot.shot_id)
+        critique_path.parent.mkdir(parents=True, exist_ok=True)
+        critique_path.write_text(critique.model_dump_json())
+        return critique
 
     if other_members:
         other_names = ", ".join(m.name for m in other_members)

@@ -761,15 +761,27 @@ async def test_render_single_char_no_other_members(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_critique_request_has_other_descriptors(tmp_path: Path) -> None:
-    """Two-character shot passes other_descriptors to image critique."""
-    mock_render, _ = _make_render_spy()
+    """Two-character shot passes other_descriptors to image critique.
+
+    Uses 2 candidates — with a single candidate the VLM critique is skipped
+    entirely (auto-pick), so this flow only exists for N ≥ 2.
+    """
+    mock_render = AsyncMock()
+
+    async def spy_render_run(request):
+        from core.models.capabilities import ImageSet
+        return ImageSet(member_id=request.member.id,
+                        images=["/tmp/render_00.png", "/tmp/render_01.png"])
+
+    mock_render.run = spy_render_run
+    mock_render._num_images = 2
     captured_critique = []
 
     async def spy_critique(request):
         captured_critique.append(request)
         return ImageCritiqueResult(
             winner_index=0, winner_uri="/tmp/render_00.png",
-            candidate_uris=["/tmp/render_00.png"],
+            candidate_uris=["/tmp/render_00.png", "/tmp/render_01.png"],
         )
 
     adapters = MagicMock()

@@ -90,11 +90,13 @@ class DashboardPlanApprovalAdapter:
         *,
         poll_interval: float = 5.0,
         timeout_hours: float = 4.0,
+        auto_approve: bool = False,
     ) -> None:
         self._repo = repo
         self._job_id = job_id
         self._poll_interval = poll_interval
         self._timeout_hours = timeout_hours
+        self._auto_approve = auto_approve
 
     async def request_approval(
         self,
@@ -106,6 +108,16 @@ class DashboardPlanApprovalAdapter:
     ) -> tuple[bool, str]:
         """Write an approval request to the repo and wait for the operator's decision."""
         from core.models.dashboard import DashboardApprovalKind
+
+        if self._auto_approve:
+            # Operator disabled this gate at job creation (unattended run).
+            self._repo.record_event(
+                self._job_id,
+                "approval_granted",
+                "Plan auto-approved (approval gate disabled for this job).",
+            )
+            logger.info("Job %s: plan auto-approved (gate disabled)", self._job_id)
+            return True, ""
 
         payload = _storyboard_to_payload(storyboard, critique)
         payload["iteration"] = iteration

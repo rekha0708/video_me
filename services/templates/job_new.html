@@ -152,6 +152,23 @@
       <div class="form-hint">Which video generation backend to use for this job only.</div>
     </div>
 
+    {# ── Approval gates ── #}
+    <div class="form-row">
+      <label>Approval gates</label>
+      <label class="checkbox-row">
+        <input type="checkbox" name="auto_approve_plan" id="nj-auto-approve-plan">
+        <span>Skip storyboard approval (auto-approve the plan)</span>
+      </label>
+      <label class="checkbox-row">
+        <input type="checkbox" name="auto_approve_images" id="nj-auto-approve-images">
+        <span>Skip image approval (auto-accept rendered picks)</span>
+      </label>
+      <div class="form-hint">
+        For unattended long runs: the job proceeds without waiting for human
+        review at the checked gates. Leave unchecked to review in the dashboard.
+      </div>
+    </div>
+
     {# ── Rights ── #}
     <div class="form-row">
       <label class="checkbox-row">
@@ -468,12 +485,16 @@ async function submitNewJob(e) {
 
     const videoAdapter = document.getElementById("nj-video-adapter").value;
     const castSel = document.getElementById("nj-cast");
+    const overrides = {};
+    if (videoAdapter) overrides.video_adapter = videoAdapter;
+    if (document.getElementById("nj-auto-approve-plan").checked) overrides.auto_approve_plan = true;
+    if (document.getElementById("nj-auto-approve-images").checked) overrides.auto_approve_images = true;
     const body = {
       source: { kind: sourceKind, url: sourceUrl },
       rights_cleared: document.getElementById("nj-rights").checked,
       target_language: document.getElementById("nj-lang").value,
       phase: document.getElementById("nj-phase").value,
-      overrides: videoAdapter ? { video_adapter: videoAdapter } : {},
+      overrides,
     };
     if (castSel && castSel.value) body.cast_ref = castSel.value;
     if (storyText) body.story_text = storyText;

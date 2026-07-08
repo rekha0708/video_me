@@ -335,3 +335,76 @@ async def test_worker_does_not_claim_when_queue_empty(tmp_path: Path) -> None:
 
     # No jobs were created so nothing should be claimed.
     assert repo.latest_worker_heartbeat() is not None
+
+
+# ---------------------------------------------------------------------------
+# Approval gate auto-approve wiring (per-job overrides → dashboard adapters)
+# ---------------------------------------------------------------------------
+
+def test_make_approval_overrides_defaults_to_gated(tmp_path: Path) -> None:
+    worker, _ = _make_worker(tmp_path)
+    req = _plan_request()
+    cfg = worker._config_for_job(req)
+    overrides = worker._make_approval_overrides(req, "job-1", settings=cfg.settings)
+    assert overrides["approval"]._auto_approve is False
+    assert overrides["image_approval"]._auto_approve is False
+
+
+def test_make_approval_overrides_honours_job_overrides(tmp_path: Path) -> None:
+    from core.models.dashboard import DashboardJobOverrides
+
+    worker, _ = _make_worker(tmp_path)
+    req = _plan_request().model_copy(update={
+        "overrides": DashboardJobOverrides(
+            auto_approve_plan=True, auto_approve_images=True,
+        )
+    })
+    cfg = worker._config_for_job(req)
+    overrides = worker._make_approval_overrides(req, "job-1", settings=cfg.settings)
+    assert overrides["approval"]._auto_approve is True
+    assert overrides["image_approval"]._auto_approve is True
+
+
+@pytest.mark.asyncio
+async def test_plan_adapter_auto_approve_short_circuits(tmp_path: Path) -> None:
+    from adapters.approval.dashboard_approval_adapter import DashboardPlanApprovalAdapter
+
+    repo = _repo(tmp_path)
+    job, _ = repo.create_queued_job(_plan_request())
+    adapter = DashboardPlanApprovalAdapter(repo, job.job_id, auto_approve=True)
+
+    approved, notes = await adapter.request_approval(
+        storyboard=MagicMock(shots=[]), script=None, cast=None, critique=None,
+    )
+
+    assert approved is True and notes == ""
+    assert repo.get_pending_approval(job.job_id) is None  # no gate created
+    events = [e.event_type for e in repo.list_events(job.job_id)]
+    assert "approval_granted" in events
+
+
+@pytest.mark.asyncio
+async def test_image_adapter_auto_approve_returns_winner_uris(tmp_path: Path) -> None:
+    from adapters.approval.dashboard_image_approval_adapter import (
+        DashboardImageApprovalAdapter,
+    )
+    from core.models.capabilities import ImageApprovalRequest, ImageCritiqueResult
+
+    repo = _repo(tmp_path)
+    job, _ = repo.create_queued_job(_plan_request())
+    adapter = DashboardImageApprovalAdapter(repo, job.job_id, auto_approve=True)
+
+    critiques = [
+        ImageCritiqueResult(winner_index=0, winner_uri="/tmp/a.png",
+                            candidate_uris=["/tmp/a.png"]),
+        ImageCritiqueResult(winner_index=1, winner_uri="/tmp/b1.png",
+                            candidate_uris=["/tmp/b0.png", "/tmp/b1.png"]),
+    ]
+    result = await adapter.run(ImageApprovalRequest(
+        shots=[MagicMock(shot_id="s01"), MagicMock(shot_id="s02")],
+        critique_results=critiques, cast_id="kids_duo",
+    ))
+
+    assert result.approved_uris == ["/tmp/a.png", "/tmp/b1.png"]
+    assert result.overrides == {}
+    assert repo.get_pending_approval(job.job_id) is None

@@ -429,7 +429,9 @@ class DashboardWorker:
 
         # Build dashboard approval adapters so approval gates use the repo
         # instead of blocking flag-file servers.
-        approval_overrides = self._make_approval_overrides(req, job_id)
+        approval_overrides = self._make_approval_overrides(
+            req, job_id, settings=job_config.settings
+        )
 
         # Story input modes: pre-seed fetch_media + transcribe artifacts from the
         # pasted story so the pipeline (run with resume=True) skips yt-dlp/Whisper.
@@ -748,17 +750,29 @@ class DashboardWorker:
             return transcript
 
     def _make_approval_overrides(
-        self, req: CreateDashboardJobRequest, job_id: str
+        self, req: CreateDashboardJobRequest, job_id: str, settings: Any = None
     ) -> dict[str, Any]:
-        """Return approval adapter overrides that use the dashboard repo."""
+        """Return approval adapter overrides that use the dashboard repo.
+
+        auto_approve_plan/auto_approve_images come from the job's overrides
+        (merged onto Settings by _config_for_job) — checking them here matters
+        because these dashboard adapters REPLACE the workflow-built ones, which
+        are the only place the settings flags are otherwise honoured.
+        """
         from adapters.approval.dashboard_approval_adapter import DashboardPlanApprovalAdapter
         from adapters.approval.dashboard_image_approval_adapter import (
             DashboardImageApprovalAdapter,
         )
 
+        auto_plan = bool(getattr(settings, "auto_approve_plan", False))
+        auto_images = bool(getattr(settings, "auto_approve_images", False))
         return {
-            "approval": DashboardPlanApprovalAdapter(self.repo, job_id),
-            "image_approval": DashboardImageApprovalAdapter(self.repo, job_id),
+            "approval": DashboardPlanApprovalAdapter(
+                self.repo, job_id, auto_approve=auto_plan
+            ),
+            "image_approval": DashboardImageApprovalAdapter(
+                self.repo, job_id, auto_approve=auto_images
+            ),
         }
 
     # ------------------------------------------------------------------

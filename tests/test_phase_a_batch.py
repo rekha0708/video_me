@@ -57,9 +57,12 @@ async def test_prefetch_batches_all_pending_shots_into_one_run_many(tmp_path: Pa
     ]
     adapters.render.run_many = AsyncMock(return_value=image_sets)
 
-    result = await _phase_a_prefetch_renders(
-        [_shot("s01"), _shot("s02")], _cast(), adapters, tmp_path
-    )
+    # distinct actions → no dedup; both shots render
+    shots = [
+        _shot("s01").model_copy(update={"action": "peeks around a tree"}),
+        _shot("s02").model_copy(update={"action": "waves at the camera"}),
+    ]
+    result = await _phase_a_prefetch_renders(shots, _cast(), adapters, tmp_path)
 
     adapters.render.run_many.assert_awaited_once()
     requests = adapters.render.run_many.await_args.args[0]
@@ -109,20 +112,102 @@ async def test_prefetch_noop_when_everything_cached(tmp_path: Path) -> None:
 async def test_render_shot_candidates_uses_prefetched_and_skips_render(
     tmp_path: Path,
 ) -> None:
-    adapters = _adapters()
+    adapters = _adapters(num_images=2)
     adapters.render.run = AsyncMock()  # must NOT be called
+    uris = ["/tmp/pref/render_00.png", "/tmp/pref/render_01.png"]
     critique = ImageCritiqueResult(
-        winner_index=0, winner_uri="/tmp/pref/render_00.png",
-        candidate_uris=["/tmp/pref/render_00.png"],
+        winner_index=0, winner_uri=uris[0], candidate_uris=uris,
     )
     adapters.image_critique.run = AsyncMock(return_value=critique)
 
-    prefetched = ImageSet(member_id="fox", images=["/tmp/pref/render_00.png"])
+    prefetched = ImageSet(member_id="fox", images=uris)
     result = await _render_shot_candidates(
         _shot("s01"), _cast(), adapters, tmp_path, prefetched=prefetched
     )
 
     adapters.render.run.assert_not_awaited()
     critique_req = adapters.image_critique.run.await_args.args[0]
-    assert critique_req.candidate_uris == ["/tmp/pref/render_00.png"]
-    assert result.winner_uri == "/tmp/pref/render_00.png"
+    assert critique_req.candidate_uris == uris
+    assert result.winner_uri == uris[0]
+
+
+@pytest.mark.asyncio
+async def test_single_candidate_skips_vlm_critique(tmp_path: Path) -> None:
+    """N=1 → no VLM call; auto-picked winner with origin='single', json persisted."""
+    adapters = _adapters(num_images=1)
+    adapters.render.run = AsyncMock(
+        return_value=ImageSet(member_id="fox", images=["/tmp/only/render_00.png"])
+    )
+    adapters.image_critique.run = AsyncMock()  # must NOT be called
+
+    result = await _render_shot_candidates(_shot("s01"), _cast(), adapters, tmp_path)
+
+    adapters.image_critique.run.assert_not_awaited()
+    assert result.winner_uri == "/tmp/only/render_00.png"
+    assert result.origin == "single"
+    # persisted for resume
+    cached = (tmp_path / "critique" / "s01.json").read_text()
+    assert "single candidate" in cached
+
+
+def _shot_with_action(shot_id: str, action: str) -> Shot:
+    shot = _shot(shot_id)
+    return shot.model_copy(update={"action": action})
+
+
+@pytest.mark.asyncio
+async def test_prefetch_dedups_identically_specified_shots(tmp_path: Path) -> None:
+    """Same member+setting+camera+action → one render, PNGs copied to the dup."""
+    adapters = _adapters()
+
+    async def fake_run_many(requests):
+        sets = []
+        for req in requests:
+            d = tmp_path / "renders" / req.shot_id / req.member.id
+            d.mkdir(parents=True, exist_ok=True)
+            p = d / "render_00.png"
+            p.write_bytes(b"png")
+            sets.append(ImageSet(member_id=req.member.id, images=[str(p)]))
+        return sets
+
+    adapters.render.run_many = AsyncMock(side_effect=fake_run_many)
+
+    same = "waves at the camera"
+    result = await _phase_a_prefetch_renders(
+        [_shot_with_action("s01", same), _shot_with_action("s02", same)],
+        _cast(), adapters, tmp_path,
+    )
+
+    requests = adapters.render.run_many.await_args.args[0]
+    assert len(requests) == 1  # deduped
+    assert set(result) == {"s01", "s02"}
+    dup_png = tmp_path / "renders" / "s02" / "fox" / "render_00.png"
+    assert dup_png.exists()
+    assert result["s02"].images == [str(dup_png)]
+
+
+@pytest.mark.asyncio
+async def test_prefetch_does_not_dedup_different_actions(tmp_path: Path) -> None:
+    adapters = _adapters()
+
+    async def fake_run_many(requests):
+        sets = []
+        for req in requests:
+            d = tmp_path / "renders" / req.shot_id / req.member.id
+            d.mkdir(parents=True, exist_ok=True)
+            p = d / "render_00.png"
+            p.write_bytes(b"png")
+            sets.append(ImageSet(member_id=req.member.id, images=[str(p)]))
+        return sets
+
+    adapters.render.run_many = AsyncMock(side_effect=fake_run_many)
+
+    result = await _phase_a_prefetch_renders(
+        [_shot_with_action("s01", "waves"), _shot_with_action("s02", "jumps")],
+        _cast(), adapters, tmp_path,
+    )
+
+    requests = adapters.render.run_many.await_args.args[0]
+    assert [r.shot_id for r in requests] == ["s01", "s02"]  # both rendered
+    assert requests[0].action == "waves" and requests[1].action == "jumps"
+    assert set(result) == {"s01", "s02"}

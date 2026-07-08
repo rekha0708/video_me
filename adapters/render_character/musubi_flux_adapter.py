@@ -350,6 +350,10 @@ class MusubiFluxAdapter(RenderCharacter):
         if req.trigger.strip():
             parts.append(req.trigger.strip())
         parts += [req.member.visual_descriptor, f"in {req.setting}"]
+        if req.action.strip():
+            # Shot-specific pose/angle so consecutive shots in the same setting
+            # don't all start from an identical-looking base frame.
+            parts.append(req.action.strip())
         for other in req.other_members:
             parts.append(f"also present: {other.visual_descriptor}")
         framing = camera_phrase(req.camera)

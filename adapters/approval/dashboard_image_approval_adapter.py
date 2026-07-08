@@ -69,15 +69,35 @@ class DashboardImageApprovalAdapter:
         *,
         poll_interval: float = 5.0,
         timeout_hours: float = 4.0,
+        auto_approve: bool = False,
     ) -> None:
         self._repo = repo
         self._job_id = job_id
         self._poll_interval = poll_interval
         self._timeout_hours = timeout_hours
+        self._auto_approve = auto_approve
 
     async def run(self, req: ImageApprovalRequest) -> ImageApprovalResult:
         """Write image approval request to repo; return operator-confirmed URIs."""
         from core.models.dashboard import DashboardApprovalKind
+
+        if self._auto_approve:
+            # Operator disabled this gate at job creation (unattended run) —
+            # accept the VLM/single-candidate picks as-is.
+            self._repo.record_event(
+                self._job_id,
+                "approval_granted",
+                f"Images auto-approved for {len(req.shots)} shots "
+                "(approval gate disabled for this job).",
+            )
+            logger.info(
+                "Job %s: images auto-approved (gate disabled, %d shots)",
+                self._job_id, len(req.shots),
+            )
+            return ImageApprovalResult(
+                approved_uris=[r.winner_uri for r in req.critique_results],
+                overrides={},
+            )
 
         payload = _build_request_payload(req)
         approval = self._repo.create_approval_request(

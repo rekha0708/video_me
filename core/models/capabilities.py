@@ -132,6 +132,7 @@ class RenderCharacterRequest(BaseModel):
     expression: str | None = None
     shot_id: str = ""  # scopes render output per shot so per-shot backgrounds don't collide
     camera: str = ""   # Shot.camera framing (close-up/medium/reaction/wide) → render prompt
+    action: str = ""   # Shot.action → render prompt, so each still shows the shot's pose/angle
     other_members: list[CastMember] = Field(default_factory=list)
     # Per-cast overrides from config/casts/<cast>/params.py (None/"" → adapter defaults).
     lora_file: str = ""
@@ -203,8 +204,9 @@ class ImageCritiqueResult(BaseModel):
     candidate_scores: list[ImageCandidateScore] = Field(default_factory=list)
     overall_reasoning: str = ""
     # "vlm": winner picked by the VLM critique; "user": synthetic result built
-    # from user-provided reference images (story_images mode — no render/VLM ran).
-    origin: Literal["vlm", "user"] = "vlm"
+    # from user-provided reference images (story_images mode — no render/VLM ran);
+    # "single": only one candidate was rendered, so the VLM call was skipped.
+    origin: Literal["vlm", "user", "single"] = "vlm"
 
 
 class ImageApprovalRequest(BaseModel):

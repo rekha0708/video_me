@@ -272,3 +272,15 @@ async def test_run_many_subprocess_failure_raises(tmp_path: Path, monkeypatch) -
 
     with pytest.raises(RuntimeError, match="exit 1"):
         await adapter.run(_req(tmp_path))
+
+
+def test_build_prompt_includes_shot_action(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    req = RenderCharacterRequest(
+        member=_member(), setting="cozy kitchen", shot_id="s01",
+        camera="close-up", action="stirs a bowl of batter with a big grin",
+    )
+    prompt = adapter._build_prompt(req, skip_lora=False)
+    assert "stirs a bowl of batter" in prompt
+    # action sits between setting and camera framing
+    assert prompt.index("cozy kitchen") < prompt.index("stirs a bowl") < prompt.index("close-up shot")
