@@ -140,6 +140,9 @@ class RenderCharacterRequest(BaseModel):
     steps: int | None = None
     guidance_scale: float | None = None
     trigger: str = ""
+    # Appended to the render prompt ("" → adapter's cartoon-style default, kept
+    # for the original kids_duo cast; photorealistic casts should set this).
+    style_suffix: str = ""
 
 
 class ImageSet(BaseModel):

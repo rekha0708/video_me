@@ -39,6 +39,7 @@ class CastMemberParams(BaseModel):
     guidance_scale: float | None = None
     trigger: str = ""                      # optional prompt trigger token(s)
     voice_file: str = ""                   # voice_profile_ref-form override
+    style_suffix: str = ""                 # appended to render prompt ("" → adapter's cartoon default)
 
 
 class CastPairParams(BaseModel):
@@ -47,6 +48,7 @@ class CastPairParams(BaseModel):
     steps: int | None = None
     guidance_scale: float | None = None
     trigger: str = ""
+    style_suffix: str = ""
 
 
 # Loaded modules are cached per (cast_id, casts_dir) so a job doesn't re-exec

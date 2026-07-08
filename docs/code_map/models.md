@@ -10,6 +10,7 @@
 - `guidance_scale: float | None` = `None`
 - `trigger: str` = `''`
 - `voice_file: str` = `''`
+- `style_suffix: str` = `''`
 
 ### `CastPairParams` (BaseModel) — `core/cast_params.py`
 
@@ -18,6 +19,7 @@
 - `steps: int | None` = `None`
 - `guidance_scale: float | None` = `None`
 - `trigger: str` = `''`
+- `style_suffix: str` = `''`
 
 ### `Settings` (BaseSettings) — `core/config.py`
 
@@ -204,6 +206,7 @@ A rendered overlay PNG + the absolute time window it is visible in the final vid
 - `steps: int | None` = `None`
 - `guidance_scale: float | None` = `None`
 - `trigger: str` = `''`
+- `style_suffix: str` = `''`
 
 ### `ImageSet` (BaseModel) — `core/models/capabilities.py`
 

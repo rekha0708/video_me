@@ -14,6 +14,13 @@ logger = logging.getLogger(__name__)
 _LORA_EXTENSIONS = (".safetensors", ".pt", ".ckpt")
 _PLACEHOLDER_LORA_PREFIX = b"TEST-ONLY placeholder"
 
+# Default style when a cast's params.py doesn't set style_suffix — preserves the
+# original kids_duo (cartoon) look for any cast that hasn't opted into something else.
+_DEFAULT_STYLE_SUFFIX = (
+    "children's animation style, cartoon, vibrant colors, "
+    "high quality, clean lines, expressive character"
+)
+
 # Path to the bundled workflow template (relative to repo root).
 _WORKFLOW_TEMPLATE = Path("assets/comfyui_workflows/flux_lora_txt2img.json")
 
@@ -203,8 +210,7 @@ class ComfyUIFluxAdapter(RenderCharacter):
             parts.append(framing)
         if req.expression:
             parts.append(req.expression)
-        parts += ["children's animation style, cartoon, vibrant colors",
-                  "high quality, clean lines, expressive character"]
+        parts.append(req.style_suffix or _DEFAULT_STYLE_SUFFIX)
         return ", ".join(parts)
 
     def _build_workflow(self, prompt_text: str, lora_name: str, seed: int) -> dict:

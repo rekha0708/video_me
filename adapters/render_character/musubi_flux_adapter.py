@@ -42,6 +42,13 @@ def _is_placeholder_lora(path: Path) -> bool:
 # map batch outputs back to prompts.
 _OUTPUT_SEED_RE = re.compile(r"_(\d+)__\d{3}\.png$")
 
+# Default style when a cast's params.py doesn't set style_suffix — preserves the
+# original kids_duo (cartoon) look for any cast that hasn't opted into something else.
+_DEFAULT_STYLE_SUFFIX = (
+    "children's animation style, cartoon, vibrant colors, "
+    "high quality, clean lines, expressive character"
+)
+
 
 @dataclass
 class _RenderEntry:
@@ -362,8 +369,5 @@ class MusubiFluxAdapter(RenderCharacter):
             parts.append(framing)
         if req.expression:
             parts.append(req.expression)
-        parts += [
-            "children's animation style, cartoon, vibrant colors",
-            "high quality, clean lines, expressive character",
-        ]
+        parts.append(req.style_suffix or _DEFAULT_STYLE_SUFFIX)
         return ", ".join(parts)

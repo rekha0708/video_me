@@ -25,6 +25,7 @@ def _req(tmp_path: Path, **kwargs) -> RenderCharacterRequest:
         camera=kwargs.get("camera", "close-up"),
         lora_file=kwargs.get("lora_file", ""),
         trigger=kwargs.get("trigger", ""),
+        style_suffix=kwargs.get("style_suffix", ""),
     )
 
 
@@ -44,6 +45,24 @@ def test_build_prompt_without_trigger(tmp_path: Path) -> None:
     adapter = _adapter(tmp_path)
     prompt = adapter._build_prompt(_req(tmp_path), skip_lora=False)
     assert prompt.startswith("cartoon boy")
+
+
+def test_build_prompt_defaults_to_cartoon_style_when_unset(tmp_path: Path) -> None:
+    """No style_suffix on the request (e.g. cast has no params.py) → cartoon default."""
+    adapter = _adapter(tmp_path)
+    prompt = adapter._build_prompt(_req(tmp_path), skip_lora=False)
+    assert "children's animation style, cartoon" in prompt
+
+
+def test_build_prompt_uses_cast_style_suffix_when_set(tmp_path: Path) -> None:
+    """A cast's params.py can override the style (e.g. photorealistic LoRAs)."""
+    adapter = _adapter(tmp_path)
+    prompt = adapter._build_prompt(
+        _req(tmp_path, style_suffix="photorealistic, cinematic lighting"),
+        skip_lora=False,
+    )
+    assert "photorealistic, cinematic lighting" in prompt
+    assert "children's animation style" not in prompt
 
 
 def test_check_lora_prefers_params_lora_file(tmp_path: Path) -> None:

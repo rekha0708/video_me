@@ -29,6 +29,16 @@ def test_loads_real_kids_duo_params() -> None:
     assert params["max"].lora_file == "kids_duo_max.safetensors"
     assert params["max"].lora_weight == 0.9
     assert params["max"].voice_file == "voices/kids_duo/max"
+    assert "cartoon" in params["max"].style_suffix
+
+
+def test_loads_real_lady_model_params() -> None:
+    """lady_model's LoRA is trained on real photos — style_suffix must not be cartoon."""
+    params = load_cast_params("lady_model")
+    assert set(params) == {"Meera"}
+    assert params["Meera"].lora_file == "lady_model_meera.safetensors"
+    assert "photorealistic" in params["Meera"].style_suffix
+    assert "cartoon" not in params["Meera"].style_suffix
 
 
 def test_missing_cast_returns_empty(tmp_path: Path) -> None:

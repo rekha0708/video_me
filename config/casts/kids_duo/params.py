@@ -8,12 +8,18 @@ design/personality lives in config/casts/kids_duo.yaml.
 - steps:          Flux sampling steps (None → adapter default)
 - guidance_scale: Flux guidance (None → adapter default)
 - trigger:        optional token(s) prepended to the render prompt
+- style_suffix:   appended to the render prompt ("" → adapter's cartoon default)
 - voice_file:     voice_profile_ref-form value under settings.voice_dir
                   (resolves to <voice_dir>/<ref>.wav), overrides the YAML
 
 Track B: kids_duo_max.safetensors is currently MISSING and
 kids_duo_zoe.safetensors is a TEST-ONLY placeholder — train both Flux 2.0 LoRAs.
 """
+
+_CARTOON_STYLE = (
+    "children's animation style, cartoon, vibrant colors, "
+    "high quality, clean lines, expressive character"
+)
 
 MEMBERS = {
     "max": {
@@ -22,6 +28,7 @@ MEMBERS = {
         "steps": 20,
         "guidance_scale": 3.5,
         "trigger": "",
+        "style_suffix": _CARTOON_STYLE,
         "voice_file": "voices/kids_duo/max",
     },
     "zoe": {
@@ -30,6 +37,7 @@ MEMBERS = {
         "steps": 20,
         "guidance_scale": 3.5,
         "trigger": "",
+        "style_suffix": _CARTOON_STYLE,
         "voice_file": "voices/kids_duo/zoe",
     },
 }

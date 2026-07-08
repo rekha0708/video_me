@@ -464,6 +464,7 @@ def _shot_render_request(
         steps=params.steps if params else None,
         guidance_scale=params.guidance_scale if params else None,
         trigger=params.trigger if params else "",
+        style_suffix=params.style_suffix if params else "",
     )
 
 
