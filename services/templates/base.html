@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}video_me{% endblock %} — Dashboard</title>
-  <link rel="stylesheet" href="/static/app.css?v=5">
+  <link rel="stylesheet" href="/static/app.css?v=6">
 </head>
 <body>
 
@@ -16,6 +16,9 @@
     </a>
     <a href="/health" class="sidebar-link {% if active == 'health' %}active{% endif %}">
       <span class="icon">◎</span> Health
+    </a>
+    <a href="/gpu" class="sidebar-link {% if active == 'gpu' %}active{% endif %}">
+      <span class="icon">▣</span> GPU
     </a>
     <a href="/api/docs" class="sidebar-link" target="_blank">
       <span class="icon">⊞</span> API Docs

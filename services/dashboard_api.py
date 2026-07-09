@@ -28,6 +28,7 @@ from scripts.check_runtime_readiness import (
     collect_readiness_results,
 )
 from services.dashboard_repository import DashboardRepository
+from services.gpu_status import collect_gpu_status
 
 _TERMINAL_STATUSES = {
     DashboardJobStatus.COMPLETED,
@@ -304,6 +305,13 @@ def create_app(
             allow_missing_services=True,
         )
         return _base_response({"services": [_result_to_dict(result) for result in results]})
+
+    @app.get("/api/runtime/gpu-status")
+    def runtime_gpu_status(log_lines: int = 120) -> dict[str, Any]:
+        log_lines = max(10, min(int(log_lines), 500))
+        return _base_response(
+            collect_gpu_status(workspace=Path.cwd(), log_lines=log_lines)
+        )
 
     @app.get("/api/config/defaults")
     def config_defaults() -> dict[str, Any]:
@@ -1301,13 +1309,18 @@ def create_app(
         def ui_jobs_list():
             jobs = repo.list_jobs(limit=100)
             worker_hb = repo.latest_worker_heartbeat()
-            return _render("jobs_list.html", jobs=jobs, worker=worker_hb)
+            return _render("jobs_list.html", jobs=jobs, worker=worker_hb, active="jobs")
 
         @app.get("/jobs/new", include_in_schema=False)
         def ui_new_job():
-            return _render("job_new.html",
-                          cast_members=config.cast.members,
-                          default_cast_id=config.cast.id)
+            worker_hb = repo.latest_worker_heartbeat()
+            return _render(
+                "job_new.html",
+                cast_members=config.cast.members,
+                default_cast_id=config.cast.id,
+                worker=worker_hb,
+                active="jobs",
+            )
 
         @app.get("/jobs/{job_id}", include_in_schema=False)
         def ui_job_detail(job_id: str):
@@ -1317,11 +1330,14 @@ def create_app(
                 return HTMLResponse("<h1>Job not found</h1>", status_code=404)
             work_dir = Path(config.settings.data_dir) / "jobs" / job_id
             flags = _artifact_flags(artifact_store, work_dir, job_id)
+            worker_hb = repo.latest_worker_heartbeat()
             return _render(
                 "job_detail.html",
                 detail=detail,
                 artifact_flags=flags,
                 stepper=_stepper_state(detail.job, flags),
+                worker=worker_hb,
+                active="jobs",
             )
 
         @app.get("/health", include_in_schema=False)
@@ -1334,7 +1350,18 @@ def create_app(
                 timeout=3.0,
             )
             worker_hb = repo.latest_worker_heartbeat()
-            return _render("health.html", results=results, worker=worker_hb, now=_utc_now())
+            return _render(
+                "health.html",
+                results=results,
+                worker=worker_hb,
+                now=_utc_now(),
+                active="health",
+            )
+
+        @app.get("/gpu", include_in_schema=False)
+        def ui_gpu_status():
+            worker_hb = repo.latest_worker_heartbeat()
+            return _render("gpu_status.html", worker=worker_hb, active="gpu")
 
     except ImportError:
         # jinja2 / starlette not installed — UI routes silently unavailable.

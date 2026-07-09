@@ -85,6 +85,7 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `services/dashboard_repository.py` — (no module docstring)
 - `services/dashboard_worker.py` — Dashboard worker — claims queued jobs, runs the pipeline, emits events.
 - `services/fish_s2_server.py` — Fish Audio S2 TTS HTTP service wrapper.
+- `services/gpu_status.py` — Runtime GPU/server status collection for the dashboard.
 - `services/musetalk_compat/sitecustomize.py` — PyTorch 2.6+ changed torch.load's weights_only default from False to True,
 - `services/musetalk_server.py` — MuseTalk lip-sync HTTP service wrapper.
 - `services/wan_server.py` — Wan2.2 image-to-video HTTP service — deferred-loading edition.
@@ -123,6 +124,7 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `tests/test_fish_s2_adapter.py` — (no module docstring)
 - `tests/test_generate_video.py` — (no module docstring)
 - `tests/test_gpu_sequencer.py` — (no module docstring)
+- `tests/test_gpu_status.py` — (no module docstring)
 - `tests/test_lip_sync.py` — (no module docstring)
 - `tests/test_ltx_render.py` — Unit tests for LtxAdapter prompt/workflow building (no ComfyUI calls).
 - `tests/test_musubi_render.py` — Unit tests for MusubiFluxAdapter param-driven behavior (no subprocess).

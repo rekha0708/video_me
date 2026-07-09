@@ -437,6 +437,85 @@ textarea:focus {
 .check-status-warn { color: var(--amber); font-weight: 700; min-width: 50px; text-align: right; }
 .check-status-fail { color: var(--red);   font-weight: 700; min-width: 50px; text-align: right; }
 
+/* -- GPU status ------------------------------------------------------------ */
+
+.gpu-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.gpu-metric {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px 18px;
+  min-width: 0;
+}
+
+.gpu-metric-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.gpu-metric-value {
+  font-size: 24px;
+  line-height: 1.1;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.gpu-metric-sub {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 8px;
+  min-height: 18px;
+}
+
+.gpu-meter {
+  height: 8px;
+  width: 100%;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.gpu-meter-fill {
+  height: 8px;
+  width: 0%;
+  border-radius: 999px;
+  background: var(--blue);
+  transition: width .25s ease;
+}
+
+.gpu-log-select {
+  width: auto;
+  min-width: 180px;
+  max-width: 320px;
+  padding: 5px 10px;
+  font-size: 12.5px;
+}
+
+.gpu-log-output {
+  max-height: 460px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #111827;
+  color: #e5e7eb;
+  border-radius: 6px;
+  padding: 14px 16px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 /* ── Utility ─────────────────────────────────────────────────────────── */
 
 .mt-0 { margin-top: 0 !important; }

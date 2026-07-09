@@ -134,6 +134,33 @@ Fish Audio S2 TTS HTTP service wrapper.
 - `async unload() -> JSONResponse`
 - `async synthesize(text: str=Form(...), reference_audio: UploadFile=File(...), language: str=Form('en'), format: str=Form('wav')) -> Response`
 
+### `services/gpu_status.py`
+
+Runtime GPU/server status collection for the dashboard.
+
+- `_utc_iso() -> str`
+- `_clean_value(value: str) -> str`
+- `_to_int(value: str) -> int | None`
+- `_to_float(value: str) -> float | None`
+- `_percent(numerator: int | float | None, denominator: int | float | None) -> float | None`
+- `_csv_rows(text: str) -> list[list[str]]`
+- `parse_nvidia_gpu_csv(text: str) -> list[dict[str, Any]]` — Parse `nvidia-smi --query-gpu` CSV output.
+- `parse_nvidia_compute_apps_csv(text: str) -> list[dict[str, Any]]` — Parse `nvidia-smi --query-compute-apps` CSV output.
+- `parse_proc_meminfo(text: str) -> dict[str, Any] | None`
+- `parse_proc_stat_cpu_line(line: str) -> tuple[int, int] | None`
+- `cpu_percent_from_samples(start: tuple[int, int] | None, end: tuple[int, int] | None) -> float | None`
+- `_read_proc_stat(path: Path=Path('/proc/stat')) -> tuple[int, int] | None`
+- `_read_proc_meminfo(path: Path=Path('/proc/meminfo')) -> dict[str, Any] | None`
+- `_sample_cpu_percent(interval_sec: float=0.1) -> float | None`
+- `_default_runner(args: Sequence[str], timeout: float) -> subprocess.CompletedProcess[str]`
+- `_run_nvidia_smi(query_fields: Sequence[str], query_kind: str, *, runner: CommandRunner=_default_runner, timeout: float=3.0) -> tuple[str, str | None]`
+- `_split_env_paths(value: str) -> list[str]`
+- `_candidate_log_paths(workspace: Path) -> list[Path]`
+- `tail_file(path: Path, *, max_lines: int=120, max_bytes: int=200000) -> list[str]`
+- `collect_log_tails(workspace: Path, *, log_lines: int=120) -> list[dict[str, Any]]`
+- `_collect_system_status() -> dict[str, Any]`
+- `collect_gpu_status(*, workspace: Path | None=None, log_lines: int=120, runner: CommandRunner=_default_runner) -> dict[str, Any]` — Collect host, GPU, process, and service-log status for the dashboard.
+
 ### `services/musetalk_compat/sitecustomize.py`
 
 PyTorch 2.6+ changed torch.load's weights_only default from False to True,

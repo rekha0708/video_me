@@ -2,7 +2,7 @@
 
 # Dashboard API routes (`services/dashboard_api.py`)
 
-36 routes.
+38 routes.
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
@@ -34,10 +34,12 @@
 | GET | `/api/jobs/{job_id}/visuals` | `get_visuals` | Per-segment settings the VLM extracted from the source video. |
 | GET | `/api/local-images` | `list_local_images` |  |
 | GET | `/api/local-videos` | `list_local_videos` |  |
+| GET | `/api/runtime/gpu-status` | `runtime_gpu_status` |  |
 | GET | `/api/runtime/readiness` | `runtime_readiness` |  |
 | GET | `/api/runtime/services` | `runtime_services` |  |
 | POST | `/api/uploads/character-image` | `upload_character_image` |  |
 | POST | `/api/uploads/lora-training-image` | `upload_lora_training_image` |  |
+| GET | `/gpu` | `ui_gpu_status` |  |
 | GET | `/health` | `ui_health` |  |
 | GET | `/img/{path_b64}` | `serve_render_image` |  |
 | GET | `/jobs/new` | `ui_new_job` |  |

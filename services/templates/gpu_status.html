@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+{% block title %}GPU Status{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">GPU Status</div>
+    <div class="page-subtitle">
+      <span id="gpu-hostname">Loading...</span>
+      <span class="text-muted"> · </span>
+      <span id="gpu-updated">waiting for first sample</span>
+    </div>
+  </div>
+  <div class="flex gap-8 items-center">
+    <label class="checkbox-row text-sm" style="margin:0">
+      <input type="checkbox" id="gpu-auto-refresh" checked>
+      Auto
+    </label>
+    <button class="btn btn-outline btn-sm" id="gpu-refresh-btn" onclick="loadGpuStatus()">↺ Refresh</button>
+  </div>
+</div>
+
+<div id="gpu-alert"></div>
+
+<div class="gpu-metrics-grid">
+  <div class="gpu-metric">
+    <div class="gpu-metric-label">CPU</div>
+    <div class="gpu-metric-value" id="metric-cpu">--</div>
+    <div class="gpu-meter"><div class="gpu-meter-fill" id="metric-cpu-bar"></div></div>
+    <div class="gpu-metric-sub" id="metric-load">load --</div>
+  </div>
+  <div class="gpu-metric">
+    <div class="gpu-metric-label">Memory</div>
+    <div class="gpu-metric-value" id="metric-memory">--</div>
+    <div class="gpu-meter"><div class="gpu-meter-fill" id="metric-memory-bar"></div></div>
+    <div class="gpu-metric-sub" id="metric-memory-sub">--</div>
+  </div>
+  <div class="gpu-metric">
+    <div class="gpu-metric-label">GPU</div>
+    <div class="gpu-metric-value" id="metric-gpu">--</div>
+    <div class="gpu-meter"><div class="gpu-meter-fill" id="metric-gpu-bar"></div></div>
+    <div class="gpu-metric-sub" id="metric-gpu-sub">--</div>
+  </div>
+  <div class="gpu-metric">
+    <div class="gpu-metric-label">VRAM</div>
+    <div class="gpu-metric-value" id="metric-vram">--</div>
+    <div class="gpu-meter"><div class="gpu-meter-fill" id="metric-vram-bar"></div></div>
+    <div class="gpu-metric-sub" id="metric-vram-sub">--</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">GPU Devices</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Name</th>
+          <th>GPU</th>
+          <th>VRAM</th>
+          <th>Memory</th>
+          <th>Temp</th>
+          <th>Power</th>
+        </tr>
+      </thead>
+      <tbody id="gpu-devices-body">
+        <tr><td colspan="7" class="td-muted">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">GPU Processes</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>PID</th>
+          <th>Process</th>
+          <th>VRAM</th>
+          <th>GPU UUID</th>
+        </tr>
+      </thead>
+      <tbody id="gpu-processes-body">
+        <tr><td colspan="4" class="td-muted">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="flex justify-between items-center" style="margin-bottom:14px">
+    <div class="card-title" style="margin:0">Service Logs</div>
+    <select id="gpu-log-select" class="gpu-log-select" onchange="renderSelectedGpuLog()"></select>
+  </div>
+  <pre class="gpu-log-output" id="gpu-log-output">Loading...</pre>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let _gpuStatus = null;
+let _gpuTimer = null;
+
+function fmtPercent(value) {
+  return value === null || value === undefined ? "--" : `${Number(value).toFixed(1)}%`;
+}
+
+function fmtInt(value) {
+  return value === null || value === undefined ? "--" : String(value);
+}
+
+function fmtMb(value) {
+  return value === null || value === undefined ? "--" : `${Number(value).toLocaleString()} MB`;
+}
+
+function fmtWatts(value) {
+  return value === null || value === undefined ? "--" : `${Number(value).toFixed(1)} W`;
+}
+
+function setText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
+function setMeter(id, value) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const pct = Math.max(0, Math.min(Number(value) || 0, 100));
+  el.style.width = `${pct}%`;
+}
+
+function addCell(row, text, className) {
+  const cell = document.createElement("td");
+  if (className) cell.className = className;
+  cell.textContent = text;
+  row.appendChild(cell);
+}
+
+function setEmptyRow(tbodyId, cols, text) {
+  const body = document.getElementById(tbodyId);
+  if (!body) return;
+  body.innerHTML = "";
+  const row = document.createElement("tr");
+  const cell = document.createElement("td");
+  cell.colSpan = cols;
+  cell.className = "td-muted";
+  cell.textContent = text;
+  row.appendChild(cell);
+  body.appendChild(row);
+}
+
+function setGpuAlert(kind, text) {
+  const alert = document.getElementById("gpu-alert");
+  if (!alert) return;
+  alert.innerHTML = "";
+  if (!text) return;
+  const banner = document.createElement("div");
+  banner.className = `alert alert-${kind}`;
+  banner.textContent = text;
+  alert.appendChild(banner);
+}
+
+async function loadGpuStatus() {
+  const btn = document.getElementById("gpu-refresh-btn");
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch("/api/runtime/gpu-status?log_lines=180");
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    _gpuStatus = await res.json();
+    renderGpuStatus(_gpuStatus);
+  } catch (err) {
+    setGpuAlert("error", `Could not load GPU status: ${err.message}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function renderGpuStatus(data) {
+  const system = data.system || {};
+  const memory = system.memory || {};
+  const gpus = data.gpus || [];
+  const processes = data.processes || [];
+  const nvidia = data.nvidia_smi || {};
+
+  setText("gpu-hostname", system.hostname || "unknown host");
+  setText("gpu-updated", data.collected_at ? `updated ${formatTime(data.collected_at)}` : "updated --");
+
+  setGpuAlert("warn", nvidia.error || "");
+
+  setText("metric-cpu", fmtPercent(system.cpu_percent));
+  setMeter("metric-cpu-bar", system.cpu_percent);
+  const loadAvg = Array.isArray(system.load_avg)
+    ? system.load_avg.map((v) => Number(v).toFixed(2)).join(" / ")
+    : "--";
+  setText("metric-load", `load ${loadAvg} · ${system.cpu_count || "--"} cores`);
+
+  setText("metric-memory", fmtPercent(memory.used_percent));
+  setMeter("metric-memory-bar", memory.used_percent);
+  setText("metric-memory-sub", `${fmtMb(memory.used_mb)} / ${fmtMb(memory.total_mb)}`);
+
+  const gpuUtils = gpus.map((gpu) => gpu.gpu_util_percent).filter((v) => v !== null && v !== undefined);
+  const maxGpu = gpuUtils.length ? Math.max(...gpuUtils) : null;
+  setText("metric-gpu", fmtPercent(maxGpu));
+  setMeter("metric-gpu-bar", maxGpu);
+  setText("metric-gpu-sub", gpus.length ? `${gpus.length} device${gpus.length === 1 ? "" : "s"}` : "no NVIDIA device");
+
+  const usedVram = gpus.reduce((sum, gpu) => sum + (gpu.memory_used_mb || 0), 0);
+  const totalVram = gpus.reduce((sum, gpu) => sum + (gpu.memory_total_mb || 0), 0);
+  const vramPct = totalVram ? (usedVram / totalVram) * 100 : null;
+  setText("metric-vram", fmtPercent(vramPct));
+  setMeter("metric-vram-bar", vramPct);
+  setText("metric-vram-sub", totalVram ? `${fmtMb(usedVram)} / ${fmtMb(totalVram)}` : "--");
+
+  renderGpuDevices(gpus);
+  renderGpuProcesses(processes);
+  renderGpuLogs(data.logs || []);
+}
+
+function renderGpuDevices(gpus) {
+  const body = document.getElementById("gpu-devices-body");
+  if (!body) return;
+  body.innerHTML = "";
+  if (!gpus.length) {
+    setEmptyRow("gpu-devices-body", 7, "No GPU devices reported.");
+    return;
+  }
+  gpus.forEach((gpu) => {
+    const row = document.createElement("tr");
+    addCell(row, fmtInt(gpu.index), "td-mono");
+    addCell(row, gpu.name || "--");
+    addCell(row, fmtPercent(gpu.gpu_util_percent));
+    addCell(row, fmtPercent(gpu.vram_used_percent));
+    addCell(row, `${fmtMb(gpu.memory_used_mb)} / ${fmtMb(gpu.memory_total_mb)}`, "td-muted");
+    addCell(row, gpu.temperature_c === null || gpu.temperature_c === undefined ? "--" : `${gpu.temperature_c} C`);
+    addCell(row, `${fmtWatts(gpu.power_draw_w)} / ${fmtWatts(gpu.power_limit_w)}`, "td-muted");
+    body.appendChild(row);
+  });
+}
+
+function renderGpuProcesses(processes) {
+  const body = document.getElementById("gpu-processes-body");
+  if (!body) return;
+  body.innerHTML = "";
+  if (!processes.length) {
+    setEmptyRow("gpu-processes-body", 4, "No GPU compute processes reported.");
+    return;
+  }
+  processes.forEach((proc) => {
+    const row = document.createElement("tr");
+    addCell(row, fmtInt(proc.pid), "td-mono");
+    addCell(row, proc.process_name || "--");
+    addCell(row, fmtMb(proc.used_memory_mb));
+    addCell(row, proc.gpu_uuid || "--", "td-mono td-muted");
+    body.appendChild(row);
+  });
+}
+
+function renderGpuLogs(logs) {
+  const select = document.getElementById("gpu-log-select");
+  if (!select) return;
+  const previous = select.value;
+  select.innerHTML = "";
+  if (!logs.length) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "No logs";
+    select.appendChild(opt);
+    renderSelectedGpuLog();
+    return;
+  }
+  logs.forEach((log, index) => {
+    const opt = document.createElement("option");
+    opt.value = String(index);
+    opt.textContent = log.name || log.path || `log ${index + 1}`;
+    select.appendChild(opt);
+  });
+  if (previous && Number(previous) < logs.length) select.value = previous;
+  renderSelectedGpuLog();
+}
+
+function renderSelectedGpuLog() {
+  const pre = document.getElementById("gpu-log-output");
+  const select = document.getElementById("gpu-log-select");
+  const logs = (_gpuStatus && _gpuStatus.logs) || [];
+  if (!pre || !select || !logs.length) {
+    if (pre) pre.textContent = "No service logs found under logs/*.log.";
+    return;
+  }
+  const log = logs[Number(select.value) || 0];
+  if (!log) {
+    pre.textContent = "No service log selected.";
+    return;
+  }
+  if (log.error) {
+    pre.textContent = `${log.path}\n${log.error}`;
+    return;
+  }
+  const lines = log.lines || [];
+  pre.textContent = lines.length ? lines.join("\n") : `${log.path}\n(empty log)`;
+  pre.scrollTop = pre.scrollHeight;
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  loadGpuStatus();
+  _gpuTimer = setInterval(() => {
+    const auto = document.getElementById("gpu-auto-refresh");
+    if (auto && auto.checked) loadGpuStatus();
+  }, 5000);
+});
+</script>
+{% endblock %}
