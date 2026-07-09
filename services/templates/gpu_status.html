@@ -59,7 +59,7 @@
           <th>Name</th>
           <th>GPU</th>
           <th>VRAM</th>
-          <th>Memory</th>
+          <th>Mem Ctrl</th>
           <th>Temp</th>
           <th>Power</th>
         </tr>
@@ -77,6 +77,7 @@
     <table>
       <thead>
         <tr>
+          <th>GPU</th>
           <th>PID</th>
           <th>Process</th>
           <th>VRAM</th>
@@ -84,7 +85,7 @@
         </tr>
       </thead>
       <tbody id="gpu-processes-body">
-        <tr><td colspan="4" class="td-muted">Loading...</td></tr>
+        <tr><td colspan="5" class="td-muted">Loading...</td></tr>
       </tbody>
     </table>
   </div>
@@ -136,6 +137,48 @@ function addCell(row, text, className) {
   const cell = document.createElement("td");
   if (className) cell.className = className;
   cell.textContent = text;
+  row.appendChild(cell);
+}
+
+function usageTone(value) {
+  const pct = Number(value);
+  if (!Number.isFinite(pct)) return "";
+  if (pct >= 95) return "danger";
+  if (pct >= 80) return "warn";
+  return "";
+}
+
+function addUsageCell(row, value, detail) {
+  const cell = document.createElement("td");
+  cell.className = "gpu-row-meter-cell";
+
+  const top = document.createElement("div");
+  top.className = "gpu-row-meter-top";
+
+  const label = document.createElement("span");
+  label.className = "gpu-row-meter-label";
+  label.textContent = fmtPercent(value);
+  top.appendChild(label);
+
+  if (detail) {
+    const detailEl = document.createElement("span");
+    detailEl.className = "gpu-row-meter-detail";
+    detailEl.textContent = detail;
+    top.appendChild(detailEl);
+  }
+
+  const meter = document.createElement("div");
+  meter.className = "gpu-row-meter";
+
+  const fill = document.createElement("div");
+  const tone = usageTone(value);
+  fill.className = `gpu-row-meter-fill${tone ? " " + tone : ""}`;
+  const pct = Math.max(0, Math.min(Number(value) || 0, 100));
+  fill.style.width = `${pct}%`;
+  meter.appendChild(fill);
+
+  cell.appendChild(top);
+  cell.appendChild(meter);
   row.appendChild(cell);
 }
 
@@ -215,7 +258,7 @@ function renderGpuStatus(data) {
   setText("metric-vram-sub", totalVram ? `${fmtMb(usedVram)} / ${fmtMb(totalVram)}` : "--");
 
   renderGpuDevices(gpus);
-  renderGpuProcesses(processes);
+  renderGpuProcesses(processes, gpus);
   renderGpuLogs(data.logs || []);
 }
 
@@ -231,25 +274,32 @@ function renderGpuDevices(gpus) {
     const row = document.createElement("tr");
     addCell(row, fmtInt(gpu.index), "td-mono");
     addCell(row, gpu.name || "--");
-    addCell(row, fmtPercent(gpu.gpu_util_percent));
-    addCell(row, fmtPercent(gpu.vram_used_percent));
-    addCell(row, `${fmtMb(gpu.memory_used_mb)} / ${fmtMb(gpu.memory_total_mb)}`, "td-muted");
+    addUsageCell(row, gpu.gpu_util_percent);
+    addUsageCell(row, gpu.vram_used_percent, `${fmtMb(gpu.memory_used_mb)} / ${fmtMb(gpu.memory_total_mb)}`);
+    addUsageCell(row, gpu.memory_util_percent);
     addCell(row, gpu.temperature_c === null || gpu.temperature_c === undefined ? "--" : `${gpu.temperature_c} C`);
     addCell(row, `${fmtWatts(gpu.power_draw_w)} / ${fmtWatts(gpu.power_limit_w)}`, "td-muted");
     body.appendChild(row);
   });
 }
 
-function renderGpuProcesses(processes) {
+function renderGpuProcesses(processes, gpus) {
   const body = document.getElementById("gpu-processes-body");
   if (!body) return;
   body.innerHTML = "";
   if (!processes.length) {
-    setEmptyRow("gpu-processes-body", 4, "No GPU compute processes reported.");
+    setEmptyRow("gpu-processes-body", 5, "No GPU compute processes reported.");
     return;
   }
+  const gpuByUuid = new Map(
+    gpus
+      .filter((gpu) => gpu.uuid)
+      .map((gpu) => [gpu.uuid, gpu])
+  );
   processes.forEach((proc) => {
     const row = document.createElement("tr");
+    const gpu = gpuByUuid.get(proc.gpu_uuid);
+    addCell(row, gpu ? fmtInt(gpu.index) : "--", "td-mono");
     addCell(row, fmtInt(proc.pid), "td-mono");
     addCell(row, proc.process_name || "--");
     addCell(row, fmtMb(proc.used_memory_mb));

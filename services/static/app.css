@@ -494,6 +494,48 @@ textarea:focus {
   transition: width .25s ease;
 }
 
+.gpu-row-meter-cell {
+  min-width: 150px;
+}
+
+.gpu-row-meter-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 5px;
+}
+
+.gpu-row-meter-label {
+  font-weight: 700;
+  font-size: 12.5px;
+}
+
+.gpu-row-meter-detail {
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.gpu-row-meter {
+  height: 6px;
+  width: 100%;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.gpu-row-meter-fill {
+  height: 6px;
+  width: 0%;
+  border-radius: 999px;
+  background: var(--green);
+  transition: width .25s ease;
+}
+
+.gpu-row-meter-fill.warn { background: var(--amber); }
+.gpu-row-meter-fill.danger { background: var(--red); }
+
 .gpu-log-select {
   width: auto;
   min-width: 180px;

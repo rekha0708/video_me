@@ -16,6 +16,7 @@ from typing import Any, Callable, Sequence
 GPU_QUERY_FIELDS = (
     "index",
     "name",
+    "uuid",
     "utilization.gpu",
     "utilization.memory",
     "memory.total",
@@ -107,6 +108,7 @@ def parse_nvidia_gpu_csv(text: str) -> list[dict[str, Any]]:
         gpu = {
             "index": _to_int(data["index"]),
             "name": _clean_value(data["name"]),
+            "uuid": _clean_value(data["uuid"]),
             "gpu_util_percent": _to_int(data["utilization.gpu"]),
             "memory_util_percent": _to_int(data["utilization.memory"]),
             "memory_total_mb": total_mb,

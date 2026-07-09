@@ -14,7 +14,7 @@ from services.gpu_status import (
 
 
 def test_parse_nvidia_gpu_csv() -> None:
-    text = "0, NVIDIA RTX 6000 Ada, 62, 18, 98304, 45123, 53181, 65, 255.5, 300.0\n"
+    text = "0, NVIDIA RTX 6000 Ada, GPU-abc, 62, 18, 98304, 45123, 53181, 65, 255.5, 300.0\n"
 
     gpus = parse_nvidia_gpu_csv(text)
 
@@ -22,6 +22,7 @@ def test_parse_nvidia_gpu_csv() -> None:
         {
             "index": 0,
             "name": "NVIDIA RTX 6000 Ada",
+            "uuid": "GPU-abc",
             "gpu_util_percent": 62,
             "memory_util_percent": 18,
             "memory_total_mb": 98304,
@@ -36,7 +37,7 @@ def test_parse_nvidia_gpu_csv() -> None:
 
 
 def test_parse_nvidia_gpu_csv_handles_na_values() -> None:
-    text = "0, NVIDIA A100, 9, [N/A], 81920, 20480, 61440, [N/A], [N/A], [N/A]\n"
+    text = "0, NVIDIA A100, GPU-def, 9, [N/A], 81920, 20480, 61440, [N/A], [N/A], [N/A]\n"
 
     gpu = parse_nvidia_gpu_csv(text)[0]
 
