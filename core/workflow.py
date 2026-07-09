@@ -784,13 +784,20 @@ async def _generate_shot_video(
         log_event(logger, "lip_sync_skipped", shot_id=shot.shot_id, reason="native_lipsync")
         synced = clip
     else:
-        synced = await adapters.lipsync.run(
-            LipSyncRequest(
-                video_uri=clip.uri,
-                audio_uri=audio_track.uri,
-                shot_id=shot.shot_id,
+        try:
+            synced = await adapters.lipsync.run(
+                LipSyncRequest(
+                    video_uri=clip.uri,
+                    audio_uri=audio_track.uri,
+                    shot_id=shot.shot_id,
+                )
             )
-        )
+        except Exception:
+            logger.warning(
+                "lip_sync failed for %s — falling back to raw clip at %s",
+                shot.shot_id, clip.uri, exc_info=True,
+            )
+            synced = clip
 
     log_event(logger, "shot_completed", shot_id=shot.shot_id)
     return synced, audio_track

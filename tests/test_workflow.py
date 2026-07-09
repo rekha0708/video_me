@@ -1291,3 +1291,30 @@ async def test_generate_shot_video_resume_skips_when_clip_exists(tmp_path) -> No
     adapters.voice.run.assert_not_called()
     adapters.video.run.assert_not_called()
     assert "clip.mp4" in clip.uri
+
+
+@pytest.mark.asyncio
+async def test_generate_shot_video_lipsync_failure_falls_back_to_raw_clip(tmp_path) -> None:
+    """When lip_sync fails, the pipeline should use the raw clip instead of failing."""
+    raw_clip = VideoClip(uri="/raw.mp4", duration_sec=3.0, shot_id="s01")
+
+    adapters = MagicMock()
+    adapters.voice.run = AsyncMock(
+        return_value=AudioTrack(uri="/d.wav", duration_sec=1.0, speaker_id="max")
+    )
+    adapters.video.run = AsyncMock(return_value=raw_clip)
+    adapters.video.native_lipsync = False
+    adapters.video.work_dir = tmp_path / "video" / "wan"
+    adapters.lipsync.work_dir = tmp_path / "synced" / "wan"
+    adapters.lipsync.run = AsyncMock(side_effect=RuntimeError("MuseTalk crashed"))
+
+    shot = _storyboard().shots[0]
+    config = _make_config(tmp_path)
+
+    synced, audio = await _generate_shot_video(
+        shot, _script(), config.cast, adapters, Path(tmp_path), "/img.png"
+    )
+
+    # Should fall back to the raw clip, not raise.
+    assert synced is raw_clip
+    adapters.lipsync.run.assert_called_once()
