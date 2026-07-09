@@ -277,6 +277,7 @@ Shared Pydantic models for orchestration.
 - `async _run_plan_critique_and_approval(storyboard: Storyboard, script: Script, ctx: '_JobContext', opts: 'RunOptions', visual_context: 'VisualContext | None'=None) -> tuple[Storyboard, Script]` — Run the critique loop then the human approval gate.
 - `async _run_to_assembled_video(ctx: _JobContext, options: RunOptions | None=None) -> tuple[Script, FinalVideo]` — Run Phase 1 stages through assembled candidate video, but do not publish.
 - `async _probe_duration_sec(path: str, ffprobe_bin: str) -> float | None` — Actual media duration via ffprobe; None on any failure.
+- `async _probe_clip_durations(clips: list[VideoClip], ffprobe_bin: str) -> list[VideoClip]` — Replace each clip's duration_sec with its real ffprobe-measured length.
 - `async _build_overlay_windows(shots: list[Shot], clips: list[VideoClip], ffprobe_bin: str) -> 'list[OverlayWindow]'` — Compute the absolute time window of each shot's overlay in the final video.
 - `_collect_existing_shot_artifacts(storyboard: Storyboard, script: Script, cast: Cast, work_dir: Path, video_adapter: str='ltx') -> tuple[list[VideoClip], list[AudioTrack]]` — Reconstruct clip/audio lists from files written by a previous render phase.
 - `async _publish_candidate(ctx: _JobContext, script: Script, final_video: FinalVideo, *, language: str='en', stage_hook: Callable[[str, str], None] | None=None) -> None` — Publish an assembled candidate to the manual review folder.

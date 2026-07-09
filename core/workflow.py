@@ -1666,6 +1666,16 @@ async def _run_to_assembled_video(
         shots_for_clips, synced_clips, config.settings.ffprobe_bin
     )
 
+    # Video adapters (LTX/Wan) echo back the *requested* duration_sec, not the
+    # actual rendered length — both round to their own frame-count constraints
+    # (e.g. an 8.0s request often renders ~7.7s). assemble_video's crossfade
+    # math schedules its xfade offset from clip.duration_sec, so an
+    # over-stated duration pushes that offset past the clip's real end and
+    # degrades/truncates the whole output (reproduced: a claimed ~15s 2-shot
+    # assembly collapsing to the first clip's ~7.7s alone). Correct it here
+    # with the same ffprobe probe _build_overlay_windows already trusts.
+    synced_clips = await _probe_clip_durations(synced_clips, config.settings.ffprobe_bin)
+
     # ── Assemble phase ────────────────────────────────────────────────────────
     # 8. assemble_video
     final_video = await run_stage(
@@ -1705,6 +1715,25 @@ async def _probe_duration_sec(path: str, ffprobe_bin: str) -> float | None:
         return float(stdout.decode().strip())
     except Exception:
         return None
+
+
+async def _probe_clip_durations(
+    clips: list[VideoClip], ffprobe_bin: str
+) -> list[VideoClip]:
+    """Replace each clip's duration_sec with its real ffprobe-measured length.
+
+    Video adapters echo back the requested duration, not what actually got
+    rendered (LTX/Wan both round to their own frame-count constraints), so
+    assemble_video must not trust it for crossfade timing. Falls back to the
+    original value if ffprobe fails (e.g. in tests with a fake file).
+    """
+    corrected = []
+    for clip in clips:
+        actual = await _probe_duration_sec(clip.uri, ffprobe_bin)
+        corrected.append(
+            clip if actual is None else clip.model_copy(update={"duration_sec": actual})
+        )
+    return corrected
 
 
 async def _build_overlay_windows(

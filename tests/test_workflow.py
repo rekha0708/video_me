@@ -826,6 +826,47 @@ async def test_build_overlay_windows_skips_missing_png(tmp_path, monkeypatch) ->
 
 
 @pytest.mark.asyncio
+async def test_probe_clip_durations_overrides_with_actual_length(monkeypatch) -> None:
+    """Video adapters (LTX/Wan) echo back the requested duration, not what
+    actually rendered — assemble_video's crossfade math must use the real,
+    ffprobe-measured length or it can miscalculate the xfade offset and
+    truncate the output (reproduced case: a claimed ~15s 2-shot assembly
+    collapsing to just the first clip's real ~7.7s)."""
+    from core.workflow import _probe_clip_durations
+    import core.workflow as wf
+
+    clips = [
+        VideoClip(uri="/tmp/c1.mp4", duration_sec=8.0, shot_id="s01"),
+        VideoClip(uri="/tmp/c2.mp4", duration_sec=7.23, shot_id="s02"),
+    ]
+    actuals = {"/tmp/c1.mp4": 7.708333, "/tmp/c2.mp4": 7.041667}
+
+    async def fake_probe(path, ffprobe_bin):
+        return actuals[str(path)]
+
+    monkeypatch.setattr(wf, "_probe_duration_sec", fake_probe)
+    corrected = await _probe_clip_durations(clips, "ffprobe")
+
+    assert [c.duration_sec for c in corrected] == [7.708333, 7.041667]
+    # uri/shot_id must be preserved — only duration_sec is corrected.
+    assert [c.uri for c in corrected] == ["/tmp/c1.mp4", "/tmp/c2.mp4"]
+    assert [c.shot_id for c in corrected] == ["s01", "s02"]
+
+
+@pytest.mark.asyncio
+async def test_probe_clip_durations_falls_back_when_probe_fails(monkeypatch) -> None:
+    from core.workflow import _probe_clip_durations
+    import core.workflow as wf
+
+    clips = [VideoClip(uri="/tmp/c1.mp4", duration_sec=8.0, shot_id="s01")]
+    monkeypatch.setattr(wf, "_probe_duration_sec", AsyncMock(return_value=None))
+
+    corrected = await _probe_clip_durations(clips, "ffprobe")
+
+    assert corrected[0].duration_sec == 8.0
+
+
+@pytest.mark.asyncio
 async def test_visual_context_flows_into_adapt_script(tmp_path) -> None:
     """analyze_visuals output must reach the AdaptScriptRequest for grounding."""
     from core.models.capabilities import VisualContext, VisualSegment
