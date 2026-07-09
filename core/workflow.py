@@ -187,9 +187,9 @@ def _make_video_adapter(s, work_dir: Path):
     """Select generate_video adapter based on VIDEO_ME_VIDEO_ADAPTER env var."""
     if s.video_adapter == "ltx":
         from adapters.generate_video.ltx_adapter import LtxAdapter
-        return LtxAdapter(work_dir=work_dir / "video", base_url=s.ltx_base_url)
+        return LtxAdapter(work_dir=work_dir / "video" / "ltx", base_url=s.ltx_base_url)
     from adapters.generate_video.wan_adapter import WanAdapter
-    return WanAdapter(work_dir=work_dir / "video", base_url=s.wan_base_url)
+    return WanAdapter(work_dir=work_dir / "video" / "wan", base_url=s.wan_base_url)
 
 
 def _make_tts_adapter(s, work_dir: Path):
@@ -294,7 +294,7 @@ def _make_adapters(
         render=_make_render_adapter(s, work_dir),
         voice=_make_tts_adapter(s, work_dir),
         video=_make_video_adapter(s, work_dir),
-        lipsync=LipSyncAdapter(work_dir=work_dir / "synced", base_url=s.lipsync_base_url),
+        lipsync=LipSyncAdapter(work_dir=work_dir / "synced" / s.video_adapter, base_url=s.lipsync_base_url),
         assemble=FfmpegAssembleAdapter(
             work_dir=work_dir / "assembled",
             ffmpeg_bin=s.ffmpeg_bin,
@@ -717,9 +717,9 @@ async def _generate_shot_video(
     native_lipsync = getattr(adapters.video, "native_lipsync", False)
 
     if native_lipsync:
-        done_path = work_dir / "video" / shot.shot_id / "clip.mp4"
+        done_path = adapters.video.work_dir / shot.shot_id / "clip.mp4"
     else:
-        done_path = work_dir / "synced" / shot.shot_id / "synced.mp4"
+        done_path = adapters.lipsync.work_dir / shot.shot_id / "synced.mp4"
 
     if opts.resume and done_path.exists():
         logger.info("Skipping video generation for %s (%s exists)", shot.shot_id, done_path.name)
@@ -762,7 +762,7 @@ async def _generate_shot_video(
                 f"{shot.action}, medium to wide framing, two characters visible"
             )
 
-    clip_path = work_dir / "video" / shot.shot_id / "clip.mp4"
+    clip_path = adapters.video.work_dir / shot.shot_id / "clip.mp4"
     if opts.resume and clip_path.exists():
         logger.info("Skipping generate_video for %s (clip.mp4 exists)", shot.shot_id)
         clip = VideoClip(uri=str(clip_path), duration_sec=shot.duration_sec)
@@ -1194,7 +1194,8 @@ async def _run_to_assembled_video(
     if opts.phase == "assemble":
         # Skip shot loop — reconstruct clip/audio lists from existing files.
         synced_clips, audio_tracks = _collect_existing_shot_artifacts(
-            storyboard, script, config.cast, ctx.work_dir
+            storyboard, script, config.cast, ctx.work_dir,
+            video_adapter=config.settings.video_adapter,
         )
         shots_for_clips = storyboard.shots  # one clip per shot, same order
     else:
@@ -1358,27 +1359,31 @@ def _collect_existing_shot_artifacts(
     script: Script,
     cast: Cast,
     work_dir: Path,
+    video_adapter: str = "ltx",
 ) -> tuple[list[VideoClip], list[AudioTrack]]:
     """Reconstruct clip/audio lists from files written by a previous render phase.
 
-    Checks both possible completion markers, since which one exists depends on
-    the video adapter: native-lipsync adapters (LTX) write video/<shot_id>/clip.mp4
-    and skip lip_sync entirely; non-native adapters (Wan) go through a separate
-    lip_sync stage and write synced/<shot_id>/synced.mp4.
+    Checks adapter-namespaced paths first (``video/<adapter>/<shot_id>/clip.mp4``),
+    then falls back to the legacy flat layout (``video/<shot_id>/clip.mp4``) for
+    jobs that ran before the namespace migration.
 
-    Raises RuntimeError for any shot where neither marker is present.
+    Raises RuntimeError for any shot where no completion marker is found.
     """
     member_map = {m.id: m for m in cast.members}
     clips: list[VideoClip] = []
     audios: list[AudioTrack] = []
     for shot in storyboard.shots:
-        native_path = work_dir / "video" / shot.shot_id / "clip.mp4"
-        synced_path = work_dir / "synced" / shot.shot_id / "synced.mp4"
-        video_path = native_path if native_path.exists() else synced_path
-        if not video_path.exists():
+        candidates = [
+            work_dir / "video" / video_adapter / shot.shot_id / "clip.mp4",
+            work_dir / "synced" / video_adapter / shot.shot_id / "synced.mp4",
+            work_dir / "video" / shot.shot_id / "clip.mp4",
+            work_dir / "synced" / shot.shot_id / "synced.mp4",
+        ]
+        video_path = next((p for p in candidates if p.exists()), None)
+        if video_path is None:
             raise RuntimeError(
                 f"Phase 'assemble' requires a completed video for all shots, "
-                f"but neither '{native_path}' nor '{synced_path}' exists. "
+                f"but no completion marker found for shot '{shot.shot_id}'. "
                 f"Run --phase render first."
             )
         speaker_id = shot.characters_on_screen[0]

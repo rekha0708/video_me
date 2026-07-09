@@ -26,7 +26,7 @@
 | GET | `/api/jobs/{job_id}/plan` | `get_plan` |  |
 | POST | `/api/jobs/{job_id}/reject` | `reject_job` |  |
 | GET | `/api/jobs/{job_id}/renders` | `get_renders` |  |
-| POST | `/api/jobs/{job_id}/retry` | `retry_job` | Re-queue a failed job for the SAME phase it was on. |
+| POST | `/api/jobs/{job_id}/retry` | `retry_job` | Re-queue a failed OR completed job, optionally from a different phase. |
 | GET | `/api/jobs/{job_id}/script` | `get_script` |  |
 | GET | `/api/jobs/{job_id}/stream` | `stream_job_events` |  |
 | GET | `/api/jobs/{job_id}/transcript` | `get_transcript` |  |

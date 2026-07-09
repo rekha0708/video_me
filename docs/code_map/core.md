@@ -266,7 +266,7 @@ Shared Pydantic models for orchestration.
 - `async _run_to_assembled_video(ctx: _JobContext, options: RunOptions | None=None) -> tuple[Script, FinalVideo]` — Run Phase 1 stages through assembled candidate video, but do not publish.
 - `async _probe_duration_sec(path: str, ffprobe_bin: str) -> float | None` — Actual media duration via ffprobe; None on any failure.
 - `async _build_overlay_windows(shots: list[Shot], clips: list[VideoClip], ffprobe_bin: str) -> 'list[OverlayWindow]'` — Compute the absolute time window of each shot's overlay in the final video.
-- `_collect_existing_shot_artifacts(storyboard: Storyboard, script: Script, cast: Cast, work_dir: Path) -> tuple[list[VideoClip], list[AudioTrack]]` — Reconstruct clip/audio lists from files written by a previous render phase.
+- `_collect_existing_shot_artifacts(storyboard: Storyboard, script: Script, cast: Cast, work_dir: Path, video_adapter: str='ltx') -> tuple[list[VideoClip], list[AudioTrack]]` — Reconstruct clip/audio lists from files written by a previous render phase.
 - `async _publish_candidate(ctx: _JobContext, script: Script, final_video: FinalVideo, *, language: str='en', stage_hook: Callable[[str, str], None] | None=None) -> None` — Publish an assembled candidate to the manual review folder.
 - `async _critique_candidate(ctx: _JobContext, script: Script, final_video: FinalVideo, attempt: int, *, stage_hook: Callable[[str, str], None] | None=None) -> CritiqueResult` — Run and persist one critique attempt.
 - `_critique_reason(result: CritiqueResult) -> str`

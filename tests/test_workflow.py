@@ -1213,3 +1213,81 @@ async def test_generate_shot_video_skips_lipsync_for_native(tmp_path) -> None:
 
     adapters.lipsync.run.assert_not_called()
     assert synced.uri == "/c.mp4"
+
+
+@pytest.mark.asyncio
+async def test_generate_shot_video_resume_uses_adapter_work_dir(tmp_path) -> None:
+    """Resume checks the adapter's namespaced work_dir, not the flat video/ dir.
+
+    This ensures switching video_adapter (e.g. ltx→wan) doesn't hit the old
+    adapter's cached clip — each adapter writes to its own subdirectory.
+    """
+    from core.workflow import RunOptions
+
+    # Simulate an LTX clip already on disk under the LTX namespace.
+    ltx_dir = tmp_path / "video" / "ltx" / "s01"
+    ltx_dir.mkdir(parents=True)
+    (ltx_dir / "clip.mp4").write_bytes(b"ltx-fake")
+
+    # Set up a Wan adapter whose work_dir points to the wan namespace —
+    # no clip exists there, so generate_video must run.
+    adapters = MagicMock()
+    adapters.video.work_dir = tmp_path / "video" / "wan"
+    adapters.video.native_lipsync = False
+    adapters.lipsync.work_dir = tmp_path / "synced" / "wan"
+    adapters.voice.run = AsyncMock(
+        return_value=AudioTrack(uri="/d.wav", duration_sec=1.0, speaker_id="max")
+    )
+    adapters.video.run = AsyncMock(
+        return_value=VideoClip(uri="/c.mp4", duration_sec=1.0, shot_id="s01")
+    )
+    adapters.lipsync.run = AsyncMock(
+        return_value=VideoClip(uri="/s.mp4", duration_sec=1.0, shot_id="s01")
+    )
+
+    shot = _storyboard().shots[0]
+    config = _make_config(tmp_path)
+    opts = RunOptions(resume=True)
+
+    await _generate_shot_video(
+        shot, _script(), config.cast, adapters, Path(tmp_path), "/img.png",
+        options=opts,
+    )
+
+    # Video adapter MUST have been called — the LTX clip must not poison the Wan cache.
+    adapters.video.run.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_generate_shot_video_resume_skips_when_clip_exists(tmp_path) -> None:
+    """Resume skips video generation when clip exists under the adapter's own dir."""
+    from core.workflow import RunOptions
+
+    # Create clip under the adapter's namespaced dir.
+    clip_dir = tmp_path / "video" / "ltx" / "s01"
+    clip_dir.mkdir(parents=True)
+    (clip_dir / "clip.mp4").write_bytes(b"fake")
+    # Audio file so the early return can reconstruct AudioTrack.
+    audio_dir = tmp_path / "audio" / "max"
+    audio_dir.mkdir(parents=True)
+    (audio_dir / "dlg.wav").write_bytes(b"fake-audio")
+
+    adapters = MagicMock()
+    adapters.video.work_dir = tmp_path / "video" / "ltx"
+    adapters.video.native_lipsync = True
+    adapters.voice.run = AsyncMock()
+    adapters.video.run = AsyncMock()
+
+    shot = _storyboard().shots[0]
+    config = _make_config(tmp_path)
+    opts = RunOptions(resume=True)
+
+    clip, audio = await _generate_shot_video(
+        shot, _script(), config.cast, adapters, Path(tmp_path), "/img.png",
+        options=opts,
+    )
+
+    # Everything should be skipped — adapter NOT called.
+    adapters.voice.run.assert_not_called()
+    adapters.video.run.assert_not_called()
+    assert "clip.mp4" in clip.uri

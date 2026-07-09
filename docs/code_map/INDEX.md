@@ -115,6 +115,7 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `tests/test_dashboard_api_helpers.py` — Unit tests for the module-level job-page helpers in services/dashboard_api.py.
 - `tests/test_dashboard_models.py` — Validation tests for the story/story_images additions to core/models/dashboard.py.
 - `tests/test_dashboard_repository.py` — (no module docstring)
+- `tests/test_dashboard_retry.py` — Tests for POST /api/jobs/{job_id}/retry — retryable statuses + overrides.
 - `tests/test_dashboard_worker.py` — Tests for DashboardWorker (D3).
 - `tests/test_executor.py` — (no module docstring)
 - `tests/test_fetch_media.py` — (no module docstring)
