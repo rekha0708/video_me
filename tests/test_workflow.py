@@ -32,9 +32,11 @@ from core.models.job import Job, JobStatus
 from core.workflow import (
     _apply_segment_timing_to_storyboard,
     _build_verbatim_script,
+    _chunk_shot_durations,
     _concat_audio,
     _generate_shot_video,
     _make_adapters,
+    _rebuild_storyboard_by_duration,
     _resolve_line,
     _run_plan_critique_and_approval,
     _slice_source_audio,
@@ -1620,6 +1622,161 @@ def test_apply_segment_timing_overrides_duration():
     assert result.shots[1].duration_sec == 1.5
     assert result.shots[1].source_start_sec == 4.5
     assert result.shots[1].source_end_sec == 6.0
+
+
+# ------------------------------------------------------------------ _chunk_shot_durations
+
+def test_chunk_shot_durations_even_split():
+    """15s total / 5s max → three 5s chunks."""
+    chunks = _chunk_shot_durations(15.0, 5.0)
+    assert chunks == [(0.0, 5.0), (5.0, 10.0), (10.0, 15.0)]
+
+
+def test_chunk_shot_durations_greedy_remainder():
+    """15s total / 8s max → one 8s chunk, one 7s chunk (not two 7.5s halves)."""
+    chunks = _chunk_shot_durations(15.0, 8.0)
+    assert chunks == [(0.0, 8.0), (8.0, 15.0)]
+    durations = [end - start for start, end in chunks]
+    assert durations == [8.0, 7.0]
+    assert sum(durations) == 15.0
+
+
+def test_chunk_shot_durations_single_chunk_when_shorter_than_max():
+    chunks = _chunk_shot_durations(4.0, 8.0)
+    assert chunks == [(0.0, 4.0)]
+
+
+def test_chunk_shot_durations_exact_multiple_has_no_trailing_empty_chunk():
+    chunks = _chunk_shot_durations(16.0, 8.0)
+    assert chunks == [(0.0, 8.0), (8.0, 16.0)]
+
+
+def test_chunk_shot_durations_empty_for_zero_duration():
+    assert _chunk_shot_durations(0.0, 8.0) == []
+
+
+# ------------------------------------------------------------------ _rebuild_storyboard_by_duration
+
+def _duration_test_script() -> Script:
+    return Script(
+        mode="verbatim",
+        learning_objective=LearningObjective(
+            concept="test", age_range="3-6", success_phrase="test",
+        ),
+        scenes=[Scene(
+            setting="room",
+            lines=[
+                Line(speaker="max", text="Hello there!", start=0.0, end=3.0),
+                Line(speaker="max", text="Let's count to ten.", start=3.0, end=9.0),
+                Line(speaker="zoe", text="One two three!", start=9.0, end=15.0),
+            ],
+        )],
+        caption_text="test",
+        source_rights=SourceRights(kind="transformed", rights_cleared=True, notes=""),
+    )
+
+
+def test_rebuild_storyboard_preserves_total_duration():
+    """The chunked shots' durations must sum back to the original video length,
+    regardless of how many shots the LLM originally planned."""
+    script = _duration_test_script()
+    storyboard = Storyboard(shots=[
+        Shot(
+            shot_id="s01", scene_ref="scene-1",
+            characters_on_screen=["max"], setting="cozy room",
+            camera="wide shot", action="greets the viewer excitedly",
+            dialogue_line_refs=["scene-1-line-0", "scene-1-line-1"],
+            duration_sec=9.0,
+        ),
+    ])
+
+    result = _rebuild_storyboard_by_duration(
+        storyboard, script, total_duration=15.0, max_shot_duration_sec=8.0,
+    )
+
+    assert [s.duration_sec for s in result.shots] == [8.0, 7.0]
+    assert sum(s.duration_sec for s in result.shots) == 15.0
+    assert result.shots[0].source_start_sec == 0.0
+    assert result.shots[0].source_end_sec == 8.0
+    assert result.shots[1].source_start_sec == 8.0
+    assert result.shots[1].source_end_sec == 15.0
+    # Shot IDs are freshly assigned, not inherited from the original plan.
+    assert [s.shot_id for s in result.shots] == ["s01", "s02"]
+
+
+def test_rebuild_storyboard_borrows_camera_action_from_best_overlapping_shot():
+    """Each chunk should inherit creative direction from whichever originally
+    planned shot overlaps its time range the most."""
+    script = _duration_test_script()
+    storyboard = Storyboard(shots=[
+        Shot(
+            shot_id="s01", scene_ref="scene-1",
+            characters_on_screen=["max"], setting="cozy room",
+            camera="close-up", action="greets the viewer excitedly",
+            dialogue_line_refs=["scene-1-line-0"], duration_sec=3.0,
+        ),
+        Shot(
+            shot_id="s02", scene_ref="scene-1",
+            characters_on_screen=["zoe"], setting="playroom",
+            camera="wide shot", action="counts on her fingers",
+            dialogue_line_refs=["scene-1-line-1", "scene-1-line-2"], duration_sec=12.0,
+        ),
+    ])
+
+    result = _rebuild_storyboard_by_duration(
+        storyboard, script, total_duration=15.0, max_shot_duration_sec=5.0,
+    )
+
+    assert len(result.shots) == 3
+    # Chunk 0-5s overlaps original shot s01 (0-3s) by 3s vs s02 (3-15s) by 2s.
+    assert result.shots[0].camera == "close-up"
+    assert result.shots[0].action == "greets the viewer excitedly"
+    # Chunks 5-10s and 10-15s are fully inside original shot s02's 3-15s span.
+    assert result.shots[1].camera == "wide shot"
+    assert result.shots[2].camera == "wide shot"
+
+
+def test_rebuild_storyboard_dialogue_refs_match_chunk_time_range():
+    """Each chunk's dialogue_line_refs should be whichever verbatim lines'
+    midpoints actually fall inside that chunk, not the borrowed shot's refs."""
+    script = _duration_test_script()
+    storyboard = Storyboard(shots=[
+        Shot(
+            shot_id="s01", scene_ref="scene-1",
+            characters_on_screen=["max"], setting="room",
+            camera="medium shot", action="talks to the camera",
+            dialogue_line_refs=["scene-1-line-0", "scene-1-line-1", "scene-1-line-2"],
+            duration_sec=15.0,
+        ),
+    ])
+
+    result = _rebuild_storyboard_by_duration(
+        storyboard, script, total_duration=15.0, max_shot_duration_sec=5.0,
+    )
+
+    # line-0 midpoint=1.5 (chunk0 0-5), line-1 midpoint=6.0 (chunk1 5-10),
+    # line-2 midpoint=12.0 (chunk2 10-15).
+    assert result.shots[0].dialogue_line_refs == ["scene-1-line-0"]
+    assert result.shots[1].dialogue_line_refs == ["scene-1-line-1"]
+    assert result.shots[2].dialogue_line_refs == ["scene-1-line-2"]
+
+
+def test_rebuild_storyboard_returns_original_when_no_chunks():
+    script = _duration_test_script()
+    storyboard = Storyboard(shots=[
+        Shot(
+            shot_id="s01", scene_ref="scene-1",
+            characters_on_screen=["max"], setting="room",
+            camera="medium", action="waves",
+            dialogue_line_refs=["scene-1-line-0"], duration_sec=3.0,
+        ),
+    ])
+
+    result = _rebuild_storyboard_by_duration(
+        storyboard, script, total_duration=0.0, max_shot_duration_sec=8.0,
+    )
+
+    assert result is storyboard
 
 
 @pytest.mark.asyncio

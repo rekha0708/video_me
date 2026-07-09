@@ -1036,6 +1036,102 @@ def _apply_segment_timing_to_storyboard(
     return storyboard
 
 
+def _chunk_shot_durations(
+    total_duration: float, max_shot_duration_sec: float
+) -> list[tuple[float, float]]:
+    """Greedy-fill the source video's total duration into ≤max_shot_duration_sec
+    chunks: full-length chunks first, the last chunk gets whatever remains
+    (e.g. 15s / 8s max → [0-8, 8-15], not two even 7.5s halves). Stitching the
+    resulting shots back together exactly reconstructs the original length.
+    """
+    if total_duration <= 0 or max_shot_duration_sec <= 0:
+        return []
+    chunks: list[tuple[float, float]] = []
+    start = 0.0
+    remaining = total_duration
+    while remaining > 1e-6:
+        length = min(max_shot_duration_sec, remaining)
+        chunks.append((start, start + length))
+        start += length
+        remaining -= length
+    return chunks
+
+
+def _rebuild_storyboard_by_duration(
+    storyboard: Storyboard,
+    script: Script,
+    total_duration: float,
+    max_shot_duration_sec: float,
+) -> Storyboard:
+    """Replace the LLM-planned shot count/boundaries with deterministic
+    duration-based chunks (source_audio mode) so the assembled video's total
+    length exactly matches the source, regardless of scene/segment count.
+
+    Each chunk borrows camera/action/setting/characters_on_screen from
+    whichever original (scene-based) plan_shots shot overlaps it the most —
+    preserving that shot's creative direction — but gets its own
+    dialogue_line_refs from whichever verbatim-script lines actually fall
+    inside its time range, and its own source_start_sec/source_end_sec for
+    audio slicing.
+    """
+    chunks = _chunk_shot_durations(total_duration, max_shot_duration_sec)
+    if not chunks:
+        return storyboard
+
+    def _shot_span(shot: Shot) -> tuple[float, float] | None:
+        spans = [
+            (line.start, line.end)
+            for ref in shot.dialogue_line_refs
+            for line in [_resolve_line(ref, script)]
+            if line.start is not None and line.end is not None
+        ]
+        if not spans:
+            return None
+        return (min(s for s, _ in spans), max(e for _, e in spans))
+
+    original_spans = [(shot, _shot_span(shot)) for shot in storyboard.shots]
+    all_lines = [
+        (f"scene-{i + 1}-line-{j}", line)
+        for i, scene in enumerate(script.scenes)
+        for j, line in enumerate(scene.lines)
+        if line.start is not None and line.end is not None
+    ]
+
+    new_shots: list[Shot] = []
+    for idx, (chunk_start, chunk_end) in enumerate(chunks, start=1):
+        best_shot = storyboard.shots[0]
+        best_overlap = -1.0
+        for shot, span in original_spans:
+            if span is None:
+                continue
+            overlap = min(span[1], chunk_end) - max(span[0], chunk_start)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_shot = shot
+
+        refs = [
+            ref for ref, line in all_lines
+            if chunk_start <= (line.start + line.end) / 2 < chunk_end
+        ]
+        if not refs:
+            refs = best_shot.dialogue_line_refs
+
+        new_shots.append(Shot(
+            shot_id=f"s{idx:02d}",
+            scene_ref=best_shot.scene_ref,
+            characters_on_screen=best_shot.characters_on_screen,
+            setting=best_shot.setting,
+            camera=best_shot.camera,
+            action=best_shot.action,
+            dialogue_line_refs=refs,
+            duration_sec=chunk_end - chunk_start,
+            source_start_sec=chunk_start,
+            source_end_sec=chunk_end,
+        ))
+
+    return Storyboard(shots=new_shots)
+
+
 async def _slice_source_audio(
     source_audio_uri: str,
     start: float,
@@ -1385,7 +1481,15 @@ async def _run_to_assembled_video(
                 PlanShotsRequest(script=script, cast=config.cast, visual_context=visual_context),
                 Storyboard,
             )
-            storyboard = _apply_segment_timing_to_storyboard(storyboard, script)
+            # Deterministically re-chunk by max_shot_duration_sec so the
+            # assembled video's total length exactly matches the source,
+            # regardless of how many scenes/shots the LLM planned — each
+            # chunk borrows its camera/action from the nearest original shot.
+            storyboard = _rebuild_storyboard_by_duration(
+                storyboard, script,
+                total_duration=fetch_result.duration_sec,
+                max_shot_duration_sec=config.settings.max_shot_duration_sec,
+            )
             artifact_store.put_json(job.job_id, "plan_shots", storyboard.model_dump(mode="json"))
 
             storyboard = await _render_plan_overlays(storyboard, ctx, opts)

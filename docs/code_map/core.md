@@ -268,6 +268,8 @@ Shared Pydantic models for orchestration.
 - `async _concat_audio(tracks: list[AudioTrack], work_dir: Path, ffmpeg_bin: str='ffmpeg') -> AudioTrack` — Concatenate per-shot WAV files into one combined dialogue track.
 - `_build_verbatim_script(transcribe_result, cast: Cast, visual_context: 'VisualContext | None'=None, rights_cleared: bool=True) -> Script` — Build a Script directly from transcript segments (source_audio mode).
 - `_apply_segment_timing_to_storyboard(storyboard: Storyboard, script: Script) -> Storyboard` — Override shot durations with source segment timing (source_audio/re_voice).
+- `_chunk_shot_durations(total_duration: float, max_shot_duration_sec: float) -> list[tuple[float, float]]` — Greedy-fill the source video's total duration into ≤max_shot_duration_sec
+- `_rebuild_storyboard_by_duration(storyboard: Storyboard, script: Script, total_duration: float, max_shot_duration_sec: float) -> Storyboard` — Replace the LLM-planned shot count/boundaries with deterministic
 - `async _slice_source_audio(source_audio_uri: str, start: float, end: float, out_path: Path, ffmpeg_bin: str='ffmpeg') -> AudioTrack` — Extract an audio segment from the source audio file.
 - `_load_artifact(job_id: str, stage: str, model_cls: type, artifact_store: ArtifactStore) -> object | None` — Load a persisted stage artifact and deserialize it to model_cls. Returns None if absent.
 - `async _critique_loop(storyboard: Storyboard, script: Script, ctx: '_JobContext', max_iterations: int, visual_context: 'VisualContext | None'=None) -> tuple[Storyboard, list[str]]` — Run the plan critique loop: up to max_iterations re-plan attempts.
