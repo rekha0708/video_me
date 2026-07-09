@@ -30,11 +30,14 @@ from core.models.content import (
 from core.models.guardrails import SourceRights
 from core.models.job import Job, JobStatus
 from core.workflow import (
+    _apply_segment_timing_to_storyboard,
+    _build_verbatim_script,
     _concat_audio,
     _generate_shot_video,
     _make_adapters,
     _resolve_line,
     _run_plan_critique_and_approval,
+    _slice_source_audio,
     run_pipeline_job,
     run_with_critique,
 )
@@ -1506,3 +1509,172 @@ async def test_generate_shot_video_lipsync_failure_falls_back_to_raw_clip(tmp_pa
     # Should fall back to the raw clip, not raise.
     assert synced is raw_clip
     adapters.lipsync.run.assert_called_once()
+
+
+# ================================================================== source_audio helpers
+# _build_verbatim_script, _apply_segment_timing_to_storyboard, _slice_source_audio
+
+
+def _transcript_result():
+    """Minimal TranscribeResult with timed segments for source_audio tests."""
+    from core.models.capabilities import TranscriptSegment
+    return TranscribeResult(
+        segments=[
+            TranscriptSegment(text="Hello everyone!", start=0.0, end=3.5),
+            TranscriptSegment(text="Let's count together.", start=3.5, end=7.0),
+        ],
+        language="en",
+        full_text="Hello everyone! Let's count together.",
+    )
+
+
+def _test_cast():
+    """Cast fixture with all required CastMember fields for source_audio tests."""
+    from core.models.profile import Cast, CastMember
+    return Cast(
+        id="kids_duo",
+        species="human",
+        is_original_synthetic=True,
+        members=[
+            CastMember(id="max", name="Max", visual_descriptor="a cartoon boy",
+                       lora_ref="loras/kids_duo/max", voice_profile_ref="voices/kids_duo/max",
+                       personality="curious"),
+            CastMember(id="zoe", name="Zoe", visual_descriptor="a cartoon girl",
+                       lora_ref="loras/kids_duo/zoe", voice_profile_ref="voices/kids_duo/zoe",
+                       personality="cheerful"),
+        ],
+    )
+
+
+def test_build_verbatim_script_creates_lines_from_segments():
+    cast = _test_cast()
+    transcript = _transcript_result()
+    script = _build_verbatim_script(transcript, cast)
+
+    assert script.mode == "verbatim"
+    all_lines = [line for scene in script.scenes for line in scene.lines]
+    assert len(all_lines) == 2
+    assert all_lines[0].text == "Hello everyone!"
+    assert all_lines[0].speaker == "max"
+    assert all_lines[0].start == 0.0
+    assert all_lines[0].end == 3.5
+    assert all_lines[1].speaker == "zoe"
+    assert all_lines[1].start == 3.5
+    assert all_lines[1].end == 7.0
+
+
+def test_build_verbatim_script_single_member_cast():
+    from core.models.profile import Cast, CastMember
+
+    cast = Cast(
+        id="solo",
+        species="human",
+        is_original_synthetic=True,
+        members=[CastMember(id="max", name="Max", visual_descriptor="a cartoon boy",
+                            lora_ref="loras/solo/max", voice_profile_ref="voices/solo/max",
+                            personality="curious")],
+    )
+    transcript = _transcript_result()
+    script = _build_verbatim_script(transcript, cast)
+
+    all_lines = [line for scene in script.scenes for line in scene.lines]
+    assert all(line.speaker == "max" for line in all_lines)
+
+
+def test_apply_segment_timing_overrides_duration():
+    script = Script(
+        mode="verbatim",
+        learning_objective=LearningObjective(
+            concept="test", age_range="3-6", success_phrase="test",
+        ),
+        scenes=[Scene(
+            setting="room",
+            lines=[
+                Line(speaker="max", text="Hello!", start=1.0, end=4.5),
+                Line(speaker="zoe", text="Hi!", start=4.5, end=6.0),
+            ],
+        )],
+        caption_text="test",
+        source_rights=SourceRights(kind="transformed", rights_cleared=True, notes=""),
+    )
+    storyboard = Storyboard(shots=[
+        Shot(
+            shot_id="s01", scene_ref="scene-1",
+            characters_on_screen=["max"], setting="room",
+            camera="medium", action="waves",
+            dialogue_line_refs=["scene-1-line-0"], duration_sec=5.0,
+        ),
+        Shot(
+            shot_id="s02", scene_ref="scene-1",
+            characters_on_screen=["zoe"], setting="room",
+            camera="medium", action="smiles",
+            dialogue_line_refs=["scene-1-line-1"], duration_sec=5.0,
+        ),
+    ])
+
+    result = _apply_segment_timing_to_storyboard(storyboard, script)
+
+    assert result.shots[0].duration_sec == 3.5
+    assert result.shots[0].source_start_sec == 1.0
+    assert result.shots[0].source_end_sec == 4.5
+    assert result.shots[1].duration_sec == 1.5
+    assert result.shots[1].source_start_sec == 4.5
+    assert result.shots[1].source_end_sec == 6.0
+
+
+@pytest.mark.asyncio
+async def test_slice_source_audio_calls_ffmpeg(tmp_path):
+    src = tmp_path / "source.wav"
+    src.write_bytes(b"fake-wav-data")
+    out = tmp_path / "sliced" / "s01.wav"
+
+    with patch("asyncio.create_subprocess_exec") as mock_exec:
+        mock_proc = AsyncMock()
+        mock_proc.communicate.return_value = (b"", b"")
+        mock_proc.returncode = 0
+        mock_exec.return_value = mock_proc
+
+        track = await _slice_source_audio(str(src), 1.5, 4.0, out)
+
+    assert track.duration_sec == 2.5
+    assert track.uri == str(out)
+    cmd = mock_exec.call_args[0]
+    assert "-ss" in cmd
+    assert "1.5" in cmd
+    assert "-to" in cmd
+    assert "4.0" in cmd
+
+
+@pytest.mark.asyncio
+async def test_generate_shot_video_source_audio_skips_tts(tmp_path):
+    """In source_audio mode, TTS is skipped and source audio is sliced instead."""
+    adapters = MagicMock()
+    adapters.video.run = AsyncMock(
+        return_value=VideoClip(uri="/c.mp4", duration_sec=3.0, shot_id="s01")
+    )
+    adapters.video.native_lipsync = True
+    adapters.video.work_dir = tmp_path / "video" / "ltx"
+    adapters.ffmpeg_bin = "ffmpeg"
+
+    shot = Shot(
+        shot_id="s01", scene_ref="scene-1",
+        characters_on_screen=["max"], setting="cozy classroom",
+        camera="medium", action="speaks",
+        dialogue_line_refs=["scene-1-line-0"],
+        duration_sec=3.5,
+        source_start_sec=0.0,
+        source_end_sec=3.5,
+    )
+    config = _make_config(tmp_path)
+
+    with patch("core.workflow._slice_source_audio", new_callable=AsyncMock) as mock_slice:
+        mock_slice.return_value = AudioTrack(uri="/sliced.wav", duration_sec=3.5)
+
+        synced, audio = await _generate_shot_video(
+            shot, _script(), config.cast, adapters, Path(tmp_path), "/img.png",
+            render_mode="source_audio", source_audio_uri="/source.wav",
+        )
+
+    mock_slice.assert_called_once()
+    adapters.voice.run.assert_not_called()
+    assert audio.uri == "/sliced.wav"

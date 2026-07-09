@@ -141,6 +141,20 @@
       </select>
     </div>
 
+    {# ── Render mode ── #}
+    <div class="form-row" id="nj-render-mode-row">
+      <label>Render Mode</label>
+      <select name="render_mode" id="nj-render-mode">
+        <option value="full" selected>Full — adapted script + TTS voice + video</option>
+        <option value="source_audio">Source Audio — character video + original audio (no TTS)</option>
+        <option value="re_voice">Re-voice — character video + TTS at original pacing</option>
+      </select>
+      <div class="form-hint">
+        Full: rewrites script + generates voice. Source Audio: keeps original audio.
+        Re-voice: TTS but matches original video timing.
+      </div>
+    </div>
+
     {# ── Video model ── #}
     <div class="form-row">
       <label>Video Model</label>
@@ -362,6 +376,14 @@ function toggleSourceMode(mode) {
   if (!isLora && sel.value === "lora_train") sel.value = "all";
   updatePhaseHint(sel.value);
 
+  // Disable source_audio/re_voice for modes without real audio.
+  const noSourceAudio = isStory || isLora;
+  const rmSel = document.getElementById("nj-render-mode");
+  rmSel.querySelectorAll("option").forEach(opt => {
+    opt.disabled = noSourceAudio && opt.value !== "full";
+  });
+  if (noSourceAudio && rmSel.value !== "full") rmSel.value = "full";
+
   // Update rights checkbox label.
   const label = document.getElementById("nj-rights-label");
   if (label) {
@@ -507,11 +529,13 @@ async function submitNewJob(e) {
     if (document.getElementById("nj-auto-approve-plan").checked) overrides.auto_approve_plan = true;
     if (document.getElementById("nj-auto-approve-images").checked) overrides.auto_approve_images = true;
     if (document.getElementById("nj-auto-approve-transcript").checked) overrides.auto_approve_transcript = true;
+    const renderMode = document.getElementById("nj-render-mode").value;
     const body = {
       source: { kind: sourceKind, url: sourceUrl },
       rights_cleared: document.getElementById("nj-rights").checked,
       target_language: document.getElementById("nj-lang").value,
       phase: document.getElementById("nj-phase").value,
+      render_mode: renderMode,
       overrides,
     };
     if (castSel && castSel.value) body.cast_ref = castSel.value;

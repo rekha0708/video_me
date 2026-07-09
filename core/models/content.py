@@ -92,6 +92,8 @@ class Shot(BaseModel):
     action: str
     dialogue_line_refs: list[str] = Field(default_factory=list)
     duration_sec: float
+    source_start_sec: float | None = None
+    source_end_sec: float | None = None
     overlay: ShotOverlay | None = None  # optional chart/diagram panel for this shot
 
     @field_validator("characters_on_screen")

@@ -26,6 +26,10 @@
     <div class="page-subtitle">
       {% set sk = job.source_kind | default('url') %}
       <span class="badge badge-info" style="font-size:10px;padding:1px 5px">{{ sk }}</span>
+      {% set rm = job.request.get('render_mode', 'full') %}
+      {% if rm != 'full' %}
+        <span class="badge badge-warning" style="font-size:10px;padding:1px 5px">{{ rm | replace('_', ' ') }}</span>
+      {% endif %}
       &nbsp;{{ job.source_url | truncate(72) }} &nbsp;·&nbsp; phase: {{ job.phase }}
       &nbsp;·&nbsp; lang: {{ job.target_language }}
       {% set cast_ref = job.request.get('cast_ref') %}

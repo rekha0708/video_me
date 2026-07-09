@@ -119,6 +119,7 @@ class CreateDashboardJobRequest(BaseModel):
     rights_cleared: bool = False
     target_language: Literal["en", "hi", "both"] = "en"
     mode: Literal["standard", "critique"] = "standard"
+    render_mode: Literal["full", "source_audio", "re_voice"] = "full"
     phase: Literal[
         "transcribe",
         "script_plan",

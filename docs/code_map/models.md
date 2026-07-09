@@ -437,6 +437,8 @@ LLM-authored chart/diagram panel composited over the upper third of the shot.
 - `action: str`
 - `dialogue_line_refs: list[str]` = `Field(default_factory=list)`
 - `duration_sec: float`
+- `source_start_sec: float | None` = `None`
+- `source_end_sec: float | None` = `None`
 - `overlay: ShotOverlay | None` = `None`
 
 ### `Storyboard` (BaseModel) — `core/models/content.py`
@@ -473,6 +475,7 @@ LLM-authored chart/diagram panel composited over the upper third of the shot.
 - `rights_cleared: bool` = `False`
 - `target_language: Literal['en', 'hi', 'both']` = `'en'`
 - `mode: Literal['standard', 'critique']` = `'standard'`
+- `render_mode: Literal['full', 'source_audio', 're_voice']` = `'full'`
 - `phase: Literal['transcribe', 'script_plan', 'plan', 'render', 'assemble', 'all', 'noop', 'lora_train']` = `'all'`
 - `run_critique: bool` = `False`
 - `overrides: DashboardJobOverrides` = `Field(default_factory=DashboardJobOverrides)`

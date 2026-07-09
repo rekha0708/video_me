@@ -468,6 +468,7 @@ class DashboardWorker:
         options = RunOptions(
             phase=phase,
             resume=resume,
+            render_mode=req.render_mode,
             user_images=user_images,
             stage_hook=self._make_stage_hook(job_id),
             error_hook=self._make_error_hook(job_id),

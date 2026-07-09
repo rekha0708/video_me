@@ -78,11 +78,15 @@ class RunOptions:
                  services/dashboard_worker.py's _make_stage_hook) used to
                  surface shot-level progress on the dashboard; the two
                  positional args alone are enough for ordinary stage events.
+    render_mode: "full" (default) — normal pipeline.
+                 "source_audio" — skip adapt_script + TTS; use source audio sliced per segment.
+                 "re_voice" — TTS + adapt_script, but shot durations match source segment timing.
     """
     phase: Phase = "all"
     resume: bool = False
     only_shot: str | None = None
     language: str = "en"
+    render_mode: str = "full"
     stage_hook: Callable[..., None] | None = None
     error_hook: Callable[[str, Exception], Any] | None = None
     user_images: dict[str, str] | None = None
@@ -722,6 +726,8 @@ async def _generate_shot_video(
     *,
     shot_index: int = 1,
     total_shots: int = 1,
+    render_mode: str = "full",
+    source_audio_uri: str | None = None,
 ) -> tuple[VideoClip, AudioTrack]:
     """Phase B: synthesize voice + generate video for one shot using the approved image.
 
@@ -761,32 +767,51 @@ async def _generate_shot_video(
 
     log_event(logger, "shot_video_started", shot_id=shot.shot_id, speaker=speaker_id)
 
-    # ── 1. synthesize_voice ───────────────────────────────────────────────────
+    # ── 1. synthesize_voice (or slice source audio) ────────────────────────────
     vparams = load_cast_params(cast.id).get(speaker_id)
-    audio_files = sorted((work_dir / "audio" / speaker_id).glob("*.wav"))
-    if opts.resume and audio_files:
-        logger.info("Skipping synthesize_voice for %s (audio exists)", shot.shot_id)
-        audio_track = AudioTrack(uri=str(audio_files[0]), duration_sec=shot.duration_sec)
-    else:
-        _notify_shot(
-            opts.stage_hook, "synthesize_voice", "stage_started",
-            shot_id=shot.shot_id, label=label, detail="synthesizing voice",
-        )
-        voice_ref = (vparams.voice_file if vparams and vparams.voice_file
-                     else speaker.voice_profile_ref)
-        audio_track = await adapters.voice.run(
-            VoiceRequest(
-                text=line_text,
-                voice_profile_ref=voice_ref,
-                speaker_id=speaker_id,
-                expression=expression,
-                language=opts.language if opts else "en",
+    if render_mode == "source_audio" and source_audio_uri and shot.source_start_sec is not None and shot.source_end_sec is not None:
+        audio_slice_path = work_dir / "audio" / "source_slices" / f"{shot.shot_id}.wav"
+        if opts.resume and audio_slice_path.exists():
+            logger.info("Skipping source audio slice for %s (exists)", shot.shot_id)
+            audio_track = AudioTrack(uri=str(audio_slice_path), duration_sec=shot.duration_sec)
+        else:
+            _notify_shot(
+                opts.stage_hook, "slice_source_audio", "stage_started",
+                shot_id=shot.shot_id, label=label, detail="slicing source audio",
             )
-        )
-        _notify_shot(
-            opts.stage_hook, "synthesize_voice", "stage_completed",
-            shot_id=shot.shot_id, label=label, detail="voice done",
-        )
+            audio_track = await _slice_source_audio(
+                source_audio_uri, shot.source_start_sec, shot.source_end_sec,
+                audio_slice_path, adapters.ffmpeg_bin,
+            )
+            _notify_shot(
+                opts.stage_hook, "slice_source_audio", "stage_completed",
+                shot_id=shot.shot_id, label=label, detail="audio slice done",
+            )
+    else:
+        audio_files = sorted((work_dir / "audio" / speaker_id).glob("*.wav"))
+        if opts.resume and audio_files:
+            logger.info("Skipping synthesize_voice for %s (audio exists)", shot.shot_id)
+            audio_track = AudioTrack(uri=str(audio_files[0]), duration_sec=shot.duration_sec)
+        else:
+            _notify_shot(
+                opts.stage_hook, "synthesize_voice", "stage_started",
+                shot_id=shot.shot_id, label=label, detail="synthesizing voice",
+            )
+            voice_ref = (vparams.voice_file if vparams and vparams.voice_file
+                         else speaker.voice_profile_ref)
+            audio_track = await adapters.voice.run(
+                VoiceRequest(
+                    text=line_text,
+                    voice_profile_ref=voice_ref,
+                    speaker_id=speaker_id,
+                    expression=expression,
+                    language=opts.language if opts else "en",
+                )
+            )
+            _notify_shot(
+                opts.stage_hook, "synthesize_voice", "stage_completed",
+                shot_id=shot.shot_id, label=label, detail="voice done",
+            )
 
     # ── 2. generate_video ─────────────────────────────────────────────────────
     video_action = shot.action
@@ -895,6 +920,146 @@ async def _concat_audio(
         uri=str(output),
         duration_sec=sum(t.duration_sec for t in tracks),
     )
+
+
+def _build_verbatim_script(
+    transcribe_result,
+    cast: Cast,
+    visual_context: "VisualContext | None" = None,
+    rights_cleared: bool = True,
+) -> Script:
+    """Build a Script directly from transcript segments (source_audio mode).
+
+    Skips adapt_script entirely — dialogue text is the original transcript,
+    scenes are derived from visual_context segments (or a single default scene).
+    """
+    from core.models.content import LearningObjective, Line, Scene
+    from core.models.guardrails import SourceRights
+
+    segments = transcribe_result.segments
+    if not segments:
+        raise ValueError("Cannot build verbatim script: no transcript segments")
+
+    primary_speaker = cast.members[0].id
+    secondary_speaker = cast.members[1].id if len(cast.members) > 1 else primary_speaker
+
+    vis_segments = getattr(visual_context, "segments", None) if visual_context else None
+    if vis_segments:
+        scenes: list[Scene] = []
+        seg_idx = 0
+        for vs in vis_segments:
+            scene_lines: list[Line] = []
+            while seg_idx < len(segments):
+                seg = segments[seg_idx]
+                if seg.start >= vs.end and vs != vis_segments[-1]:
+                    break
+                speaker = primary_speaker if seg_idx % 2 == 0 else secondary_speaker
+                scene_lines.append(Line(
+                    speaker=speaker,
+                    text=seg.text.strip(),
+                    start=seg.start,
+                    end=seg.end,
+                ))
+                seg_idx += 1
+            if scene_lines:
+                setting = getattr(vs, "setting", None) or getattr(vs, "description", "indoor scene")
+                scenes.append(Scene(
+                    setting=setting,
+                    characters_present=[primary_speaker],
+                    lines=scene_lines,
+                ))
+        if seg_idx < len(segments):
+            leftover: list[Line] = []
+            while seg_idx < len(segments):
+                seg = segments[seg_idx]
+                speaker = primary_speaker if seg_idx % 2 == 0 else secondary_speaker
+                leftover.append(Line(
+                    speaker=speaker,
+                    text=seg.text.strip(),
+                    start=seg.start,
+                    end=seg.end,
+                ))
+                seg_idx += 1
+            scenes.append(Scene(
+                setting="indoor scene",
+                characters_present=[primary_speaker],
+                lines=leftover,
+            ))
+    else:
+        lines = []
+        for i, seg in enumerate(segments):
+            speaker = primary_speaker if i % 2 == 0 else secondary_speaker
+            lines.append(Line(
+                speaker=speaker,
+                text=seg.text.strip(),
+                start=seg.start,
+                end=seg.end,
+            ))
+        scenes = [Scene(
+            setting="indoor scene",
+            characters_present=[primary_speaker],
+            lines=lines,
+        )]
+
+    full_text = " ".join(seg.text.strip() for seg in segments)
+    return Script(
+        mode="verbatim",
+        learning_objective=LearningObjective(
+            concept="source content",
+            age_range="3-6",
+            success_phrase="understands the topic",
+        ),
+        scenes=scenes,
+        caption_text=full_text[:200],
+        source_rights=SourceRights(kind="transformed", rights_cleared=rights_cleared, notes="verbatim source_audio mode"),
+    )
+
+
+def _apply_segment_timing_to_storyboard(
+    storyboard: Storyboard,
+    script: Script,
+) -> Storyboard:
+    """Override shot durations with source segment timing (source_audio/re_voice).
+
+    Each shot maps to one dialogue line whose Line.start/end carry the original
+    segment timestamps. The shot's duration_sec, source_start_sec, and
+    source_end_sec are set from those timestamps.
+    """
+    for shot in storyboard.shots:
+        if not shot.dialogue_line_refs:
+            continue
+        line = _resolve_line(shot.dialogue_line_refs[0], script)
+        if line.start is not None and line.end is not None:
+            shot.duration_sec = max(1.0, line.end - line.start)
+            shot.source_start_sec = line.start
+            shot.source_end_sec = line.end
+    return storyboard
+
+
+async def _slice_source_audio(
+    source_audio_uri: str,
+    start: float,
+    end: float,
+    out_path: Path,
+    ffmpeg_bin: str = "ffmpeg",
+) -> AudioTrack:
+    """Extract an audio segment from the source audio file."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    proc = await asyncio.create_subprocess_exec(
+        ffmpeg_bin, "-y",
+        "-ss", str(start),
+        "-to", str(end),
+        "-i", str(source_audio_uri),
+        "-c", "copy",
+        str(out_path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        tail = stderr.decode(errors="replace")[-500:]
+        raise RuntimeError(f"Audio slice failed (exit {proc.returncode}):\n{tail}")
+    return AudioTrack(uri=str(out_path), duration_sec=end - start)
 
 
 def _load_artifact(
@@ -1206,34 +1371,55 @@ async def _run_to_assembled_video(
         # 4. rights gate
         check_rights(job)
 
-        # 5. adapt_script
-        script: Script = await _stage(
-            "adapt_script", adapters.adapt,
-            AdaptScriptRequest(
-                metadata=metadata,
-                cast=config.cast,
-                channel_profile=config.channel_profile,
-                language=opts.language,
+        if opts.render_mode == "source_audio":
+            # ── source_audio path: skip adapt_script, build verbatim script ──
+            script = _build_verbatim_script(
+                transcribe_result, config.cast,
                 visual_context=visual_context,
-            ),
-            Script,
-        )
+                rights_cleared=job.rights_cleared,
+            )
+            artifact_store.put_json(job.job_id, "adapt_script", script.model_dump(mode="json"))
 
-        # 6. plan_shots
-        storyboard: Storyboard = await _stage(
-            "plan_shots", adapters.plan,
-            PlanShotsRequest(script=script, cast=config.cast, visual_context=visual_context),
-            Storyboard,
-        )
+            storyboard = await _stage(
+                "plan_shots", adapters.plan,
+                PlanShotsRequest(script=script, cast=config.cast, visual_context=visual_context),
+                Storyboard,
+            )
+            storyboard = _apply_segment_timing_to_storyboard(storyboard, script)
+            artifact_store.put_json(job.job_id, "plan_shots", storyboard.model_dump(mode="json"))
 
-        # 7. critique_plan loop + human approval gate
-        storyboard, script = await _run_plan_critique_and_approval(
-            storyboard=storyboard,
-            script=script,
-            ctx=ctx,
-            opts=opts,
-            visual_context=visual_context,
-        )
+            storyboard = await _render_plan_overlays(storyboard, ctx, opts)
+            log_event(logger, "source_audio_plan_ready",
+                      shots=len(storyboard.shots), mode="source_audio")
+        else:
+            # 5. adapt_script
+            script: Script = await _stage(
+                "adapt_script", adapters.adapt,
+                AdaptScriptRequest(
+                    metadata=metadata,
+                    cast=config.cast,
+                    channel_profile=config.channel_profile,
+                    language=opts.language,
+                    visual_context=visual_context,
+                ),
+                Script,
+            )
+
+            # 6. plan_shots
+            storyboard: Storyboard = await _stage(
+                "plan_shots", adapters.plan,
+                PlanShotsRequest(script=script, cast=config.cast, visual_context=visual_context),
+                Storyboard,
+            )
+
+            # 7. critique_plan loop + human approval gate
+            storyboard, script = await _run_plan_critique_and_approval(
+                storyboard=storyboard,
+                script=script,
+                ctx=ctx,
+                opts=opts,
+                visual_context=visual_context,
+            )
 
         if opts.phase in ("plan", "script_plan"):
             logger.info("Phase '%s' complete — stopping before render loop.", opts.phase)
@@ -1253,6 +1439,21 @@ async def _run_to_assembled_video(
         script = Script.model_validate(script_data)
         storyboard = Storyboard.model_validate(storyboard_data)
         logger.info("Loaded plan artifacts for job %s (script + storyboard)", job.job_id)
+        # fetch_result not available from plan block — set to None; loaded below if needed.
+        fetch_result = None  # type: ignore[assignment]
+
+    # ── Resolve source_audio_uri for source_audio mode ──────────────────────
+    source_audio_uri: str | None = None
+    if opts.render_mode == "source_audio":
+        if fetch_result is None:
+            fetch_result = _load_artifact(job.job_id, "fetch_media", FetchMediaResult, artifact_store)
+        if fetch_result is not None:
+            source_audio_uri = fetch_result.audio_uri
+        if not source_audio_uri or source_audio_uri.startswith("story://"):
+            raise ValueError(
+                "source_audio mode requires a real audio file from fetch_media. "
+                "Story-kind jobs do not have source audio."
+            )
 
     # ── Render phase ──────────────────────────────────────────────────────────
     if opts.phase == "assemble":
@@ -1342,6 +1543,7 @@ async def _run_to_assembled_video(
             synced, audio = await _generate_shot_video(
                 shot, script, config.cast, adapters, ctx.work_dir, image_uri, opts,
                 shot_index=i, total_shots=total_shots,
+                render_mode=opts.render_mode, source_audio_uri=source_audio_uri,
             )
             synced_clips.append(synced)
             audio_tracks.append(audio)
