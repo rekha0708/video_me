@@ -267,6 +267,7 @@ def _make_adapters(
             model=s.llm_model,
             base_url=s.llm_base_url,
             api_key=s.llm_api_key,
+            max_shot_duration_sec=s.max_shot_duration_sec,
         ),
         plan_critique=LlmPlanCritiqueAdapter(
             model=s.llm_model,

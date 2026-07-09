@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     auto_approve_plan: bool = False       # set True in CI / smoke tests to skip approval UI
     auto_approve_transcript: bool = False  # skip the story/transcribe review gate (dashboard jobs)
 
+    # --- shot duration ---
+    max_shot_duration_sec: float = 8.0   # ceiling per shot (words/2, clamped to [5, this])
+
     # --- human approval web UI (storyboard) ---
     approval_port: int = 8765
     approval_timeout_hours: float = 24.0

@@ -303,7 +303,7 @@ Shot-planning adapters.
 ### `adapters/plan_shots/llm_adapter.py`
 
 - **class `LlmPlanShotsAdapter(PlanShots)`** — plan_shots adapter: Script → Storyboard via an OpenAI-compatible LLM.
-  - `__init__(self, model: str='qwen2.5:7b', base_url: str='http://localhost:11434/v1', api_key: str='ollama', temperature: float=0.2, max_tokens: int=16384) -> None`
+  - `__init__(self, model: str='qwen2.5:7b', base_url: str='http://localhost:11434/v1', api_key: str='ollama', temperature: float=0.2, max_tokens: int=16384, max_shot_duration_sec: float=_MAX_SHOT_SEC) -> None`
   - `async health(self) -> HealthStatus`
   - `async estimate_cost(self, req: PlanShotsRequest) -> CostEstimate`
   - `async run(self, req: PlanShotsRequest) -> Storyboard`
@@ -312,7 +312,7 @@ Shot-planning adapters.
 - `_strip_markdown_fence(text: str) -> str`
 - `make_scene_ref(scene_idx: int) -> str`
 - `make_line_ref(scene_idx: int, line_idx: int) -> str`
-- `estimate_duration(text: str) -> float`
+- `estimate_duration(text: str, max_sec: float=_MAX_SHOT_SEC) -> float`
 - `trim_characters(characters: list[str], speaker: str) -> list[str]` — Enforce ≤2 characters; speaker is always first.
 - `parse_overlay(raw: object) -> 'ShotOverlay | None'` — Parse an LLM-provided overlay spec; any malformed spec → None (never fatal).
 - `_format_chart_hints(visual_context) -> str` — Reference-video chart hints so overlays are grounded — with the rights rule.

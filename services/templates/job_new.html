@@ -152,6 +152,17 @@
       <div class="form-hint">Which video generation backend to use for this job only.</div>
     </div>
 
+    {# ── Max shot duration ── #}
+    <div class="form-row">
+      <label>Max shot duration (seconds)</label>
+      <input type="number" id="nj-max-shot-duration" min="2" max="10" step="0.5" value="8"
+             style="width:80px">
+      <div class="form-hint">
+        Per-shot ceiling (default 8s). Lower to keep total video shorter.
+        Each shot's duration is derived from dialogue word count, clamped to [5s, this value].
+      </div>
+    </div>
+
     {# ── Approval gates ── #}
     <div class="form-row">
       <label>Approval gates</label>
@@ -488,9 +499,11 @@ async function submitNewJob(e) {
     }
 
     const videoAdapter = document.getElementById("nj-video-adapter").value;
+    const maxShotDur = parseFloat(document.getElementById("nj-max-shot-duration").value);
     const castSel = document.getElementById("nj-cast");
     const overrides = {};
     if (videoAdapter) overrides.video_adapter = videoAdapter;
+    if (maxShotDur && maxShotDur !== 8) overrides.max_shot_duration_sec = maxShotDur;
     if (document.getElementById("nj-auto-approve-plan").checked) overrides.auto_approve_plan = true;
     if (document.getElementById("nj-auto-approve-images").checked) overrides.auto_approve_images = true;
     if (document.getElementById("nj-auto-approve-transcript").checked) overrides.auto_approve_transcript = true;

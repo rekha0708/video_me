@@ -82,9 +82,9 @@ def make_line_ref(scene_idx: int, line_idx: int) -> str:
     return f"scene-{scene_idx + 1}-line-{line_idx}"
 
 
-def estimate_duration(text: str) -> float:
+def estimate_duration(text: str, max_sec: float = _MAX_SHOT_SEC) -> float:
     words = len(text.split())
-    return max(_MIN_SHOT_SEC, min(_MAX_SHOT_SEC, words / _WORDS_PER_SEC))
+    return max(_MIN_SHOT_SEC, min(max_sec, words / _WORDS_PER_SEC))
 
 
 def trim_characters(characters: list[str], speaker: str) -> list[str]:
@@ -187,12 +187,14 @@ class LlmPlanShotsAdapter(PlanShots):
         api_key: str = "ollama",
         temperature: float = 0.2,
         max_tokens: int = 16384,
+        max_shot_duration_sec: float = _MAX_SHOT_SEC,
     ) -> None:
         self._model = model
         self._base_url = base_url
         self._api_key = api_key
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._max_shot_sec = max_shot_duration_sec
 
     async def health(self) -> HealthStatus:
         try:
@@ -337,7 +339,7 @@ class LlmPlanShotsAdapter(PlanShots):
                     camera=camera,
                     action=action,
                     dialogue_line_refs=[line_ref],
-                    duration_sec=estimate_duration(line_text),
+                    duration_sec=estimate_duration(line_text, self._max_shot_sec),
                     overlay=parse_overlay(llm.get("overlay")),
                 )
             )

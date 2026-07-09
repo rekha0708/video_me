@@ -1032,6 +1032,7 @@ def create_app(
 
     _RETRYABLE_OVERRIDE_KEYS = (
         "video_adapter", "render_adapter", "tts_adapter", "llm_model",
+        "max_shot_duration_sec",
     )
 
     _RERUN_PHASES = ("transcribe", "script_plan", "render", "assemble", "all")

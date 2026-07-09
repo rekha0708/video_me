@@ -79,6 +79,7 @@
 - `max_plan_iterations: int` = `3`
 - `auto_approve_plan: bool` = `False`
 - `auto_approve_transcript: bool` = `False`
+- `max_shot_duration_sec: float` = `8.0`
 - `approval_port: int` = `8765`
 - `approval_timeout_hours: float` = `24.0`
 - `image_candidates: int` = `1`
@@ -456,6 +457,7 @@ LLM-authored chart/diagram panel composited over the upper third of the shot.
 - `video_adapter: Literal['wan', 'ltx'] | None` = `None`
 - `tts_adapter: Literal['chatterbox', 'fish_s2'] | None` = `None`
 - `image_candidates: int | None` = `Field(default=None, ge=1, le=10)`
+- `max_shot_duration_sec: float | None` = `Field(default=None, ge=2.0, le=10.0)`
 - `auto_approve_plan: bool | None` = `None`
 - `auto_approve_images: bool | None` = `None`
 - `auto_approve_transcript: bool | None` = `None`

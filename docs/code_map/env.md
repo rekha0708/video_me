@@ -60,6 +60,7 @@
 | `VIDEO_ME_MAX_PLAN_ITERATIONS` | `int` | `3` |
 | `VIDEO_ME_AUTO_APPROVE_PLAN` | `bool` | `False` |
 | `VIDEO_ME_AUTO_APPROVE_TRANSCRIPT` | `bool` | `False` |
+| `VIDEO_ME_MAX_SHOT_DURATION_SEC` | `float` | `8.0` |
 | `VIDEO_ME_APPROVAL_PORT` | `int` | `8765` |
 | `VIDEO_ME_APPROVAL_TIMEOUT_HOURS` | `float` | `24.0` |
 | `VIDEO_ME_IMAGE_CANDIDATES` | `int` | `1` |

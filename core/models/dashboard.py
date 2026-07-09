@@ -103,6 +103,7 @@ class DashboardJobOverrides(BaseModel):
     video_adapter: Literal["wan", "ltx"] | None = None
     tts_adapter: Literal["chatterbox", "fish_s2"] | None = None
     image_candidates: int | None = Field(default=None, ge=1, le=10)
+    max_shot_duration_sec: float | None = Field(default=None, ge=2.0, le=10.0)
     auto_approve_plan: bool | None = None
     auto_approve_images: bool | None = None
     auto_approve_transcript: bool | None = None
