@@ -95,6 +95,59 @@ def test_complete_and_fail_queue_actions(tmp_path: Path) -> None:
     assert item2.error["code"] == "ERR"
 
 
+# ---------------------------------------------------------------------------
+# _make_stage_hook — shot progress plumbing (current_shot_id + custom message)
+# ---------------------------------------------------------------------------
+
+def test_stage_hook_without_shot_extras_behaves_as_before(tmp_path: Path) -> None:
+    """Ordinary (stage_name, event_type) calls — e.g. from core/executor.py —
+    still work with no shot_id/message and produce the default message text."""
+    worker, repo = _make_worker(tmp_path)
+    job, _ = repo.create_queued_job(_noop_request())
+    hook = worker._make_stage_hook(job.job_id)
+
+    hook("fetch_media", "stage_started")
+
+    record = repo.get_job(job.job_id)
+    assert record.current_stage == "fetch_media"
+    assert record.current_shot_id is None
+    events = repo.list_events(job.job_id)
+    assert events[-1].message == "fetch_media: stage started"
+
+
+def test_stage_hook_sets_current_shot_id_and_custom_message(tmp_path: Path) -> None:
+    worker, repo = _make_worker(tmp_path)
+    job, _ = repo.create_queued_job(_noop_request())
+    hook = worker._make_stage_hook(job.job_id)
+
+    hook(
+        "synthesize_voice", "stage_started",
+        shot_id="s01", message="Shot s01 (1/14): synthesizing voice",
+    )
+
+    record = repo.get_job(job.job_id)
+    assert record.current_stage == "synthesize_voice"
+    assert record.current_shot_id == "s01"
+    events = repo.list_events(job.job_id)
+    assert events[-1].message == "Shot s01 (1/14): synthesizing voice"
+    assert events[-1].stage_name == "synthesize_voice"
+    assert events[-1].shot_id == "s01"
+
+
+def test_stage_hook_shot_id_persists_across_stage_completed(tmp_path: Path) -> None:
+    """stage_completed events don't pass shot_id (mirrors _notify_shot's own
+    calls) — current_shot_id should be left as whatever stage_started set."""
+    worker, repo = _make_worker(tmp_path)
+    job, _ = repo.create_queued_job(_noop_request())
+    hook = worker._make_stage_hook(job.job_id)
+
+    hook("synthesize_voice", "stage_started", shot_id="s01", message="starting")
+    hook("synthesize_voice", "stage_completed", shot_id="s01", message="voice done")
+
+    record = repo.get_job(job.job_id)
+    assert record.current_shot_id == "s01"
+
+
 def test_config_for_job_applies_overrides(tmp_path: Path) -> None:
     """DashboardJobOverrides fields should override the matching Settings field."""
     from core.models.dashboard import DashboardJobOverrides

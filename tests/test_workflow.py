@@ -324,6 +324,37 @@ async def test_run_pipeline_job_completes(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_pipeline_job_announces_total_shot_count(tmp_path) -> None:
+    """Dashboard should see an upfront shot-count message before Phase A and
+    Phase B, so the timeline is clear before individual shots start."""
+    from core.workflow import RunOptions
+
+    config = _make_config(tmp_path)
+    messages: list[str] = []
+
+    def stage_hook(stage_name, event_type, **kw):
+        if kw.get("message"):
+            messages.append(kw["message"])
+
+    with (
+        patch("core.workflow._make_adapters", return_value=MagicMock(ffmpeg_bin="ffmpeg")),
+        patch("core.workflow.run_stage", new=_make_run_stage(_stage_results())),
+        patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
+        patch("core.workflow.create_job_store", return_value=MagicMock()),
+        patch("core.workflow.create_artifact_store", return_value=MagicMock()),
+    ):
+        with _mock_shot_patches():
+            await run_pipeline_job(
+                "http://example.com", rights_cleared=True, app_config=config,
+                options=RunOptions(stage_hook=stage_hook),
+            )
+
+    # _storyboard() (used by _mock_shot_patches' plan_critique stub) has 1 shot.
+    assert "Rendering 1 shot" in messages
+    assert "Generating video for 1 shot" in messages
+
+
+@pytest.mark.asyncio
 async def test_run_pipeline_job_uses_config_target_language_when_not_overridden(tmp_path) -> None:
     config = _make_config(tmp_path)
     config.settings.target_language = "both"
@@ -1325,6 +1356,51 @@ async def test_generate_shot_video_skips_lipsync_for_native(tmp_path) -> None:
 
     adapters.lipsync.run.assert_not_called()
     assert synced.uri == "/c.mp4"
+
+
+@pytest.mark.asyncio
+async def test_generate_shot_video_emits_shot_progress_events(tmp_path) -> None:
+    """stage_hook should see start/complete events for voice, video, lip_sync,
+    and a final shot_complete — each carrying shot_id and a labeled message."""
+    from core.workflow import RunOptions
+
+    adapters = MagicMock()
+    adapters.voice.run = AsyncMock(
+        return_value=AudioTrack(uri="/d.wav", duration_sec=1.0, speaker_id="max")
+    )
+    adapters.video.run = AsyncMock(
+        return_value=VideoClip(uri="/c.mp4", duration_sec=1.0, shot_id="s01")
+    )
+    adapters.lipsync.run = AsyncMock(
+        return_value=VideoClip(uri="/s.mp4", duration_sec=1.0, shot_id="s01")
+    )
+    adapters.video.native_lipsync = False
+
+    events: list[tuple] = []
+
+    def stage_hook(stage_name, event_type, **kw):
+        events.append((stage_name, event_type, kw.get("shot_id"), kw.get("message")))
+
+    shot = _storyboard().shots[0]
+    config = _make_config(tmp_path)
+
+    await _generate_shot_video(
+        shot, _script(), config.cast, adapters, Path(tmp_path), "/img.png",
+        RunOptions(stage_hook=stage_hook),
+        shot_index=3, total_shots=14,
+    )
+
+    stage_names = [e[0] for e in events]
+    assert stage_names == [
+        "synthesize_voice", "synthesize_voice",
+        "generate_video", "generate_video",
+        "lip_sync", "lip_sync",
+        "shot_complete",
+    ]
+    assert all(e[2] == "s01" for e in events)  # shot_id on every event
+    assert events[0][3] == "Shot s01 (3/14): synthesizing voice"
+    assert events[1][3] == "Shot s01 (3/14): voice done"
+    assert events[-1][3] == "Shot s01 (3/14): shot complete"
 
 
 @pytest.mark.asyncio

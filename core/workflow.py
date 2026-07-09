@@ -72,12 +72,18 @@ class RunOptions:
     user_images: member_id → image path. When set, render_character + VLM
                  critique are skipped entirely and each shot defaults to its
                  speaker's reference image (story_images input mode).
+    stage_hook:  called as stage_hook(stage_name, event_type, shot_id=..., message=...).
+                 shot_id/message are optional keyword extras (see
+                 core/workflow.py's per-shot calls and
+                 services/dashboard_worker.py's _make_stage_hook) used to
+                 surface shot-level progress on the dashboard; the two
+                 positional args alone are enough for ordinary stage events.
     """
     phase: Phase = "all"
     resume: bool = False
     only_shot: str | None = None
     language: str = "en"
-    stage_hook: Callable[[str, str], None] | None = None
+    stage_hook: Callable[..., None] | None = None
     error_hook: Callable[[str, Exception], Any] | None = None
     user_images: dict[str, str] | None = None
 
@@ -691,6 +697,20 @@ async def _run_image_approval_gate(
     return result.approved_uris
 
 
+def _notify_shot(
+    stage_hook: Callable[..., None] | None,
+    stage_name: str,
+    event_type: str,
+    *,
+    shot_id: str,
+    label: str,
+    detail: str,
+) -> None:
+    """Emit a stage_hook event carrying shot progress (e.g. "Shot s01 (1/14): synthesizing voice")."""
+    if stage_hook:
+        stage_hook(stage_name, event_type, shot_id=shot_id, message=f"{label}: {detail}")
+
+
 async def _generate_shot_video(
     shot: Shot,
     script: Script,
@@ -699,15 +719,21 @@ async def _generate_shot_video(
     work_dir: Path,
     image_uri: str,
     options: RunOptions | None = None,
+    *,
+    shot_index: int = 1,
+    total_shots: int = 1,
 ) -> tuple[VideoClip, AudioTrack]:
     """Phase B: synthesize voice + generate video for one shot using the approved image.
 
     Skips stages whose output files already exist when opts.resume is True.
+    ``shot_index``/``total_shots`` (1-based) are used only to label the
+    stage_hook progress events emitted around each sub-stage below.
     """
     opts = options or RunOptions()
     member_map = {m.id: m for m in cast.members}
     speaker_id = shot.characters_on_screen[0]
     speaker = member_map[speaker_id]
+    label = f"Shot {shot.shot_id} ({shot_index}/{total_shots})"
 
     first_line = (
         _resolve_line(shot.dialogue_line_refs[0], script)
@@ -742,6 +768,10 @@ async def _generate_shot_video(
         logger.info("Skipping synthesize_voice for %s (audio exists)", shot.shot_id)
         audio_track = AudioTrack(uri=str(audio_files[0]), duration_sec=shot.duration_sec)
     else:
+        _notify_shot(
+            opts.stage_hook, "synthesize_voice", "stage_started",
+            shot_id=shot.shot_id, label=label, detail="synthesizing voice",
+        )
         voice_ref = (vparams.voice_file if vparams and vparams.voice_file
                      else speaker.voice_profile_ref)
         audio_track = await adapters.voice.run(
@@ -752,6 +782,10 @@ async def _generate_shot_video(
                 expression=expression,
                 language=opts.language if opts else "en",
             )
+        )
+        _notify_shot(
+            opts.stage_hook, "synthesize_voice", "stage_completed",
+            shot_id=shot.shot_id, label=label, detail="voice done",
         )
 
     # ── 2. generate_video ─────────────────────────────────────────────────────
@@ -770,6 +804,10 @@ async def _generate_shot_video(
         logger.info("Skipping generate_video for %s (clip.mp4 exists)", shot.shot_id)
         clip = VideoClip(uri=str(clip_path), duration_sec=shot.duration_sec)
     else:
+        _notify_shot(
+            opts.stage_hook, "generate_video", "stage_started",
+            shot_id=shot.shot_id, label=label, detail="generating video",
+        )
         clip = await adapters.video.run(
             VideoRequest(
                 image_uri=image_uri,
@@ -781,12 +819,20 @@ async def _generate_shot_video(
                 style_suffix=vparams.style_suffix if vparams else "",
             )
         )
+        _notify_shot(
+            opts.stage_hook, "generate_video", "stage_completed",
+            shot_id=shot.shot_id, label=label, detail="video done",
+        )
 
     # ── 3. lip_sync (skipped when video adapter handles it natively) ──────────
     if native_lipsync:
         log_event(logger, "lip_sync_skipped", shot_id=shot.shot_id, reason="native_lipsync")
         synced = clip
     else:
+        _notify_shot(
+            opts.stage_hook, "lip_sync", "stage_started",
+            shot_id=shot.shot_id, label=label, detail="lip-syncing",
+        )
         try:
             synced = await adapters.lipsync.run(
                 LipSyncRequest(
@@ -801,8 +847,16 @@ async def _generate_shot_video(
                 shot.shot_id, clip.uri, exc_info=True,
             )
             synced = clip
+        _notify_shot(
+            opts.stage_hook, "lip_sync", "stage_completed",
+            shot_id=shot.shot_id, label=label, detail="lip sync done",
+        )
 
     log_event(logger, "shot_completed", shot_id=shot.shot_id)
+    _notify_shot(
+        opts.stage_hook, "shot_complete", "stage_completed",
+        shot_id=shot.shot_id, label=label, detail="shot complete",
+    )
     return synced, audio_track
 
 
@@ -1224,6 +1278,13 @@ async def _run_to_assembled_video(
         if opts.only_shot and not shots_to_run:
             raise ValueError(f"Shot '{opts.only_shot}' not found in storyboard.")
 
+        total_shots = len(shots_to_run)
+        if opts.stage_hook:
+            opts.stage_hook(
+                "render_loop", "stage_started",
+                message=f"Rendering {total_shots} shot{'s' if total_shots != 1 else ''}",
+            )
+
         # ── Phase A: render all candidates + VLM critique (sequential per shot) ──
         if opts.user_images:
             # story_images mode: user supplied reference images — skip Flux
@@ -1270,11 +1331,17 @@ async def _run_to_assembled_video(
         )
 
         # ── Phase B: synthesize voice + generate video with approved image ─────
+        if opts.stage_hook:
+            opts.stage_hook(
+                "video_loop", "stage_started",
+                message=f"Generating video for {total_shots} shot{'s' if total_shots != 1 else ''}",
+            )
         synced_clips = []
         audio_tracks = []
-        for shot, image_uri in zip(shots_to_run, approved_uris):
+        for i, (shot, image_uri) in enumerate(zip(shots_to_run, approved_uris), start=1):
             synced, audio = await _generate_shot_video(
-                shot, script, config.cast, adapters, ctx.work_dir, image_uri, opts
+                shot, script, config.cast, adapters, ctx.work_dir, image_uri, opts,
+                shot_index=i, total_shots=total_shots,
             )
             synced_clips.append(synced)
             audio_tracks.append(audio)

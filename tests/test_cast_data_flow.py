@@ -314,7 +314,7 @@ async def test_pipeline_passes_cast_to_all_stages(tmp_path: Path) -> None:
         captured_approval_cast_id["cast_id"] = cast_id
         return ["/tmp/render_00.png"]
 
-    async def spy_video(shot, script, cast, adapters, work_dir, image_uri, options=None):
+    async def spy_video(shot, script, cast, adapters, work_dir, image_uri, options=None, **_kw):
         captured_video_cast["cast"] = cast
         return (
             VideoClip(uri="/tmp/clip.mp4", duration_sec=5.0, shot_id="s01"),

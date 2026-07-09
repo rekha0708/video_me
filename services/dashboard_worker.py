@@ -371,11 +371,27 @@ class DashboardWorker:
             raise RuntimeError(f"{stage_name} failed with exit code {returncode}")
 
     def _make_stage_hook(self, job_id: str):
-        """Return a callback that writes per-stage events to the dashboard repo."""
-        def hook(stage_name: str, event_type: str) -> None:
+        """Return a callback that writes per-stage events to the dashboard repo.
+
+        ``shot_id`` and ``message`` are optional keyword-only extras: callers in
+        the shot loop (core/workflow.py's _generate_shot_video) pass them to
+        surface which shot is in progress (current_shot_id) and a human-readable
+        per-shot status line, instead of the generic "<stage>: stage started"
+        text. Existing (stage_name, event_type) callers are unaffected.
+        """
+        def hook(
+            stage_name: str,
+            event_type: str,
+            *,
+            shot_id: str | None = None,
+            message: str | None = None,
+        ) -> None:
             if event_type == "stage_started":
                 self.repo.update_job_status(
-                    job_id, DashboardJobStatus.RUNNING, current_stage=stage_name,
+                    job_id,
+                    DashboardJobStatus.RUNNING,
+                    current_stage=stage_name,
+                    current_shot_id=shot_id,
                 )
             level = (
                 DashboardEventLevel.ERROR
@@ -385,9 +401,10 @@ class DashboardWorker:
             self.repo.record_event(
                 job_id,
                 event_type,
-                f"{stage_name}: {event_type.replace('_', ' ')}",
+                message or f"{stage_name}: {event_type.replace('_', ' ')}",
                 level=level,
                 stage_name=stage_name,
+                shot_id=shot_id,
             )
         return hook
 
