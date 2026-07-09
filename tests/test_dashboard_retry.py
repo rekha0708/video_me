@@ -41,7 +41,14 @@ def _make_client_and_repo(tmp_path: Path):
     return TestClient(app, raise_server_exceptions=False), repo
 
 
-def _seed_job(repo, *, status: str, phase: str = "all", video_adapter: str | None = None):
+def _seed_job(
+    repo,
+    *,
+    status: str,
+    phase: str = "all",
+    video_adapter: str | None = None,
+    render_mode: str = "full",
+):
     from core.models.dashboard import (
         CreateDashboardJobRequest, DashboardJobOverrides, DashboardJobStatus, DashboardSource,
     )
@@ -50,6 +57,7 @@ def _seed_job(repo, *, status: str, phase: str = "all", video_adapter: str | Non
         source=DashboardSource(kind="file", url="file:///tmp/video.mp4"),
         rights_cleared=True,
         phase=phase,
+        render_mode=render_mode,
         overrides=DashboardJobOverrides(video_adapter=video_adapter),
     )
     job, _queue_item = repo.create_queued_job(req)
@@ -155,6 +163,24 @@ def test_retry_with_phase_and_video_adapter(tmp_path: Path) -> None:
     latest = queue[-1]
     assert latest.payload["phase"] == "render"
     assert latest.payload["overrides"]["video_adapter"] == "wan"
+
+
+def test_retry_with_body_overrides_render_mode(tmp_path: Path) -> None:
+    client, repo = _make_client_and_repo(tmp_path)
+    job_id = _seed_job(repo, status="completed", render_mode="full")
+    resp = client.post(f"/api/jobs/{job_id}/retry", json={"render_mode": "source_audio"})
+    assert resp.status_code == 200
+    queue = repo.list_queue(job_id)
+    latest = queue[-1]
+    assert latest.payload["render_mode"] == "source_audio"
+
+
+def test_retry_rejects_invalid_render_mode(tmp_path: Path) -> None:
+    client, repo = _make_client_and_repo(tmp_path)
+    job_id = _seed_job(repo, status="completed")
+    resp = client.post(f"/api/jobs/{job_id}/retry", json={"render_mode": "bad"})
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["code"] == "INVALID_RENDER_MODE"
 
 
 def test_retry_rejects_invalid_phase(tmp_path: Path) -> None:

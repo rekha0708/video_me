@@ -268,6 +268,9 @@ class AssembleRequest(BaseModel):
     # Per-shot tracks (same order as clips), used for crossfading clip boundaries.
     # Empty ([]) → adapter falls back to plain concat + the pre-combined `audio` above.
     audio_tracks: list[AudioTrack] = Field(default_factory=list)
+    # Preserve exact clip/audio timing for source-timed modes. When True, the
+    # assembler uses hard concat + the pre-combined audio even if audio_tracks exist.
+    preserve_timing: bool = False
 
 
 class FinalVideo(BaseModel):

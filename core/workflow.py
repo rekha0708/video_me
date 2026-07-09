@@ -165,6 +165,7 @@ class _Adapters:
     critique: object
     publish: object
     ffmpeg_bin: str = field(default="ffmpeg")
+    ffprobe_bin: str = field(default="ffprobe")
 
 
 def _make_render_adapter(s, work_dir: Path):
@@ -322,6 +323,7 @@ def _make_adapters(
         ),
         publish=ManualPublishAdapter(review_dir=s.review_dir),
         ffmpeg_bin=s.ffmpeg_bin,
+        ffprobe_bin=s.ffprobe_bin,
     )
 
 
@@ -715,6 +717,22 @@ def _notify_shot(
         stage_hook(stage_name, event_type, shot_id=shot_id, message=f"{label}: {detail}")
 
 
+def _existing_audio_for_shot(
+    work_dir: Path,
+    shot: Shot,
+    speaker_id: str,
+    render_mode: str,
+) -> str | None:
+    if render_mode == "source_audio":
+        path = work_dir / "audio" / "source_slices" / f"{shot.shot_id}.wav"
+        return str(path) if path.exists() else None
+    if render_mode == "re_voice":
+        path = work_dir / "audio" / "timed" / f"{shot.shot_id}.wav"
+        return str(path) if path.exists() else None
+    audio_files = sorted((work_dir / "audio" / speaker_id).glob("*.wav"))
+    return str(audio_files[0]) if audio_files else None
+
+
 async def _generate_shot_video(
     shot: Shot,
     script: Script,
@@ -747,7 +765,8 @@ async def _generate_shot_video(
         else None
     )
     expression = first_line.expression if first_line else None
-    line_text = first_line.text if first_line else ""
+    lines = [_resolve_line(ref, script) for ref in shot.dialogue_line_refs]
+    line_text = " ".join(line.text.strip() for line in lines if line.text.strip())
 
     native_lipsync = getattr(adapters.video, "native_lipsync", False)
 
@@ -758,8 +777,10 @@ async def _generate_shot_video(
 
     if opts.resume and done_path.exists():
         logger.info("Skipping video generation for %s (%s exists)", shot.shot_id, done_path.name)
-        audio_files = sorted((work_dir / "audio" / speaker_id).glob("*.wav"))
-        audio_uri = str(audio_files[0]) if audio_files else str(done_path)
+        audio_uri = (
+            _existing_audio_for_shot(work_dir, shot, speaker_id, render_mode)
+            or str(done_path)
+        )
         return (
             VideoClip(uri=str(done_path), duration_sec=shot.duration_sec),
             AudioTrack(uri=audio_uri, duration_sec=shot.duration_sec),
@@ -788,10 +809,10 @@ async def _generate_shot_video(
                 shot_id=shot.shot_id, label=label, detail="audio slice done",
             )
     else:
-        audio_files = sorted((work_dir / "audio" / speaker_id).glob("*.wav"))
-        if opts.resume and audio_files:
+        existing_audio = _existing_audio_for_shot(work_dir, shot, speaker_id, render_mode)
+        if opts.resume and existing_audio:
             logger.info("Skipping synthesize_voice for %s (audio exists)", shot.shot_id)
-            audio_track = AudioTrack(uri=str(audio_files[0]), duration_sec=shot.duration_sec)
+            audio_track = AudioTrack(uri=existing_audio, duration_sec=shot.duration_sec)
         else:
             _notify_shot(
                 opts.stage_hook, "synthesize_voice", "stage_started",
@@ -812,6 +833,25 @@ async def _generate_shot_video(
                 opts.stage_hook, "synthesize_voice", "stage_completed",
                 shot_id=shot.shot_id, label=label, detail="voice done",
             )
+            if render_mode == "re_voice":
+                ffprobe_bin = getattr(adapters, "ffprobe_bin", None)
+                if not isinstance(ffprobe_bin, str):
+                    ffprobe_bin = "ffprobe"
+                _notify_shot(
+                    opts.stage_hook, "fit_voice_audio", "stage_started",
+                    shot_id=shot.shot_id, label=label, detail="matching source pacing",
+                )
+                audio_track = await _fit_audio_to_duration(
+                    audio_track,
+                    shot.duration_sec,
+                    work_dir / "audio" / "timed" / f"{shot.shot_id}.wav",
+                    adapters.ffmpeg_bin,
+                    ffprobe_bin,
+                )
+                _notify_shot(
+                    opts.stage_hook, "fit_voice_audio", "stage_completed",
+                    shot_id=shot.shot_id, label=label, detail="voice timing matched",
+                )
 
     # ── 2. generate_video ─────────────────────────────────────────────────────
     video_action = shot.action
@@ -1015,6 +1055,61 @@ def _build_verbatim_script(
     )
 
 
+def _flatten_script_lines(script: Script) -> list[tuple[int, int, Any]]:
+    return [
+        (scene_idx, line_idx, line)
+        for scene_idx, scene in enumerate(script.scenes)
+        for line_idx, line in enumerate(scene.lines)
+    ]
+
+
+def _apply_source_timing_to_script(
+    script: Script,
+    transcribe_result,
+    *,
+    total_duration: float | None = None,
+) -> Script:
+    """Attach source-video timing to an adapted script for re_voice mode.
+
+    When the adapted script has the same number of lines as the transcript, keep
+    the transcript segment boundaries exactly. If the LLM wrote more/fewer
+    lines, distribute the source duration across the adapted lines in order
+    using their word counts as a rough pacing weight.
+    """
+    lines = _flatten_script_lines(script)
+    segments = list(getattr(transcribe_result, "segments", []) or [])
+    if not lines or not segments:
+        return script
+
+    if len(lines) == len(segments):
+        for (_, _, line), segment in zip(lines, segments):
+            line.start = float(segment.start)
+            line.end = float(segment.end)
+        return script
+
+    source_start = min(float(segment.start) for segment in segments)
+    source_end = (
+        float(total_duration)
+        if total_duration and total_duration > source_start
+        else max(float(segment.end) for segment in segments)
+    )
+    if source_end <= source_start:
+        return script
+
+    weights = [max(1.0, len(line.text.split()) / 2.0) for _, _, line in lines]
+    total_weight = sum(weights) or float(len(lines))
+    cursor = source_start
+    for idx, ((_, _, line), weight) in enumerate(zip(lines, weights)):
+        if idx == len(lines) - 1:
+            end = source_end
+        else:
+            end = cursor + (source_end - source_start) * (weight / total_weight)
+        line.start = round(cursor, 3)
+        line.end = round(max(end, cursor + 0.1), 3)
+        cursor = end
+    return script
+
+
 def _apply_segment_timing_to_storyboard(
     storyboard: Storyboard,
     script: Script,
@@ -1034,6 +1129,39 @@ def _apply_segment_timing_to_storyboard(
             shot.source_start_sec = line.start
             shot.source_end_sec = line.end
     return storyboard
+
+
+def _validate_timed_storyboard(storyboard: Storyboard, render_mode: str) -> None:
+    """Fail fast when a timed mode is asked to render an untimed plan."""
+    if render_mode not in {"source_audio", "re_voice"}:
+        return
+    missing = [
+        shot.shot_id
+        for shot in storyboard.shots
+        if (
+            shot.source_start_sec is None
+            or shot.source_end_sec is None
+            or shot.source_end_sec <= shot.source_start_sec
+        )
+    ]
+    if missing:
+        sample = ", ".join(missing[:5])
+        more = "..." if len(missing) > 5 else ""
+        raise ValueError(
+            f"{render_mode} mode requires source-timed storyboard shots. "
+            f"Missing/invalid timing for: {sample}{more}. "
+            f"Re-run the script_plan/plan phase with render_mode='{render_mode}' "
+            "before rendering."
+        )
+
+
+def _storyboard_has_source_timing(storyboard: Storyboard) -> bool:
+    return all(
+        shot.source_start_sec is not None
+        and shot.source_end_sec is not None
+        and shot.source_end_sec > shot.source_start_sec
+        for shot in storyboard.shots
+    )
 
 
 def _chunk_shot_durations(
@@ -1078,12 +1206,18 @@ def _rebuild_storyboard_by_duration(
     if not chunks:
         return storyboard
 
+    def _safe_line(ref: str):
+        try:
+            return _resolve_line(ref, script)
+        except (IndexError, ValueError):
+            return None
+
     def _shot_span(shot: Shot) -> tuple[float, float] | None:
         spans = [
             (line.start, line.end)
             for ref in shot.dialogue_line_refs
-            for line in [_resolve_line(ref, script)]
-            if line.start is not None and line.end is not None
+            for line in [_safe_line(ref)]
+            if line is not None and line.start is not None and line.end is not None
         ]
         if not spans:
             return None
@@ -1113,8 +1247,15 @@ def _rebuild_storyboard_by_duration(
             ref for ref, line in all_lines
             if chunk_start <= (line.start + line.end) / 2 < chunk_end
         ]
+        if not refs and all_lines:
+            chunk_mid = (chunk_start + chunk_end) / 2
+            nearest_ref, _ = min(
+                all_lines,
+                key=lambda item: abs(((item[1].start + item[1].end) / 2) - chunk_mid),
+            )
+            refs = [nearest_ref]
         if not refs:
-            refs = best_shot.dialogue_line_refs
+            refs = [ref for ref in best_shot.dialogue_line_refs if _safe_line(ref) is not None]
 
         new_shots.append(Shot(
             shot_id=f"s{idx:02d}",
@@ -1130,6 +1271,32 @@ def _rebuild_storyboard_by_duration(
         ))
 
     return Storyboard(shots=new_shots)
+
+
+def _retime_source_audio_plan(
+    storyboard: Storyboard,
+    transcribe_result,
+    fetch_result,
+    cast: Cast,
+    *,
+    visual_context: "VisualContext | None" = None,
+    rights_cleared: bool = True,
+    max_shot_duration_sec: float = 8.0,
+) -> tuple[Script, Storyboard]:
+    """Build a verbatim script and source-timed storyboard for source_audio."""
+    script = _build_verbatim_script(
+        transcribe_result,
+        cast,
+        visual_context=visual_context,
+        rights_cleared=rights_cleared,
+    )
+    timed = _rebuild_storyboard_by_duration(
+        storyboard,
+        script,
+        total_duration=fetch_result.duration_sec,
+        max_shot_duration_sec=max_shot_duration_sec,
+    )
+    return script, timed
 
 
 async def _slice_source_audio(
@@ -1158,6 +1325,77 @@ async def _slice_source_audio(
     return AudioTrack(uri=str(out_path), duration_sec=end - start)
 
 
+def _atempo_filter_chain(tempo: float) -> str:
+    """Build an ffmpeg atempo chain whose product equals tempo."""
+    if tempo <= 0:
+        tempo = 1.0
+    factors: list[float] = []
+    remaining = tempo
+    while remaining < 0.5:
+        factors.append(0.5)
+        remaining /= 0.5
+    while remaining > 2.0:
+        factors.append(2.0)
+        remaining /= 2.0
+    if abs(remaining - 1.0) > 0.01 or not factors:
+        factors.append(remaining)
+    return ",".join(f"atempo={factor:.6g}" for factor in factors)
+
+
+async def _fit_audio_to_duration(
+    track: AudioTrack,
+    target_duration_sec: float,
+    out_path: Path,
+    ffmpeg_bin: str = "ffmpeg",
+    ffprobe_bin: str = "ffprobe",
+) -> AudioTrack:
+    """Time-stretch, pad, and trim an audio track to a shot duration."""
+    if target_duration_sec <= 0:
+        return track
+    source = Path(track.uri)
+    if not source.exists():
+        raise FileNotFoundError(f"Cannot fit missing audio track: {track.uri}")
+
+    actual = await _probe_duration_sec(str(source), ffprobe_bin)
+    actual = actual if actual and actual > 0 else track.duration_sec
+    if actual and abs(actual - target_duration_sec) <= 0.05:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        if source.resolve() != out_path.resolve():
+            shutil.copyfile(source, out_path)
+        return AudioTrack(
+            uri=str(out_path),
+            duration_sec=target_duration_sec,
+            speaker_id=track.speaker_id,
+        )
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tempo = (actual / target_duration_sec) if actual and target_duration_sec else 1.0
+    filters = (
+        f"{_atempo_filter_chain(tempo)},"
+        f"apad,atrim=0:{target_duration_sec:.3f},asetpts=N/SR/TB"
+    )
+    proc = await asyncio.create_subprocess_exec(
+        ffmpeg_bin, "-y",
+        "-i", str(source),
+        "-vn",
+        "-af", filters,
+        "-ar", "44100",
+        "-ac", "1",
+        str(out_path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        tail = stderr.decode(errors="replace")[-500:]
+        raise RuntimeError(f"Audio duration fit failed (exit {proc.returncode}):\n{tail}")
+    return AudioTrack(
+        uri=str(out_path),
+        duration_sec=target_duration_sec,
+        speaker_id=track.speaker_id,
+    )
+
+
 def _load_artifact(
     job_id: str,
     stage: str,
@@ -1181,6 +1419,7 @@ async def _critique_loop(
     ctx: "_JobContext",
     max_iterations: int,
     visual_context: "VisualContext | None" = None,
+    storyboard_transform: Callable[[Storyboard], Storyboard] | None = None,
 ) -> tuple[Storyboard, list[str]]:
     """
     Run the plan critique loop: up to max_iterations re-plan attempts.
@@ -1201,6 +1440,8 @@ async def _critique_loop(
                 PlanShotsRequest(script=script, cast=config.cast, critique_notes=notes,
                                  visual_context=visual_context)
             )
+        if storyboard_transform is not None:
+            storyboard = storyboard_transform(storyboard)
 
         critique = await adapters.plan_critique.run(
             PlanCritiqueRequest(storyboard=storyboard, script=script, cast=config.cast)
@@ -1270,6 +1511,7 @@ async def _run_plan_critique_and_approval(
     ctx: "_JobContext",
     opts: "RunOptions",
     visual_context: "VisualContext | None" = None,
+    storyboard_transform: Callable[[Storyboard], Storyboard] | None = None,
 ) -> tuple[Storyboard, Script]:
     """
     Run the critique loop then the human approval gate.
@@ -1292,7 +1534,8 @@ async def _run_plan_critique_and_approval(
 
     # ── LLM critique loop ─────────────────────────────────────────────────────
     storyboard, last_notes = await _critique_loop(
-        storyboard, script, ctx, s.max_plan_iterations, visual_context=visual_context
+        storyboard, script, ctx, s.max_plan_iterations, visual_context=visual_context,
+        storyboard_transform=storyboard_transform,
     )
 
     # Reconstruct final critique result for the UI (re-run to get fresh scores)
@@ -1328,8 +1571,11 @@ async def _run_plan_critique_and_approval(
         PlanShotsRequest(script=script, cast=ctx.config.cast, critique_notes=combined_notes,
                          visual_context=visual_context)
     )
+    if storyboard_transform is not None:
+        storyboard = storyboard_transform(storyboard)
     storyboard, _ = await _critique_loop(
-        storyboard, script, ctx, s.max_plan_iterations, visual_context=visual_context
+        storyboard, script, ctx, s.max_plan_iterations, visual_context=visual_context,
+        storyboard_transform=storyboard_transform,
     )
     final_critique = await adapters.plan_critique.run(
         PlanCritiqueRequest(storyboard=storyboard, script=script, cast=ctx.config.cast)
@@ -1508,6 +1754,15 @@ async def _run_to_assembled_video(
                 ),
                 Script,
             )
+            if opts.render_mode == "re_voice":
+                script = _apply_source_timing_to_script(
+                    script,
+                    transcribe_result,
+                    total_duration=fetch_result.duration_sec,
+                )
+                artifact_store.put_json(
+                    job.job_id, "adapt_script", script.model_dump(mode="json")
+                )
 
             # 6. plan_shots
             storyboard: Storyboard = await _stage(
@@ -1516,6 +1771,16 @@ async def _run_to_assembled_video(
                 Storyboard,
             )
 
+            storyboard_transform = None
+            if opts.render_mode == "re_voice":
+                def storyboard_transform(sb: Storyboard) -> Storyboard:
+                    timed = _apply_segment_timing_to_storyboard(sb, script)
+                    return _rebuild_storyboard_by_duration(
+                        timed, script,
+                        total_duration=fetch_result.duration_sec,
+                        max_shot_duration_sec=config.settings.max_shot_duration_sec,
+                    )
+
             # 7. critique_plan loop + human approval gate
             storyboard, script = await _run_plan_critique_and_approval(
                 storyboard=storyboard,
@@ -1523,7 +1788,13 @@ async def _run_to_assembled_video(
                 ctx=ctx,
                 opts=opts,
                 visual_context=visual_context,
+                storyboard_transform=storyboard_transform,
             )
+            if opts.render_mode == "re_voice":
+                storyboard = storyboard_transform(storyboard)
+                artifact_store.put_json(
+                    job.job_id, "plan_shots", storyboard.model_dump(mode="json")
+                )
 
         if opts.phase in ("plan", "script_plan"):
             logger.info("Phase '%s' complete — stopping before render loop.", opts.phase)
@@ -1558,6 +1829,41 @@ async def _run_to_assembled_video(
                 "source_audio mode requires a real audio file from fetch_media. "
                 "Story-kind jobs do not have source audio."
             )
+        if not _storyboard_has_source_timing(storyboard):
+            transcribe_for_timing = _load_artifact(
+                job.job_id, "transcribe", TranscribeResult, artifact_store
+            )
+            if transcribe_for_timing is None:
+                raise ValueError(
+                    "source_audio mode requires a transcribe artifact to calculate "
+                    "source_start_sec/source_end_sec before rendering."
+                )
+            visual_for_timing = (
+                _load_artifact(job.job_id, "analyze_visuals", VisualContext, artifact_store)
+                or VisualContext()
+            )
+            script, storyboard = _retime_source_audio_plan(
+                storyboard,
+                transcribe_for_timing,
+                fetch_result,
+                config.cast,
+                visual_context=visual_for_timing,
+                rights_cleared=job.rights_cleared,
+                max_shot_duration_sec=config.settings.max_shot_duration_sec,
+            )
+            artifact_store.put_json(
+                job.job_id, "adapt_script", script.model_dump(mode="json")
+            )
+            artifact_store.put_json(
+                job.job_id, "plan_shots", storyboard.model_dump(mode="json")
+            )
+            log_event(
+                logger,
+                "source_audio_plan_retimed",
+                job_id=job.job_id,
+                shots=len(storyboard.shots),
+            )
+    _validate_timed_storyboard(storyboard, opts.render_mode)
 
     # ── Render phase ──────────────────────────────────────────────────────────
     if opts.phase == "assemble":
@@ -1565,6 +1871,7 @@ async def _run_to_assembled_video(
         synced_clips, audio_tracks = _collect_existing_shot_artifacts(
             storyboard, script, config.cast, ctx.work_dir,
             video_adapter=config.settings.video_adapter,
+            render_mode=opts.render_mode,
         )
         shots_for_clips = storyboard.shots  # one clip per shot, same order
     else:
@@ -1689,6 +1996,7 @@ async def _run_to_assembled_video(
             disclosure_label_required=config.channel_profile.disclosure_label_required,
             overlays=overlay_windows,
             audio_tracks=audio_tracks,
+            preserve_timing=opts.render_mode in {"source_audio", "re_voice"},
         ),
         job, artifact_store, job_store,
         stage_hook=opts.stage_hook,
@@ -1782,6 +2090,7 @@ def _collect_existing_shot_artifacts(
     cast: Cast,
     work_dir: Path,
     video_adapter: str = "ltx",
+    render_mode: str = "full",
 ) -> tuple[list[VideoClip], list[AudioTrack]]:
     """Reconstruct clip/audio lists from files written by a previous render phase.
 
@@ -1796,10 +2105,10 @@ def _collect_existing_shot_artifacts(
     audios: list[AudioTrack] = []
     for shot in storyboard.shots:
         candidates = [
-            work_dir / "video" / video_adapter / shot.shot_id / "clip.mp4",
             work_dir / "synced" / video_adapter / shot.shot_id / "synced.mp4",
-            work_dir / "video" / shot.shot_id / "clip.mp4",
+            work_dir / "video" / video_adapter / shot.shot_id / "clip.mp4",
             work_dir / "synced" / shot.shot_id / "synced.mp4",
+            work_dir / "video" / shot.shot_id / "clip.mp4",
         ]
         video_path = next((p for p in candidates if p.exists()), None)
         if video_path is None:
@@ -1809,8 +2118,10 @@ def _collect_existing_shot_artifacts(
                 f"Run --phase render first."
             )
         speaker_id = shot.characters_on_screen[0]
-        audio_files = sorted((work_dir / "audio" / speaker_id).glob("*.wav"))
-        audio_uri = str(audio_files[0]) if audio_files else str(video_path)
+        audio_uri = (
+            _existing_audio_for_shot(work_dir, shot, speaker_id, render_mode)
+            or str(video_path)
+        )
         clips.append(VideoClip(uri=str(video_path), duration_sec=shot.duration_sec))
         audios.append(AudioTrack(uri=audio_uri, duration_sec=shot.duration_sec))
     return clips, audios

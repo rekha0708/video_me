@@ -315,6 +315,7 @@ A rendered overlay PNG + the absolute time window it is visible in the final vid
 - `disclosure_label_required: bool` = `True`
 - `overlays: list[OverlayWindow]` = `Field(default_factory=list)`
 - `audio_tracks: list[AudioTrack]` = `Field(default_factory=list)`
+- `preserve_timing: bool` = `False`
 
 ### `FinalVideo` (BaseModel) — `core/models/capabilities.py`
 

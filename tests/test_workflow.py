@@ -16,6 +16,7 @@ from core.models.capabilities import (
     ImageCritiqueResult,
     PublishResult,
     TranscribeResult,
+    TranscriptSegment,
     VideoClip,
 )
 from core.models.content import (
@@ -31,15 +32,20 @@ from core.models.guardrails import SourceRights
 from core.models.job import Job, JobStatus
 from core.workflow import (
     _apply_segment_timing_to_storyboard,
+    _apply_source_timing_to_script,
     _build_verbatim_script,
     _chunk_shot_durations,
     _concat_audio,
+    _fit_audio_to_duration,
     _generate_shot_video,
     _make_adapters,
     _rebuild_storyboard_by_duration,
+    _retime_source_audio_plan,
     _resolve_line,
     _run_plan_critique_and_approval,
     _slice_source_audio,
+    _storyboard_has_source_timing,
+    _validate_timed_storyboard,
     run_pipeline_job,
     run_with_critique,
 )
@@ -938,6 +944,70 @@ async def test_assemble_receives_all_synced_clips(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_source_audio_assemble_request_preserves_timing(tmp_path) -> None:
+    from core.workflow import RunOptions
+
+    config = _make_config(tmp_path)
+    fetch = FetchMediaResult(
+        video_uri="/tmp/video.mp4",
+        audio_uri="/tmp/audio.wav",
+        duration_sec=15.0,
+        source_url="file:///tmp/video.mp4",
+    )
+    transcript = TranscribeResult(
+        segments=[
+            TranscriptSegment(text="First part.", start=0.0, end=8.0),
+            TranscriptSegment(text="Second part.", start=8.0, end=15.0),
+        ],
+        language="en",
+        full_text="First part. Second part.",
+    )
+    results = {
+        **_stage_results(),
+        "fetch_media": fetch,
+        "transcribe": transcript,
+        "plan_shots": _two_shot_storyboard(),
+    }
+    assemble_request_captured = {}
+
+    async def recording_run_stage(stage_name, capability, request, job, *args, **_kw):
+        if stage_name == "assemble_video":
+            assemble_request_captured["request"] = request
+        return results[stage_name]
+
+    with (
+        patch("core.workflow._make_adapters", return_value=MagicMock(ffmpeg_bin="ffmpeg")),
+        patch("core.workflow.run_stage", new=recording_run_stage),
+        patch(
+            "core.workflow._render_shot_candidates",
+            new=AsyncMock(return_value=_image_critique_result()),
+        ),
+        patch(
+            "core.workflow._run_image_approval_gate",
+            new=AsyncMock(return_value=["/tmp/r0.png", "/tmp/r1.png"]),
+        ),
+        patch(
+            "core.workflow._generate_shot_video",
+            new=AsyncMock(return_value=(_synced_clip(), _audio_track())),
+        ),
+        patch("core.workflow._concat_audio", new=AsyncMock(return_value=AudioTrack(uri="/tmp/source.wav", duration_sec=15.0))),
+        patch("core.workflow.create_job_store", return_value=MagicMock()),
+        patch("core.workflow.create_artifact_store", return_value=MagicMock()),
+    ):
+        await run_pipeline_job(
+            "file:///tmp/video.mp4",
+            rights_cleared=True,
+            app_config=config,
+            options=RunOptions(render_mode="source_audio"),
+        )
+
+    req = assemble_request_captured["request"]
+    assert req.preserve_timing is True
+    assert len(req.audio_tracks) == 2
+    assert [clip.duration_sec for clip in req.clips] == [3.5, 3.5]
+
+
+@pytest.mark.asyncio
 async def test_publish_gets_script_learning_objective(tmp_path) -> None:
     config = _make_config(tmp_path)
     publish_request_captured = {}
@@ -1665,6 +1735,43 @@ def test_apply_segment_timing_overrides_duration():
     assert result.shots[1].source_end_sec == 6.0
 
 
+def test_apply_source_timing_to_script_direct_segment_mapping():
+    script = _script()
+    script.scenes[0].lines.append(Line(speaker="max", text="Again!"))
+    transcript = _transcript_result()
+
+    result = _apply_source_timing_to_script(script, transcript, total_duration=7.0)
+
+    assert result.scenes[0].lines[0].start == 0.0
+    assert result.scenes[0].lines[0].end == 3.5
+    assert result.scenes[0].lines[1].start == 3.5
+    assert result.scenes[0].lines[1].end == 7.0
+
+
+def test_apply_source_timing_to_script_distributes_when_line_count_differs():
+    script = _script()
+    script.scenes[0].lines.append(Line(speaker="max", text="One two three four five."))
+    script.scenes[0].lines.append(Line(speaker="max", text="Done."))
+    transcript = _transcript_result()
+
+    result = _apply_source_timing_to_script(script, transcript, total_duration=9.0)
+    lines = result.scenes[0].lines
+
+    assert lines[0].start == 0.0
+    assert lines[-1].end == 9.0
+    assert all(line.start is not None and line.end is not None for line in lines)
+    assert all(lines[i].end <= lines[i + 1].start for i in range(len(lines) - 1))
+
+
+def test_validate_timed_storyboard_rejects_source_audio_without_source_bounds():
+    with pytest.raises(ValueError, match="source_audio mode requires source-timed"):
+        _validate_timed_storyboard(_storyboard(), "source_audio")
+
+
+def test_validate_timed_storyboard_accepts_full_without_source_bounds():
+    _validate_timed_storyboard(_storyboard(), "full")
+
+
 # ------------------------------------------------------------------ _chunk_shot_durations
 
 def test_chunk_shot_durations_even_split():
@@ -1820,6 +1927,65 @@ def test_rebuild_storyboard_returns_original_when_no_chunks():
     assert result is storyboard
 
 
+def test_rebuild_storyboard_by_duration_handles_invalid_old_refs():
+    """Source-audio repair may receive a plan from a different script; invalid
+    old dialogue refs should not prevent source timing from being rebuilt."""
+    script = _duration_test_script()
+    storyboard = Storyboard(shots=[
+        Shot(
+            shot_id="old01", scene_ref="scene-9",
+            characters_on_screen=["max"], setting="room",
+            camera="medium", action="speaks",
+            dialogue_line_refs=["scene-9-line-9"], duration_sec=5.0,
+        ),
+    ])
+
+    result = _rebuild_storyboard_by_duration(
+        storyboard, script, total_duration=15.0, max_shot_duration_sec=8.0,
+    )
+
+    assert _storyboard_has_source_timing(result)
+    assert result.shots[0].dialogue_line_refs == ["scene-1-line-0", "scene-1-line-1"]
+    assert result.shots[1].dialogue_line_refs == ["scene-1-line-2"]
+    # New refs are valid against the source-timed script.
+    for shot in result.shots:
+        for ref in shot.dialogue_line_refs:
+            assert _resolve_line(ref, script).text
+
+
+def test_retime_source_audio_plan_builds_verbatim_timed_artifacts():
+    old_storyboard = Storyboard(shots=[
+        Shot(
+            shot_id="old01", scene_ref="scene-9",
+            characters_on_screen=["max"], setting="studio",
+            camera="wide", action="points",
+            dialogue_line_refs=["scene-9-line-9"], duration_sec=5.0,
+        ),
+    ])
+    fetch = FetchMediaResult(
+        video_uri="/video.mp4",
+        audio_uri="/audio.wav",
+        duration_sec=7.0,
+        source_url="file:///video.mp4",
+    )
+
+    script, storyboard = _retime_source_audio_plan(
+        old_storyboard,
+        _transcript_result(),
+        fetch,
+        _test_cast(),
+        max_shot_duration_sec=4.0,
+    )
+
+    assert script.mode == "verbatim"
+    assert _storyboard_has_source_timing(storyboard)
+    assert [s.source_start_sec for s in storyboard.shots] == [0.0, 4.0]
+    assert [s.source_end_sec for s in storyboard.shots] == [4.0, 7.0]
+    for shot in storyboard.shots:
+        for ref in shot.dialogue_line_refs:
+            assert _resolve_line(ref, script).text
+
+
 @pytest.mark.asyncio
 async def test_slice_source_audio_calls_ffmpeg(tmp_path):
     src = tmp_path / "source.wav"
@@ -1841,6 +2007,61 @@ async def test_slice_source_audio_calls_ffmpeg(tmp_path):
     assert "1.5" in cmd
     assert "-to" in cmd
     assert "4.0" in cmd
+
+
+@pytest.mark.asyncio
+async def test_fit_audio_to_duration_runs_ffmpeg_filter(tmp_path):
+    src = tmp_path / "raw.wav"
+    src.write_bytes(b"fake-wav-data")
+    out = tmp_path / "timed" / "s01.wav"
+
+    with (
+        patch("core.workflow._probe_duration_sec", new=AsyncMock(return_value=1.5)),
+        patch("asyncio.create_subprocess_exec") as mock_exec,
+    ):
+        mock_proc = AsyncMock()
+        mock_proc.communicate.return_value = (b"", b"")
+        mock_proc.returncode = 0
+        mock_exec.return_value = mock_proc
+
+        track = await _fit_audio_to_duration(
+            AudioTrack(uri=str(src), duration_sec=1.5, speaker_id="max"),
+            3.0,
+            out,
+            "ffmpeg",
+            "ffprobe",
+        )
+
+    assert track.uri == str(out)
+    assert track.duration_sec == 3.0
+    cmd = mock_exec.call_args[0]
+    assert "-af" in cmd
+    filter_arg = cmd[cmd.index("-af") + 1]
+    assert "atempo=" in filter_arg
+    assert "atrim=0:3.000" in filter_arg
+
+
+@pytest.mark.asyncio
+async def test_fit_audio_to_duration_copies_close_audio_to_timed_path(tmp_path):
+    src = tmp_path / "raw.wav"
+    src.write_bytes(b"already-close")
+    out = tmp_path / "timed" / "s01.wav"
+
+    with (
+        patch("core.workflow._probe_duration_sec", new=AsyncMock(return_value=3.01)),
+        patch("asyncio.create_subprocess_exec") as mock_exec,
+    ):
+        track = await _fit_audio_to_duration(
+            AudioTrack(uri=str(src), duration_sec=3.01, speaker_id="max"),
+            3.0,
+            out,
+            "ffmpeg",
+            "ffprobe",
+        )
+
+    mock_exec.assert_not_called()
+    assert track.uri == str(out)
+    assert out.read_bytes() == b"already-close"
 
 
 @pytest.mark.asyncio
@@ -1876,3 +2097,60 @@ async def test_generate_shot_video_source_audio_skips_tts(tmp_path):
     mock_slice.assert_called_once()
     adapters.voice.run.assert_not_called()
     assert audio.uri == "/sliced.wav"
+
+
+@pytest.mark.asyncio
+async def test_generate_shot_video_re_voice_fits_tts_and_uses_all_dialogue_refs(tmp_path):
+    adapters = MagicMock()
+    adapters.voice.run = AsyncMock(
+        return_value=AudioTrack(uri="/raw.wav", duration_sec=1.0, speaker_id="max")
+    )
+    adapters.video.run = AsyncMock(
+        return_value=VideoClip(uri="/c.mp4", duration_sec=4.0, shot_id="s01")
+    )
+    adapters.video.native_lipsync = True
+    adapters.video.work_dir = tmp_path / "video" / "ltx"
+    adapters.ffmpeg_bin = "ffmpeg"
+    adapters.ffprobe_bin = "ffprobe"
+
+    script = Script(
+        mode="transformed",
+        learning_objective=LearningObjective(
+            concept="test", age_range="3-6", success_phrase="test",
+        ),
+        scenes=[Scene(
+            setting="room",
+            lines=[
+                Line(speaker="max", text="First line.", start=0.0, end=2.0),
+                Line(speaker="max", text="Second line.", start=2.0, end=4.0),
+            ],
+        )],
+        caption_text="test",
+        source_rights=SourceRights(kind="transformed", rights_cleared=True, notes=""),
+    )
+    shot = Shot(
+        shot_id="s01", scene_ref="scene-1",
+        characters_on_screen=["max"], setting="room",
+        camera="medium", action="speaks",
+        dialogue_line_refs=["scene-1-line-0", "scene-1-line-1"],
+        duration_sec=4.0,
+        source_start_sec=0.0,
+        source_end_sec=4.0,
+    )
+    config = _make_config(tmp_path)
+
+    with patch("core.workflow._fit_audio_to_duration", new_callable=AsyncMock) as mock_fit:
+        mock_fit.return_value = AudioTrack(uri="/timed.wav", duration_sec=4.0, speaker_id="max")
+        synced, audio = await _generate_shot_video(
+            shot, script, config.cast, adapters, Path(tmp_path), "/img.png",
+            render_mode="re_voice",
+        )
+
+    voice_req = adapters.voice.run.call_args.args[0]
+    assert voice_req.text == "First line. Second line."
+    mock_fit.assert_called_once()
+    video_req = adapters.video.run.call_args.args[0]
+    assert video_req.duration_sec == 4.0
+    assert video_req.audio_uri == "/timed.wav"
+    assert synced.uri == "/c.mp4"
+    assert audio.uri == "/timed.wav"

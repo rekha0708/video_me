@@ -1036,6 +1036,7 @@ def create_app(
     )
 
     _RERUN_PHASES = ("transcribe", "script_plan", "render", "assemble", "all")
+    _RERUN_RENDER_MODES = ("full", "source_audio", "re_voice")
 
     @app.post("/api/jobs/{job_id}/retry")
     def retry_job(
@@ -1058,6 +1059,8 @@ def create_app(
           original phase.  E.g. ``"assemble"`` to redo only the final
           concat, or ``"render"`` to redo voice/video/assemble while
           keeping cached character images.
+        - ``render_mode`` — switch between full/source_audio/re_voice for this
+          retry. Timed modes require a matching timed plan artifact.
         - ``video_adapter`` / ``render_adapter`` / ``tts_adapter`` /
           ``llm_model`` — swap an adapter for this re-run without
           touching the job's original overrides.
@@ -1101,6 +1104,21 @@ def create_app(
 
         retry_request = {**job.request, "phase": rerun_phase}
         if body:
+            if body.get("render_mode"):
+                requested_mode = body["render_mode"]
+                if requested_mode not in _RERUN_RENDER_MODES:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "code": "INVALID_RENDER_MODE",
+                            "message": (
+                                f"Invalid render_mode '{requested_mode}'. "
+                                f"Must be one of: {', '.join(_RERUN_RENDER_MODES)}."
+                            ),
+                            "retryable": False,
+                        },
+                    )
+                retry_request["render_mode"] = requested_mode
             overrides = dict(retry_request.get("overrides") or {})
             for key in _RETRYABLE_OVERRIDE_KEYS:
                 value = body.get(key)

@@ -138,6 +138,7 @@ class FfmpegAssembleAdapter(AssembleVideo):
             disclosure_required=req.disclosure_label_required,
             overlay_count=len(overlays),
             crossfade_sec=transition,
+            preserve_timing=req.preserve_timing,
         )
 
         cmd = self._build_ffmpeg_args(
@@ -257,6 +258,8 @@ class FfmpegAssembleAdapter(AssembleVideo):
         the tail). Clamped so it never eats more than a fraction of the
         shortest clip.
         """
+        if req.preserve_timing:
+            return 0.0
         if self._crossfade_sec <= 0 or len(req.clips) < 2:
             return 0.0
         if len(req.audio_tracks) != len(req.clips):

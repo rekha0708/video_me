@@ -264,22 +264,30 @@ Shared Pydantic models for orchestration.
 - `_build_user_image_critiques(shots: list[Shot], user_images: dict[str, str], cast: Cast) -> list['ImageCritiqueResult']` — Synthesize critique results from user-provided reference images.
 - `async _run_image_approval_gate(shots: list[Shot], critique_results: list['ImageCritiqueResult'], adapters: _Adapters, cast_id: str) -> list[str]` — Show the image approval grid UI; return approved URI per shot.
 - `_notify_shot(stage_hook: Callable[..., None] | None, stage_name: str, event_type: str, *, shot_id: str, label: str, detail: str) -> None` — Emit a stage_hook event carrying shot progress (e.g. "Shot s01 (1/14): synthesizing voice").
+- `_existing_audio_for_shot(work_dir: Path, shot: Shot, speaker_id: str, render_mode: str) -> str | None`
 - `async _generate_shot_video(shot: Shot, script: Script, cast: Cast, adapters: _Adapters, work_dir: Path, image_uri: str, options: RunOptions | None=None, *, shot_index: int=1, total_shots: int=1, render_mode: str='full', source_audio_uri: str | None=None) -> tuple[VideoClip, AudioTrack]` — Phase B: synthesize voice + generate video for one shot using the approved image.
 - `async _concat_audio(tracks: list[AudioTrack], work_dir: Path, ffmpeg_bin: str='ffmpeg') -> AudioTrack` — Concatenate per-shot WAV files into one combined dialogue track.
 - `_build_verbatim_script(transcribe_result, cast: Cast, visual_context: 'VisualContext | None'=None, rights_cleared: bool=True) -> Script` — Build a Script directly from transcript segments (source_audio mode).
+- `_flatten_script_lines(script: Script) -> list[tuple[int, int, Any]]`
+- `_apply_source_timing_to_script(script: Script, transcribe_result, *, total_duration: float | None=None) -> Script` — Attach source-video timing to an adapted script for re_voice mode.
 - `_apply_segment_timing_to_storyboard(storyboard: Storyboard, script: Script) -> Storyboard` — Override shot durations with source segment timing (source_audio/re_voice).
+- `_validate_timed_storyboard(storyboard: Storyboard, render_mode: str) -> None` — Fail fast when a timed mode is asked to render an untimed plan.
+- `_storyboard_has_source_timing(storyboard: Storyboard) -> bool`
 - `_chunk_shot_durations(total_duration: float, max_shot_duration_sec: float) -> list[tuple[float, float]]` — Greedy-fill the source video's total duration into ≤max_shot_duration_sec
 - `_rebuild_storyboard_by_duration(storyboard: Storyboard, script: Script, total_duration: float, max_shot_duration_sec: float) -> Storyboard` — Replace the LLM-planned shot count/boundaries with deterministic
+- `_retime_source_audio_plan(storyboard: Storyboard, transcribe_result, fetch_result, cast: Cast, *, visual_context: 'VisualContext | None'=None, rights_cleared: bool=True, max_shot_duration_sec: float=8.0) -> tuple[Script, Storyboard]` — Build a verbatim script and source-timed storyboard for source_audio.
 - `async _slice_source_audio(source_audio_uri: str, start: float, end: float, out_path: Path, ffmpeg_bin: str='ffmpeg') -> AudioTrack` — Extract an audio segment from the source audio file.
+- `_atempo_filter_chain(tempo: float) -> str` — Build an ffmpeg atempo chain whose product equals tempo.
+- `async _fit_audio_to_duration(track: AudioTrack, target_duration_sec: float, out_path: Path, ffmpeg_bin: str='ffmpeg', ffprobe_bin: str='ffprobe') -> AudioTrack` — Time-stretch, pad, and trim an audio track to a shot duration.
 - `_load_artifact(job_id: str, stage: str, model_cls: type, artifact_store: ArtifactStore) -> object | None` — Load a persisted stage artifact and deserialize it to model_cls. Returns None if absent.
-- `async _critique_loop(storyboard: Storyboard, script: Script, ctx: '_JobContext', max_iterations: int, visual_context: 'VisualContext | None'=None) -> tuple[Storyboard, list[str]]` — Run the plan critique loop: up to max_iterations re-plan attempts.
+- `async _critique_loop(storyboard: Storyboard, script: Script, ctx: '_JobContext', max_iterations: int, visual_context: 'VisualContext | None'=None, storyboard_transform: Callable[[Storyboard], Storyboard] | None=None) -> tuple[Storyboard, list[str]]` — Run the plan critique loop: up to max_iterations re-plan attempts.
 - `async _render_plan_overlays(storyboard: Storyboard, ctx: '_JobContext', opts: 'RunOptions') -> Storyboard` — Render each shot.overlay to a PNG panel and set overlay.png_uri.
-- `async _run_plan_critique_and_approval(storyboard: Storyboard, script: Script, ctx: '_JobContext', opts: 'RunOptions', visual_context: 'VisualContext | None'=None) -> tuple[Storyboard, Script]` — Run the critique loop then the human approval gate.
+- `async _run_plan_critique_and_approval(storyboard: Storyboard, script: Script, ctx: '_JobContext', opts: 'RunOptions', visual_context: 'VisualContext | None'=None, storyboard_transform: Callable[[Storyboard], Storyboard] | None=None) -> tuple[Storyboard, Script]` — Run the critique loop then the human approval gate.
 - `async _run_to_assembled_video(ctx: _JobContext, options: RunOptions | None=None) -> tuple[Script, FinalVideo]` — Run Phase 1 stages through assembled candidate video, but do not publish.
 - `async _probe_duration_sec(path: str, ffprobe_bin: str) -> float | None` — Actual media duration via ffprobe; None on any failure.
 - `async _probe_clip_durations(clips: list[VideoClip], ffprobe_bin: str) -> list[VideoClip]` — Replace each clip's duration_sec with its real ffprobe-measured length.
 - `async _build_overlay_windows(shots: list[Shot], clips: list[VideoClip], ffprobe_bin: str) -> 'list[OverlayWindow]'` — Compute the absolute time window of each shot's overlay in the final video.
-- `_collect_existing_shot_artifacts(storyboard: Storyboard, script: Script, cast: Cast, work_dir: Path, video_adapter: str='ltx') -> tuple[list[VideoClip], list[AudioTrack]]` — Reconstruct clip/audio lists from files written by a previous render phase.
+- `_collect_existing_shot_artifacts(storyboard: Storyboard, script: Script, cast: Cast, work_dir: Path, video_adapter: str='ltx', render_mode: str='full') -> tuple[list[VideoClip], list[AudioTrack]]` — Reconstruct clip/audio lists from files written by a previous render phase.
 - `async _publish_candidate(ctx: _JobContext, script: Script, final_video: FinalVideo, *, language: str='en', stage_hook: Callable[[str, str], None] | None=None) -> None` — Publish an assembled candidate to the manual review folder.
 - `async _critique_candidate(ctx: _JobContext, script: Script, final_video: FinalVideo, attempt: int, *, stage_hook: Callable[[str, str], None] | None=None) -> CritiqueResult` — Run and persist one critique attempt.
 - `_critique_reason(result: CritiqueResult) -> str`

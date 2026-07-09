@@ -72,6 +72,7 @@ def _request(tmp_path: Path, **kwargs) -> AssembleRequest:
         aspect_ratio=kwargs.get("aspect_ratio", "9:16"),
         made_for_kids=kwargs.get("made_for_kids", True),
         disclosure_label_required=kwargs.get("disclosure_label_required", True),
+        preserve_timing=kwargs.get("preserve_timing", False),
     )
 
 
@@ -556,6 +557,18 @@ def test_crossfade_transition_uses_configured_value(tmp_path: Path) -> None:
     assert adapter._crossfade_transition(req) == pytest.approx(0.3)
 
 
+def test_crossfade_transition_zero_when_preserving_timing(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path, crossfade_sec=0.3)
+    clips = [_write_clip(tmp_path, "s01.mp4", 8.0), _write_clip(tmp_path, "s02.mp4", 7.0)]
+    req = _request(
+        tmp_path,
+        clips=clips,
+        audio_tracks=_per_shot_audio(tmp_path, 2, 7.5),
+        preserve_timing=True,
+    )
+    assert adapter._crossfade_transition(req) == 0.0
+
+
 def test_crossfade_transition_clamped_for_short_clips(tmp_path: Path) -> None:
     """A 0.3s default shouldn't eat more than half of a very short clip."""
     adapter = _adapter(tmp_path, crossfade_sec=0.3)
@@ -631,3 +644,32 @@ async def test_run_falls_back_to_concat_without_audio_tracks(tmp_path: Path, mon
 
     assert result.duration_sec == pytest.approx(6.0)
     assert "concat" in captured["cmd"]
+
+
+async def test_run_preserve_timing_keeps_15s_source_audio_concat(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """source_audio should keep 8s+7s timing even with per-shot audio_tracks."""
+    adapter = _adapter(tmp_path, crossfade_sec=0.3)
+    captured: dict = {}
+
+    async def spy_ffmpeg(cmd):
+        captured["cmd"] = cmd
+        await _noop_ffmpeg(cmd)
+
+    monkeypatch.setattr(adapter, "_run_ffmpeg", spy_ffmpeg)
+    clips = [_write_clip(tmp_path, "s01.mp4", 8.0), _write_clip(tmp_path, "s02.mp4", 7.0)]
+    req = _request(
+        tmp_path,
+        clips=clips,
+        audio_tracks=_per_shot_audio(tmp_path, 2, 7.5),
+        preserve_timing=True,
+    )
+
+    result = await adapter.run(req)
+
+    assert result.duration_sec == pytest.approx(15.0)
+    assert "concat" in captured["cmd"]
+    filter_arg = captured["cmd"][captured["cmd"].index("-filter_complex") + 1]
+    assert "xfade=" not in filter_arg
+    assert "acrossfade=" not in filter_arg
