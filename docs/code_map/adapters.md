@@ -250,7 +250,7 @@ Video-generation adapters.
 
 ### `adapters/generate_video/ltx_adapter.py`
 
-- **class `LtxAdapter(GenerateVideo)`** — generate_video adapter: per-shot image-to-video via LTX-Video 2.3 running inside ComfyUI.
+- **class `LtxAdapter(ComfyUIUnloadMixin, GenerateVideo)`** — generate_video adapter: per-shot image-to-video via LTX-Video 2.3 running inside ComfyUI.
   - `__init__(self, work_dir: Path, base_url: str='http://localhost:8188', fps: int=_DEFAULT_FPS, steps: int=8) -> None`
   - `async health(self) -> HealthStatus`
   - `async estimate_cost(self, req: VideoRequest) -> CostEstimate`
@@ -343,7 +343,7 @@ Character-rendering adapters.
 
 ### `adapters/render_character/comfyui_flux_adapter.py`
 
-- **class `ComfyUIFluxAdapter(RenderCharacter)`** — render_character adapter: per-member still images via ComfyUI + Flux.1-dev + LoRA.
+- **class `ComfyUIFluxAdapter(ComfyUIUnloadMixin, RenderCharacter)`** — render_character adapter: per-member still images via ComfyUI + Flux.1-dev + LoRA.
   - `__init__(self, work_dir: Path, base_url: str='http://localhost:8188', lora_dir: Path=Path('loras'), lora_weight: float=0.9, steps: int=20, width: int=1024, height: int=1024, num_images: int=1, allow_placeholder_lora: bool=False) -> None`
   - `async health(self) -> HealthStatus`
   - `async estimate_cost(self, req: RenderCharacterRequest) -> CostEstimate`
@@ -446,6 +446,9 @@ Fish Audio S2 TTS adapter — multi-language voice synthesis (English + Hindi).
 - **class `FishS2TtsAdapter(SynthesizeVoice)`** — synthesize_voice adapter: per-line TTS via a Fish Audio S2 HTTP server.
   - `__init__(self, work_dir: Path, base_url: str='http://localhost:8025', voice_dir: Path=Path('voices')) -> None`
   - `async health(self) -> HealthStatus`
+  - `async load(self) -> None` — Ask the service to start loading the model (non-blocking on the server).
+  - `async unload(self) -> bool` — Release the model's VRAM. Returns False if the service is unreachable
+  - `async wait_until_loaded(self, timeout_sec: float, poll_sec: float=2.0) -> None` — Poll /health until the model is loaded. Raises on load error or timeout.
   - `async estimate_cost(self, req: VoiceRequest) -> CostEstimate`
   - `async run(self, req: VoiceRequest) -> AudioTrack`
   - `voice_name(self, voice_profile_ref: str) -> str`

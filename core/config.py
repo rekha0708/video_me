@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     tts_adapter: Literal["chatterbox", "fish_s2"] = "fish_s2"
     tts_base_url: str = "http://localhost:8020"       # Chatterbox (fallback)
     fish_s2_base_url: str = "http://localhost:8025"   # Fish Audio S2 (default)
+    # Fish S2 deferred-loading sequence (core/gpu_sequencer.py), mirroring the Wan
+    # gap/timeout above — Fish S2's load is a weights-from-disk load, not a
+    # multi-minute diffusion pipeline build, so both are much shorter than Wan's.
+    fish_s2_load_gap_sec: int = 5
+    fish_s2_load_timeout_sec: int = 120
 
     # --- language selection ---
     target_language: str = "en"  # "en" | "hi" | "both"

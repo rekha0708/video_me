@@ -47,6 +47,8 @@
 | `VIDEO_ME_TTS_ADAPTER` | `Literal['chatterbox', 'fish_s2']` | `'fish_s2'` |
 | `VIDEO_ME_TTS_BASE_URL` | `str` | `'http://localhost:8020'` |
 | `VIDEO_ME_FISH_S2_BASE_URL` | `str` | `'http://localhost:8025'` |
+| `VIDEO_ME_FISH_S2_LOAD_GAP_SEC` | `int` | `5` |
+| `VIDEO_ME_FISH_S2_LOAD_TIMEOUT_SEC` | `int` | `120` |
 | `VIDEO_ME_TARGET_LANGUAGE` | `str` | `'en'` |
 | `VIDEO_ME_LIPSYNC_BASE_URL` | `str` | `'http://localhost:8040'` |
 | `VIDEO_ME_WHISPER_MODEL_SIZE` | `str` | `'medium'` |

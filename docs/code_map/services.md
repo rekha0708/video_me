@@ -126,8 +126,12 @@ Dashboard worker — claims queued jobs, runs the pipeline, emits events.
 Fish Audio S2 TTS HTTP service wrapper.
 
 - `_resolve_env() -> dict`
+- `_load_engine() -> None` — Load the Fish Speech engine into memory. Runs in a thread executor, never on the event loop.
+- `_unload_engine() -> None` — Drop the engine and release CUDA memory. Idempotent.
 - `async lifespan(app: FastAPI)`
 - `health() -> JSONResponse`
+- `async load() -> JSONResponse`
+- `async unload() -> JSONResponse`
 - `async synthesize(text: str=Form(...), reference_audio: UploadFile=File(...), language: str=Form('en'), format: str=Form('wav')) -> Response`
 
 ### `services/musetalk_compat/sitecustomize.py`

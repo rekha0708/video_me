@@ -14,7 +14,7 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `core/cast_params.py` — Per-cast asset + render params, loaded from config/casts/<cast>/params.py.
 - `core/config.py` — (no module docstring)
 - `core/executor.py` — (no module docstring)
-- `core/gpu_sequencer.py` — GPU model sequencing between the render and video phases.
+- `core/gpu_sequencer.py` — GPU model sequencing between pipeline phases.
 - `core/models/__init__.py` — Shared Pydantic models for orchestration.
 - `core/models/capabilities.py` — (no module docstring)
 - `core/models/common.py` — (no module docstring)
@@ -111,6 +111,7 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `tests/test_cast_data_flow.py` — End-to-end cast data-flow tests.
 - `tests/test_cast_params.py` — Tests for per-cast params loading (config/casts/<cast>/params.py).
 - `tests/test_code_map.py` — Freshness guard for docs/code_map/.
+- `tests/test_comfyui_flux_adapter.py` — Unit tests for ComfyUIFluxAdapter's VRAM lifecycle (ComfyUIUnloadMixin).
 - `tests/test_critique.py` — (no module docstring)
 - `tests/test_dashboard_api_helpers.py` — Unit tests for the module-level job-page helpers in services/dashboard_api.py.
 - `tests/test_dashboard_models.py` — Validation tests for the story/story_images additions to core/models/dashboard.py.
@@ -119,6 +120,7 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `tests/test_dashboard_worker.py` — Tests for DashboardWorker (D3).
 - `tests/test_executor.py` — (no module docstring)
 - `tests/test_fetch_media.py` — (no module docstring)
+- `tests/test_fish_s2_adapter.py` — (no module docstring)
 - `tests/test_generate_video.py` — (no module docstring)
 - `tests/test_gpu_sequencer.py` — (no module docstring)
 - `tests/test_lip_sync.py` — (no module docstring)

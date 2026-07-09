@@ -66,6 +66,8 @@
 - `tts_adapter: Literal['chatterbox', 'fish_s2']` = `'fish_s2'`
 - `tts_base_url: str` = `'http://localhost:8020'`
 - `fish_s2_base_url: str` = `'http://localhost:8025'`
+- `fish_s2_load_gap_sec: int` = `5`
+- `fish_s2_load_timeout_sec: int` = `120`
 - `target_language: str` = `'en'`
 - `lipsync_base_url: str` = `'http://localhost:8040'`
 - `whisper_model_size: str` = `'medium'`

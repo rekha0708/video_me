@@ -63,12 +63,18 @@ Per-cast asset + render params, loaded from config/casts/<cast>/params.py.
 
 ### `core/gpu_sequencer.py`
 
-GPU model sequencing between the render and video phases.
+GPU model sequencing between pipeline phases.
 
-- `_is_managed(video_adapter: Any) -> bool`
+- **class `ComfyUIUnloadMixin`** — Shared managed-VRAM contract for adapters backed by a ComfyUI server
+  - `async load(self) -> None`
+  - `async wait_until_loaded(self, timeout_sec: float, poll_sec: float=1.0) -> None`
+  - `async unload(self) -> bool`
+- `is_managed(adapter: Any) -> bool`
 - `unload_ollama_model(base_url: str, model: str) -> None` — Tell Ollama to evict the model from VRAM (keep_alive=0) before GPU-heavy stages.
 - `async ensure_video_model_unloaded(video_adapter: Any) -> None` — Make sure a VRAM-managed video model is out of VRAM before the render phase.
+- `async _prepare_managed_adapter(adapter: Any, settings: Any, *, gap_sec: float, timeout_sec: float, stage_name: str, sleep: Callable[[float], Any], notify: Callable[[str, str], Any] | None) -> None` — Bring a VRAM-managed adapter's model into memory.
 - `async prepare_video_model(video_adapter: Any, settings: Any, *, sleep: Callable[[float], Any]=asyncio.sleep, notify: Callable[[str, str], Any] | None=None) -> None` — Bring a VRAM-managed video model into memory after the render phase.
+- `async prepare_voice_model(voice_adapter: Any, settings: Any, *, sleep: Callable[[float], Any]=asyncio.sleep, notify: Callable[[str, str], Any] | None=None) -> None` — Bring a VRAM-managed voice (TTS) model into memory, e.g. Fish Audio S2.
 
 ### `core/models/__init__.py`
 

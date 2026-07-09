@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 from core.capabilities.base import RenderCharacter
+from core.gpu_sequencer import ComfyUIUnloadMixin
 from core.models.capabilities import ImageSet, RenderCharacterRequest
 from core.models.common import CostEstimate, HealthStatus
 from core.models.profile import CastMember
@@ -35,7 +36,7 @@ def _is_placeholder_lora(path: Path) -> bool:
         return False
 
 
-class ComfyUIFluxAdapter(RenderCharacter):
+class ComfyUIFluxAdapter(ComfyUIUnloadMixin, RenderCharacter):
     """
     render_character adapter: per-member still images via ComfyUI + Flux.1-dev + LoRA.
 

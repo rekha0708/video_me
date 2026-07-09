@@ -2,12 +2,18 @@
 Fish Audio S2 TTS adapter — multi-language voice synthesis (English + Hindi).
 
 Expects a self-hosted Fish Audio S2 server exposing:
-  GET  /health            → {"status": "ok"}
+  GET  /health            → {"status": "ok", "model_loaded": bool, ...}
+  POST /load              → 200/202, kicks off a background model load
+  POST /unload            → 200, releases the model's VRAM (409 while a load is running)
   POST /synthesize        → multipart/form-data: text, reference_audio (file),
                             language, format  → raw WAV bytes
 
 Start the server with:
   python scripts/start_fish_s2_server.py --port 8025
+
+The GPU lifecycle manager (``core.gpu_sequencer``) unloads/reloads this adapter's
+model around phases that don't need TTS (``managed_vram = True`` opts this adapter
+in), mirroring the existing Wan video-adapter pattern.
 
 **Track B dependency**: each cast member needs a reference WAV (or MP3/FLAC) at
 ``voice_dir/<name>.(wav|mp3|flac)``.  Missing file → RuntimeError with Track B prompt.
@@ -50,6 +56,10 @@ class FishS2TtsAdapter(SynthesizeVoice):
 
     version = "1.0.0"
 
+    # The GPU sequencer loads/unloads this adapter's model around phases that
+    # don't need TTS (mirrors adapters/generate_video/wan_adapter.py).
+    managed_vram = True
+
     def __init__(
         self,
         work_dir: Path,
@@ -75,6 +85,64 @@ class FishS2TtsAdapter(SynthesizeVoice):
                 status="down",
                 reason=f"Fish Audio S2 server unreachable at {self._base_url}: {exc}",
             )
+
+    # ------------------------------------------------------------------
+    # VRAM lifecycle (called by core.gpu_sequencer around stage transitions)
+    # ------------------------------------------------------------------
+
+    async def load(self) -> None:
+        """Ask the service to start loading the model (non-blocking on the server)."""
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(f"{self._base_url}/load")
+            resp.raise_for_status()
+
+    async def unload(self) -> bool:
+        """
+        Release the model's VRAM. Returns False if the service is unreachable
+        (nothing resident, safe to continue). Raises if the service is up but
+        refused to unload — proceeding could OOM the next phase.
+        """
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(f"{self._base_url}/unload")
+        except httpx.ConnectError:
+            logger.warning(
+                "Fish Audio S2 server unreachable at %s — assuming no model resident",
+                self._base_url,
+            )
+            return False
+        if resp.status_code >= 400:
+            raise RuntimeError(
+                f"Fish Audio S2 server at {self._base_url} refused to unload "
+                f"({resp.status_code}): {resp.text[:500]}"
+            )
+        return True
+
+    async def wait_until_loaded(self, timeout_sec: float, poll_sec: float = 2.0) -> None:
+        """Poll /health until the model is loaded. Raises on load error or timeout."""
+        import asyncio
+        import time
+
+        import httpx
+
+        deadline = time.monotonic() + timeout_sec
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            while time.monotonic() < deadline:
+                resp = await client.get(f"{self._base_url}/health")
+                body = resp.json()
+                if body.get("model_loaded"):
+                    return
+                if body.get("error"):
+                    raise RuntimeError(f"Fish Audio S2 model failed to load: {body['error']}")
+                await asyncio.sleep(poll_sec)
+        raise TimeoutError(
+            f"Fish Audio S2 model not loaded after {timeout_sec:.0f}s. Check the "
+            "fish_s2_server logs; raise VIDEO_ME_FISH_S2_LOAD_TIMEOUT_SEC if the load is just slow."
+        )
 
     async def estimate_cost(self, req: VoiceRequest) -> CostEstimate:
         return CostEstimate(amount=0.0, notes="Self-hosted Fish Audio S2; GPU compute via rented hardware.")

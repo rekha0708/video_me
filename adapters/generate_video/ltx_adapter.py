@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 from core.capabilities.base import GenerateVideo
+from core.gpu_sequencer import ComfyUIUnloadMixin
 from core.models.capabilities import VideoClip, VideoRequest
 from core.models.common import CostEstimate, HealthStatus
 from core.observability import log_event
@@ -38,7 +39,7 @@ _POLL_INTERVAL = 3.0
 _TIMEOUT = 600.0    # LTX 8-step distilled is fast; 10 min is generous
 
 
-class LtxAdapter(GenerateVideo):
+class LtxAdapter(ComfyUIUnloadMixin, GenerateVideo):
     """
     generate_video adapter: per-shot image-to-video via LTX-Video 2.3 running inside ComfyUI.
 

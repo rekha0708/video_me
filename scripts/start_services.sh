@@ -43,11 +43,19 @@ else
 fi
 
 wait_for() {
-  local name="$1" url="$2" tries="${3:-15}"
+  local name="$1" url="$2" tries="${3:-15}" body_pattern="${4:-}"
   for i in $(seq 1 "$tries"); do
-    if curl -sf "$url" >/dev/null 2>&1; then
-      ok "$name responding at $url"
-      return 0
+    local body
+    if body="$(curl -sf "$url" 2>/dev/null)"; then
+      # A bare 2xx only proves the HTTP server is up. Services with deferred
+      # model loading (e.g. Fish S2's /health always returns 200 with a
+      # "model_loaded" field — see services/fish_s2_server.py) need the body
+      # checked too, or start_services.sh reports ready before the model
+      # actually finishes loading.
+      if [[ -z "$body_pattern" ]] || grep -q "$body_pattern" <<<"$body"; then
+        ok "$name responding at $url"
+        return 0
+      fi
     fi
     printf '  waiting for %s (%d/%d)...\n' "$name" "$i" "$tries"
     sleep 4
@@ -274,7 +282,7 @@ printf '\nWaiting for required services to become ready...\n'
 FAILED=0
 wait_for "Ollama"         "http://localhost:11434/api/tags"          20 || FAILED=1
 wait_for "ComfyUI"        "http://localhost:8188/"                   20 || FAILED=1
-wait_for "Fish Audio S2"  "http://localhost:8025/health"             15 || FAILED=1
+wait_for "Fish Audio S2"  "http://localhost:8025/health"             15 '"model_loaded":true' || FAILED=1
 
 printf '\n'
 cd "$ROOT_DIR"

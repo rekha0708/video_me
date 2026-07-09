@@ -524,6 +524,74 @@ async def test_vram_managed_video_adapter_sequencing(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_vram_managed_voice_and_render_adapters_sequencing(tmp_path) -> None:
+    """Fish S2 (voice) and a managed render adapter (comfyui_flux fallback) get
+    the same unload-before-Phase-A / unload-render-then-load-before-Phase-B
+    treatment as Wan, alongside it."""
+    config = _make_config(tmp_path)
+    config.settings.wan_load_gap_sec = 0
+    config.settings.fish_s2_load_gap_sec = 0
+    call_order: list[str] = []
+
+    adapters = MagicMock(ffmpeg_bin="ffmpeg")
+    adapters.video.managed_vram = True
+    adapters.video.unload = AsyncMock(side_effect=lambda: call_order.append("video_unload") or True)
+    adapters.video.load = AsyncMock(side_effect=lambda: call_order.append("video_load"))
+    adapters.video.wait_until_loaded = AsyncMock(
+        side_effect=lambda *a, **k: call_order.append("video_wait")
+    )
+    adapters.voice.managed_vram = True
+    adapters.voice.unload = AsyncMock(side_effect=lambda: call_order.append("voice_unload") or True)
+    adapters.voice.load = AsyncMock(side_effect=lambda: call_order.append("voice_load"))
+    adapters.voice.wait_until_loaded = AsyncMock(
+        side_effect=lambda *a, **k: call_order.append("voice_wait")
+    )
+    adapters.render.managed_vram = True
+    adapters.render.unload = AsyncMock(side_effect=lambda: call_order.append("render_unload") or True)
+
+    with (
+        patch("core.workflow._make_adapters", return_value=adapters),
+        patch("core.workflow.run_stage", new=_make_run_stage(_stage_results())),
+        patch("core.workflow._unload_ollama_model"),
+        patch("core.gpu_sequencer.unload_ollama_model"),
+        patch(
+            "core.workflow._run_plan_critique_and_approval",
+            new=AsyncMock(return_value=(_storyboard(), _script())),
+        ),
+        patch(
+            "core.workflow._render_shot_candidates",
+            new=AsyncMock(
+                side_effect=lambda *a, **k: call_order.append("render") or _image_critique_result()
+            ),
+        ),
+        patch(
+            "core.workflow._run_image_approval_gate",
+            new=AsyncMock(
+                side_effect=lambda *a, **k: call_order.append("approve") or ["/tmp/render_00.png"]
+            ),
+        ),
+        patch(
+            "core.workflow._generate_shot_video",
+            new=AsyncMock(
+                side_effect=lambda *a, **k: call_order.append("video")
+                or (_synced_clip(), _audio_track())
+            ),
+        ),
+        patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
+        patch("core.workflow.create_job_store", return_value=MagicMock()),
+        patch("core.workflow.create_artifact_store", return_value=MagicMock()),
+    ):
+        await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
+
+    assert call_order == [
+        "video_unload", "voice_unload",
+        "render", "approve",
+        "render_unload", "video_load", "video_wait", "voice_load", "voice_wait",
+        "video",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_unmanaged_video_adapter_skips_sequencing(tmp_path) -> None:
     """The default LTX adapter (no managed_vram attr) must not get load/unload calls."""
     config = _make_config(tmp_path)
@@ -858,6 +926,50 @@ async def test_run_with_critique_pass_publishes(tmp_path) -> None:
     assert job.status == JobStatus.COMPLETED
     assert "critique_attempt_1" in call_order
     assert call_order[-1] == "publish"
+
+
+@pytest.mark.asyncio
+async def test_run_with_critique_unloads_managed_adapters_before_critique(tmp_path) -> None:
+    """Frame critique only needs the LLM/VLM — any VRAM-managed render/video/
+    voice models left resident from Phase A/B must be freed first."""
+    config = _make_config(tmp_path)
+    call_order: list[str] = []
+
+    adapters = MagicMock(ffmpeg_bin="ffmpeg")
+    adapters.video.managed_vram = True
+    adapters.video.unload = AsyncMock(side_effect=lambda: call_order.append("video_unload") or True)
+    adapters.video.load = AsyncMock()
+    adapters.video.wait_until_loaded = AsyncMock()
+    adapters.voice.managed_vram = True
+    adapters.voice.unload = AsyncMock(side_effect=lambda: call_order.append("voice_unload") or True)
+    adapters.voice.load = AsyncMock()
+    adapters.voice.wait_until_loaded = AsyncMock()
+    adapters.render.managed_vram = True
+    adapters.render.unload = AsyncMock(side_effect=lambda: call_order.append("render_unload") or True)
+
+    config.settings.wan_load_gap_sec = 0
+    config.settings.fish_s2_load_gap_sec = 0
+
+    with (
+        patch("core.workflow._make_adapters", return_value=adapters),
+        patch(
+            "core.workflow.run_stage",
+            new=_make_run_stage_with_critiques(["pass"], call_order),
+        ),
+        patch("core.workflow._unload_ollama_model"),
+        patch("core.gpu_sequencer.unload_ollama_model"),
+        patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
+        patch("core.workflow.create_job_store", return_value=MagicMock()),
+        patch("core.workflow.create_artifact_store", return_value=MagicMock()),
+    ):
+        with _mock_shot_patches():
+            job = await run_with_critique("http://example.com", rights_cleared=True, app_config=config)
+
+    assert job.status == JobStatus.COMPLETED
+    critique_index = call_order.index("critique_attempt_1")
+    assert "render_unload" in call_order[:critique_index]
+    assert "video_unload" in call_order[:critique_index]
+    assert "voice_unload" in call_order[:critique_index]
 
 
 @pytest.mark.asyncio

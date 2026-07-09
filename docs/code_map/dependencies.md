@@ -33,12 +33,12 @@
 - `adapters.critique.plan_critique_adapter` → `core.capabilities.base`, `core.models.capabilities`, `core.models.common`, `core.observability`
 - `adapters.critique.vlm_adapter` → `core.capabilities.base`, `core.models.capabilities`, `core.models.common`, `core.models.content`, `core.observability`
 - `adapters.fetch_media.ytdlp_adapter` → `core.capabilities.base`, `core.models.capabilities`, `core.models.common`, `core.observability`
-- `adapters.generate_video.ltx_adapter` → `core.capabilities.base`, `core.models.capabilities`, `core.models.common`, `core.observability`
+- `adapters.generate_video.ltx_adapter` → `core.capabilities.base`, `core.gpu_sequencer`, `core.models.capabilities`, `core.models.common`, `core.observability`
 - `adapters.generate_video.wan_adapter` → `core.capabilities.base`, `core.models.capabilities`, `core.models.common`, `core.observability`
 - `adapters.lip_sync.lip_sync_adapter` → `core.capabilities.base`, `core.models.capabilities`, `core.models.common`, `core.observability`
 - `adapters.plan_shots.llm_adapter` → `core.capabilities.base`, `core.models.capabilities`, `core.models.common`, `core.models.content`, `core.observability`
 - `adapters.publish.manual_adapter` → `core.capabilities.base`, `core.models.capabilities`, `core.models.common`, `core.observability`
-- `adapters.render_character.comfyui_flux_adapter` → `adapters.render_character.prompt_util`, `core.capabilities.base`, `core.models.capabilities`, `core.models.common`, `core.models.profile`, `core.observability`
+- `adapters.render_character.comfyui_flux_adapter` → `adapters.render_character.prompt_util`, `core.capabilities.base`, `core.gpu_sequencer`, `core.models.capabilities`, `core.models.common`, `core.models.profile`, `core.observability`
 - `adapters.render_character.diffusion_adapter` → `adapters.render_character.prompt_util`, `core.capabilities.base`, `core.models.capabilities`, `core.models.common`, `core.models.profile`, `core.observability`
 - `adapters.render_character.musubi_flux_adapter` → `adapters.render_character.prompt_util`, `core.capabilities.base`, `core.models.capabilities`, `core.models.common`, `core.models.profile`, `core.observability`
 - `adapters.render_overlays.matplotlib_adapter` → `core.capabilities.base`, `core.models.capabilities`, `core.models.common`, `core.observability`

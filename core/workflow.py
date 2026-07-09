@@ -11,7 +11,9 @@ from core.config import AppConfig, load_app_config
 from core.executor import StageError, check_rights, run_stage
 from core.gpu_sequencer import (
     ensure_video_model_unloaded,
+    is_managed,
     prepare_video_model,
+    prepare_voice_model,
     unload_ollama_model,
 )
 from core.models.capabilities import (
@@ -1206,10 +1208,12 @@ async def _run_to_assembled_video(
         )
         shots_for_clips = storyboard.shots  # one clip per shot, same order
     else:
-        # Release LLM from VRAM before the GPU-heavy shot loop, and make sure a
-        # VRAM-managed video model (Wan) is not resident during render_character.
+        # Release LLM from VRAM before the GPU-heavy shot loop, and make sure
+        # VRAM-managed video (Wan) and voice (Fish S2) models are not resident
+        # during render_character — neither is needed until Phase B.
         _unload_ollama_model(config.settings.llm_base_url, config.settings.llm_model)
         await ensure_video_model_unloaded(adapters.video)
+        await ensure_video_model_unloaded(adapters.voice)
 
         shots_to_run = (
             [s for s in storyboard.shots if s.shot_id == opts.only_shot]
@@ -1250,10 +1254,18 @@ async def _run_to_assembled_video(
             shots_to_run, critique_results, adapters, cast_id=config.cast.id
         )
 
-        # Render phase is done — bring the VRAM-managed video model (Wan) up:
-        # unload Ollama, wait for VRAM to settle, load, poll until ready.
+        # Render phase is done — free the render adapter's VRAM if it's a
+        # managed one (comfyui_flux fallback; musubi-tuner already self-released
+        # as a one-shot subprocess), then bring up the VRAM-managed video (Wan)
+        # and voice (Fish S2) models: unload Ollama, wait for VRAM to settle,
+        # load, poll until ready.
+        if is_managed(adapters.render):
+            await adapters.render.unload()
         await prepare_video_model(
             adapters.video, config.settings, notify=opts.stage_hook
+        )
+        await prepare_voice_model(
+            adapters.voice, config.settings, notify=opts.stage_hook
         )
 
         # ── Phase B: synthesize voice + generate video with approved image ─────
@@ -1586,6 +1598,14 @@ async def run_with_critique(
             )
 
             script, final_video = await _run_to_assembled_video(ctx)
+
+            # Frame critique only needs the LLM/VLM — free whatever VRAM-managed
+            # render/video/voice models Phase A/B left resident before it runs.
+            if is_managed(ctx.adapters.render):
+                await ctx.adapters.render.unload()
+            await ensure_video_model_unloaded(ctx.adapters.video)
+            await ensure_video_model_unloaded(ctx.adapters.voice)
+
             critique = await _critique_candidate(ctx, script, final_video, attempt)
 
             log_event(
