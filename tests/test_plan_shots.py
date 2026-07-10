@@ -486,3 +486,30 @@ def test_build_messages_no_chart_hints_without_charts() -> None:
     req = PlanShotsRequest(script=_script(), cast=_cast(), visual_context=vc)
     messages, _ = adapter._build_messages(req)
     assert "Reference-video visual notes" not in messages[1]["content"]
+
+
+def test_build_messages_prop_hints_included_when_source_had_props() -> None:
+    # plan_shots must see props directly, independent of whether the script's
+    # own scene.setting text happens to carry them — Script.scenes[].setting
+    # is scene-level and not every code path folds props into it (e.g.
+    # core.workflow._build_verbatim_script before its own prop-folding fix).
+    from core.models.capabilities import VisualContext, VisualSegment
+    adapter = _adapter()
+    vc = VisualContext(segments=[
+        VisualSegment(start=0, end=10, setting="stage",
+                      props=["microphone on stand", "acoustic guitar"]),
+    ])
+    req = PlanShotsRequest(script=_script(), cast=_cast(), visual_context=vc)
+    messages, _ = adapter._build_messages(req)
+    user = messages[1]["content"]
+    assert "microphone on stand" in user
+    assert "acoustic guitar" in user
+
+
+def test_build_messages_no_prop_hints_without_props() -> None:
+    from core.models.capabilities import VisualContext, VisualSegment
+    adapter = _adapter()
+    vc = VisualContext(segments=[VisualSegment(start=0, end=10, setting="studio")])
+    req = PlanShotsRequest(script=_script(), cast=_cast(), visual_context=vc)
+    messages, _ = adapter._build_messages(req)
+    assert "Reference-video props observed" not in messages[1]["content"]

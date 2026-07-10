@@ -316,6 +316,7 @@ Shot-planning adapters.
 - `trim_characters(characters: list[str], speaker: str) -> list[str]` — Enforce ≤2 characters; speaker is always first.
 - `parse_overlay(raw: object) -> 'ShotOverlay | None'` — Parse an LLM-provided overlay spec; any malformed spec → None (never fatal).
 - `_format_chart_hints(visual_context) -> str` — Reference-video chart hints so overlays are grounded — with the rights rule.
+- `_format_prop_hints(visual_context) -> str` — Reference-video props so shots can plausibly use them (e.g. the mic or
 - `_format_cast_block(cast) -> str`
 - `_format_lines_block(script: Script) -> tuple[str, list[tuple[str, str, str]]]` — Return (formatted_lines_text, flat_line_info_list).
 

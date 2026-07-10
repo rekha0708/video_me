@@ -140,6 +140,35 @@ def _format_chart_hints(visual_context) -> str:
     return "\n".join(lines)
 
 
+def _format_prop_hints(visual_context) -> str:
+    """Reference-video props so shots can plausibly use them (e.g. the mic or
+    guitar the source subject is actually holding) instead of the LLM
+    inventing an ungrounded generic gesture.
+
+    Script.scenes[].setting may already carry props folded into its text (see
+    core.workflow._build_verbatim_script / adapt_script's _format_visual_block),
+    but that's the scene as a whole, not per-shot, and not every code path
+    populates it — this is direct, always-on grounding straight from
+    visual_context, independent of how the script was built.
+
+    Empty when there is no visual context or no props were seen.
+    """
+    segments = getattr(visual_context, "segments", None) if visual_context else None
+    if not segments:
+        return ""
+    propped = [s for s in segments if getattr(s, "props", None)]
+    if not propped:
+        return ""
+    total = max(segments[-1].end, 0.001)
+    lines = ["\nReference-video props observed (use naturally in action where relevant):"]
+    for seg in propped:
+        pct = int(100 * seg.start / total)
+        lines.append(
+            f"  - ~{pct}% through the source ({seg.start:.0f}s-{seg.end:.0f}s): {', '.join(seg.props)}."
+        )
+    return "\n".join(lines)
+
+
 def _format_cast_block(cast) -> str:
     return "\n".join(
         f'  "{m.id}" — {m.name} ({m.gender or "?"}): {m.personality}'
@@ -270,6 +299,10 @@ class LlmPlanShotsAdapter(PlanShots):
         chart_hints = _format_chart_hints(req.visual_context)
         if chart_hints:
             user_content += "\n" + chart_hints
+
+        prop_hints = _format_prop_hints(req.visual_context)
+        if prop_hints:
+            user_content += "\n" + prop_hints
 
         if req.critique_notes:
             notes_block = "\n".join(f"- {n}" for n in req.critique_notes)

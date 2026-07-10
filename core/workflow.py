@@ -1004,6 +1004,13 @@ def _build_verbatim_script(
                 seg_idx += 1
             if scene_lines:
                 setting = getattr(vs, "setting", None) or getattr(vs, "description", "indoor scene")
+                # adapt_script's LLM prompt weaves VisualSegment.props into the
+                # scene text it writes (see _format_visual_block); this path
+                # has no LLM call to do that, so fold them in directly or a
+                # verbatim script silently loses every prop the VLM detected.
+                props = getattr(vs, "props", None)
+                if props:
+                    setting = f"{setting} — props: {', '.join(props)}"
                 scenes.append(Scene(
                     setting=setting,
                     characters_present=[primary_speaker],

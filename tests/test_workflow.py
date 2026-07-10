@@ -1757,6 +1757,44 @@ def test_build_verbatim_script_single_member_cast():
     assert all(line.speaker == "max" for line in all_lines)
 
 
+def test_build_verbatim_script_folds_props_into_setting():
+    """adapt_script's LLM prompt weaves VisualSegment.props into scene text
+    (see _format_visual_block) — this deterministic path has no LLM call to
+    do that, so it must fold props in directly or a verbatim script silently
+    drops every prop the VLM detected (root cause of a real production bug:
+    a job's mic/guitar never reached the script, so plan_shots invented an
+    ungrounded "taps her thigh" action instead)."""
+    from core.models.capabilities import VisualContext, VisualSegment
+
+    cast = _test_cast()
+    transcript = _transcript_result()
+    vc = VisualContext(segments=[
+        VisualSegment(
+            start=0.0, end=7.0, setting="Stage with blurred background lights",
+            props=["microphone on stand", "acoustic guitar"],
+        ),
+    ])
+
+    script = _build_verbatim_script(transcript, cast, visual_context=vc)
+
+    setting = script.scenes[0].setting
+    assert "Stage with blurred background lights" in setting
+    assert "microphone on stand" in setting
+    assert "acoustic guitar" in setting
+
+
+def test_build_verbatim_script_setting_unchanged_without_props():
+    from core.models.capabilities import VisualContext, VisualSegment
+
+    cast = _test_cast()
+    transcript = _transcript_result()
+    vc = VisualContext(segments=[VisualSegment(start=0.0, end=7.0, setting="cozy kitchen")])
+
+    script = _build_verbatim_script(transcript, cast, visual_context=vc)
+
+    assert script.scenes[0].setting == "cozy kitchen"
+
+
 def test_apply_segment_timing_overrides_duration():
     script = Script(
         mode="verbatim",
