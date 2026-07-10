@@ -138,6 +138,94 @@ async def free_comfyui(comfyui_base_url: str) -> bool:
         return False
 
 
+FISH_S2_PROCESS_MATCH = "services.fish_s2_server:app"  # unique pgrep -f pattern
+
+
+async def stop_fish_s2_process() -> bool:
+    """Kill the Fish S2 server process entirely, not just POST /unload.
+
+    Fish S2's own CUDA allocator retains memory across synthesis calls that
+    /unload's torch.cuda.empty_cache() cannot reclaim — observed ~63GB
+    resident after one job's worth of TTS calls vs ~20GB for a fresh process.
+    A full process kill is the only reliable way to reset it to zero. Called
+    unconditionally after every job (any outcome) so the next job — whichever
+    adapters it uses — starts from a clean slate. Best-effort: no matching
+    process is a normal no-op, not an error.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "pkill", "-f", FISH_S2_PROCESS_MATCH,
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+    )
+    await proc.wait()
+    killed = proc.returncode == 0
+    log_event(logger, "fish_s2_process_stopped", killed=killed)
+    return killed
+
+
+async def _fish_s2_reachable(base_url: str) -> bool:
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{base_url.rstrip('/')}/health")
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+async def ensure_fish_s2_process_running(
+    settings: Any, *, sleep: Callable[[float], Any] = asyncio.sleep,
+) -> None:
+    """Start the Fish S2 server process if it isn't already running, and wait
+    for it to accept connections before returning.
+
+    Pairs with stop_fish_s2_process(): the worker kills the process after
+    every job, so the next job that needs voice synthesis must (re)spawn it
+    on demand. This only starts the ASGI process itself — the model weights
+    load (POST /load, polled separately by _prepare_managed_adapter below) is
+    unaffected and still happens afterward.
+    """
+    if await _fish_s2_reachable(settings.fish_s2_base_url):
+        return
+
+    import os
+    from pathlib import Path
+    from urllib.parse import urlparse
+
+    logger.info("Fish Audio S2 process not running — starting it")
+    repo_root = Path(__file__).resolve().parent.parent
+    log_path = Path(settings.fish_s2_log_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    port = urlparse(settings.fish_s2_base_url).port or 8025
+
+    with open(log_path, "ab") as log_file:
+        await asyncio.create_subprocess_exec(
+            settings.fish_s2_venv_python,
+            "services.fish_s2_server:app",
+            "--host", "0.0.0.0",
+            "--port", str(port),
+            cwd=str(repo_root),
+            env={**os.environ, "FISH_SPEECH_DIR": settings.fish_s2_speech_dir},
+            stdout=log_file,
+            stderr=log_file,
+            start_new_session=True,
+        )
+        # create_subprocess_exec's fork+exec has already happened by the time
+        # it returns, and the child holds its own dup'd fd — closing our copy
+        # here (end of `with`) doesn't affect the detached child's logging,
+        # the same fire-and-forget pattern `nohup ... > log 2>&1 &` uses.
+
+    deadline_tries = max(1, int(settings.fish_s2_process_startup_timeout_sec))
+    for _ in range(deadline_tries):
+        if await _fish_s2_reachable(settings.fish_s2_base_url):
+            log_event(logger, "fish_s2_process_started")
+            return
+        await sleep(1)
+    raise TimeoutError(
+        f"Fish Audio S2 process did not start within "
+        f"{settings.fish_s2_process_startup_timeout_sec}s. Check {log_path}."
+    )
+
+
 async def ensure_video_model_unloaded(video_adapter: Any) -> None:
     """Make sure a VRAM-managed video model is out of VRAM before the render phase."""
     if not is_managed(video_adapter):
@@ -237,7 +325,17 @@ async def prepare_voice_model(
     Wan's multi-minute diffusion pipeline build, so both are shorter, but not
     as short as "weights load" suggests: LLAMA + DAC decoder + warmup has been
     observed taking ~120-150s cold, hence the 240s default (not e.g. 60s).
+
+    The worker kills the Fish S2 *process* (not just its model) after every
+    job to reclaim VRAM the process itself can't release — see
+    stop_fish_s2_process(). So before this job can load the model at all, the
+    process needs to exist; ensure_fish_s2_process_running respawns it if the
+    previous job's cleanup left nothing listening. Fish S2 is currently the
+    only managed voice adapter, hence the direct coupling here rather than a
+    generic per-adapter process hook.
     """
+    if is_managed(voice_adapter):
+        await ensure_fish_s2_process_running(settings, sleep=sleep)
     await _prepare_managed_adapter(
         voice_adapter,
         settings,

@@ -53,7 +53,7 @@
 - `services.chat_service` → `core.models.dashboard`, `services.dashboard_repository`
 - `services.dashboard_api` → `core.config`, `core.models.dashboard`, `core.models.profile`, `core.storage`, `scripts.check_runtime_readiness`, `services.chat_service`, `services.dashboard_repository`, `services.gpu_status`
 - `services.dashboard_repository` → `core.models.dashboard`
-- `services.dashboard_worker` → `adapters.approval.dashboard_approval_adapter`, `adapters.approval.dashboard_image_approval_adapter`, `adapters.story_ingest.llm_adapter`, `adapters.story_ingest.parser`, `adapters.transcript_refine.llm_adapter`, `core.config`, `core.models.capabilities`, `core.models.dashboard`, `core.models.profile`, `core.storage`, `core.workflow`, `services.dashboard_api`, `services.dashboard_repository`
+- `services.dashboard_worker` → `adapters.approval.dashboard_approval_adapter`, `adapters.approval.dashboard_image_approval_adapter`, `adapters.story_ingest.llm_adapter`, `adapters.story_ingest.parser`, `adapters.transcript_refine.llm_adapter`, `core.config`, `core.gpu_sequencer`, `core.models.capabilities`, `core.models.dashboard`, `core.models.profile`, `core.storage`, `core.workflow`, `services.dashboard_api`, `services.dashboard_repository`
 
 ## scripts/
 

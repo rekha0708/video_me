@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from core.config import AppConfig, load_app_config
+from core.gpu_sequencer import stop_fish_s2_process
 from core.models.dashboard import (
     CreateDashboardJobRequest,
     DashboardApprovalKind,
@@ -151,22 +152,31 @@ class DashboardWorker:
         cancel_watch.cancel()
         await asyncio.gather(heartbeat_task, cancel_watch, return_exceptions=True)
 
-        if cancel_watch in done:
-            # Operator cancel requested — abort the pipeline.
-            pipeline_task.cancel()
-            await asyncio.gather(pipeline_task, return_exceptions=True)
-            self._handle_cancel(job_id, action.queue_id)
-            return
+        try:
+            if cancel_watch in done:
+                # Operator cancel requested — abort the pipeline.
+                pipeline_task.cancel()
+                await asyncio.gather(pipeline_task, return_exceptions=True)
+                self._handle_cancel(job_id, action.queue_id)
+                return
 
-        # Pipeline finished — check for success or failure.
-        exc = pipeline_task.exception() if not pipeline_task.cancelled() else None
-        if pipeline_task.cancelled() or isinstance(exc, asyncio.CancelledError):
-            self._handle_cancel(job_id, action.queue_id)
-        elif exc:
-            self._handle_failure(job_id, action.queue_id, exc)
-        else:
-            self.repo.complete_queue_action(action.queue_id)
-            logger.info("Job %s completed successfully", job_id)
+            # Pipeline finished — check for success or failure.
+            exc = pipeline_task.exception() if not pipeline_task.cancelled() else None
+            if pipeline_task.cancelled() or isinstance(exc, asyncio.CancelledError):
+                self._handle_cancel(job_id, action.queue_id)
+            elif exc:
+                self._handle_failure(job_id, action.queue_id, exc)
+            else:
+                self.repo.complete_queue_action(action.queue_id)
+                logger.info("Job %s completed successfully", job_id)
+        finally:
+            # Every outcome (completed/failed/cancelled), unconditionally: Fish
+            # S2's own CUDA allocator retains memory across synthesis calls
+            # that POST /unload can't reclaim (~63GB resident observed vs
+            # ~20GB fresh-process baseline). Killing the whole process is the
+            # only reliable reset; the next job that needs it respawns it on
+            # demand (core.gpu_sequencer.ensure_fish_s2_process_running).
+            await stop_fish_s2_process()
 
     async def _execute_pipeline(self, action: DashboardQueueItem) -> None:
         """Dispatch to the right workflow function based on job phase."""

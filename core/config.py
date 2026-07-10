@@ -71,6 +71,16 @@ class Settings(BaseSettings):
     # production; 240s gives real headroom without approaching Wan's budget.
     fish_s2_load_gap_sec: int = 5
     fish_s2_load_timeout_sec: int = 240
+    # Fish S2's own CUDA allocator retains memory across synthesis calls that
+    # POST /unload + torch.cuda.empty_cache() cannot reclaim (observed ~63GB
+    # resident vs ~20GB fresh-process baseline after one job's worth of TTS
+    # calls). The worker kills the whole process after every job and respawns
+    # it fresh only when the next job actually needs voice synthesis — these
+    # settings mirror the exact command start_services.sh uses to launch it.
+    fish_s2_venv_python: str = "/workspace/.venv_fish_s2/bin/uvicorn"
+    fish_s2_speech_dir: str = "/workspace/fish-speech"
+    fish_s2_log_path: str = "/workspace/logs/fish_s2.log"
+    fish_s2_process_startup_timeout_sec: int = 30
 
     # --- language selection ---
     target_language: str = "en"  # "en" | "hi" | "both"

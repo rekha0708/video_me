@@ -5,10 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from core.gpu_sequencer import (
     VIDEO_MODEL_LOAD_STAGE,
     VOICE_MODEL_LOAD_STAGE,
+    ensure_fish_s2_process_running,
     ensure_video_model_unloaded,
     free_comfyui,
     prepare_video_model,
     prepare_voice_model,
+    stop_fish_s2_process,
 )
 
 
@@ -22,6 +24,11 @@ def _settings(**overrides) -> SimpleNamespace:
         wan_load_timeout_sec=1800,
         fish_s2_load_gap_sec=5,
         fish_s2_load_timeout_sec=120,
+        fish_s2_base_url="http://localhost:8025",
+        fish_s2_venv_python="/workspace/.venv_fish_s2/bin/uvicorn",
+        fish_s2_speech_dir="/workspace/fish-speech",
+        fish_s2_log_path="/workspace/logs/fish_s2.log",
+        fish_s2_process_startup_timeout_sec=30,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -153,9 +160,12 @@ async def test_prepare_voice_orders_unload_gap_load_wait() -> None:
     async def sleep(sec: float) -> None:
         calls.append(f"sleep:{sec}")
 
-    with patch(
-        "core.gpu_sequencer.unload_ollama_model",
-        side_effect=lambda *a, **k: calls.append("unload_ollama"),
+    with (
+        patch(
+            "core.gpu_sequencer.unload_ollama_model",
+            side_effect=lambda *a, **k: calls.append("unload_ollama"),
+        ),
+        patch("core.gpu_sequencer.ensure_fish_s2_process_running", new=AsyncMock()),
     ):
         await prepare_voice_model(adapter, _settings(fish_s2_load_gap_sec=5), sleep=sleep)
 
@@ -165,7 +175,10 @@ async def test_prepare_voice_orders_unload_gap_load_wait() -> None:
 async def test_prepare_voice_uses_gap_and_timeout_from_settings() -> None:
     adapter = _managed_adapter()
     sleep = AsyncMock()
-    with patch("core.gpu_sequencer.unload_ollama_model"):
+    with (
+        patch("core.gpu_sequencer.unload_ollama_model"),
+        patch("core.gpu_sequencer.ensure_fish_s2_process_running", new=AsyncMock()),
+    ):
         await prepare_voice_model(
             adapter,
             _settings(fish_s2_load_gap_sec=3, fish_s2_load_timeout_sec=42),
@@ -175,10 +188,27 @@ async def test_prepare_voice_uses_gap_and_timeout_from_settings() -> None:
     adapter.wait_until_loaded.assert_awaited_once_with(42)
 
 
+async def test_prepare_voice_ensures_process_running_only_when_managed() -> None:
+    ensure_process = AsyncMock()
+    with (
+        patch("core.gpu_sequencer.unload_ollama_model"),
+        patch("core.gpu_sequencer.ensure_fish_s2_process_running", new=ensure_process),
+    ):
+        await prepare_voice_model(_managed_adapter(), _settings(), sleep=AsyncMock())
+    ensure_process.assert_awaited_once()
+
+    ensure_process.reset_mock()
+    await prepare_voice_model(_unmanaged_adapter(), _settings(), sleep=AsyncMock())
+    ensure_process.assert_not_called()
+
+
 async def test_prepare_voice_emits_voice_model_load_events() -> None:
     adapter = _managed_adapter()
     notify = MagicMock()
-    with patch("core.gpu_sequencer.unload_ollama_model"):
+    with (
+        patch("core.gpu_sequencer.unload_ollama_model"),
+        patch("core.gpu_sequencer.ensure_fish_s2_process_running", new=AsyncMock()),
+    ):
         await prepare_voice_model(adapter, _settings(), sleep=AsyncMock(), notify=notify)
     notify.assert_any_call(VOICE_MODEL_LOAD_STAGE, "stage_started")
     notify.assert_any_call(VOICE_MODEL_LOAD_STAGE, "stage_completed")
@@ -255,3 +285,87 @@ async def test_free_comfyui_returns_false_on_http_error_without_raising() -> Non
     with patch.dict(sys.modules, {"httpx": fake_httpx}):
         result = await free_comfyui("http://localhost:8188")
     assert result is False
+
+
+# ------------------------------------------------------------------ Fish S2 process lifecycle
+# POST /unload's torch.cuda.empty_cache() only reclaims a fraction of what
+# Fish S2 accumulates across many synthesis calls within one long-running
+# process (observed ~63GB resident vs ~20GB fresh-process baseline). The
+# worker kills the whole process after every job and respawns it on demand.
+
+def _fake_proc(returncode: int = 0) -> AsyncMock:
+    proc = AsyncMock()
+    proc.returncode = returncode
+    proc.wait = AsyncMock(return_value=returncode)
+    return proc
+
+
+async def test_stop_fish_s2_process_pkills_matching_pattern() -> None:
+    fake_exec = AsyncMock(return_value=_fake_proc(returncode=0))
+    with patch("core.gpu_sequencer.asyncio.create_subprocess_exec", new=fake_exec):
+        result = await stop_fish_s2_process()
+    assert result is True
+    args = fake_exec.call_args.args
+    assert args[0] == "pkill"
+    assert "services.fish_s2_server:app" in args
+
+
+async def test_stop_fish_s2_process_returns_false_when_nothing_to_kill() -> None:
+    # pkill exits 1 when no process matched the pattern — a normal no-op.
+    fake_exec = AsyncMock(return_value=_fake_proc(returncode=1))
+    with patch("core.gpu_sequencer.asyncio.create_subprocess_exec", new=fake_exec):
+        result = await stop_fish_s2_process()
+    assert result is False
+
+
+async def test_ensure_fish_s2_process_running_noop_when_already_reachable() -> None:
+    fake_exec = AsyncMock()
+    with (
+        patch("core.gpu_sequencer._fish_s2_reachable", new=AsyncMock(return_value=True)),
+        patch("core.gpu_sequencer.asyncio.create_subprocess_exec", new=fake_exec),
+    ):
+        await ensure_fish_s2_process_running(_settings())
+    fake_exec.assert_not_called()
+
+
+async def test_ensure_fish_s2_process_running_spawns_when_unreachable(tmp_path) -> None:
+    reachable = AsyncMock(side_effect=[False, False, True])  # unreachable → spawn → up
+    fake_exec = AsyncMock(return_value=_fake_proc())
+    sleep = AsyncMock()
+    settings = _settings(
+        fish_s2_base_url="http://localhost:8025",
+        fish_s2_venv_python="/fake/venv/bin/uvicorn",
+        fish_s2_speech_dir="/fake/fish-speech",
+        fish_s2_log_path=str(tmp_path / "fish_s2.log"),
+    )
+    with (
+        patch("core.gpu_sequencer._fish_s2_reachable", new=reachable),
+        patch("core.gpu_sequencer.asyncio.create_subprocess_exec", new=fake_exec),
+    ):
+        await ensure_fish_s2_process_running(settings, sleep=sleep)
+
+    fake_exec.assert_awaited_once()
+    args = fake_exec.call_args.args
+    assert args[0] == "/fake/venv/bin/uvicorn"
+    assert "services.fish_s2_server:app" in args
+    assert "8025" in args
+    kwargs = fake_exec.call_args.kwargs
+    assert kwargs["env"]["FISH_SPEECH_DIR"] == "/fake/fish-speech"
+    assert kwargs["cwd"]  # spawned with an explicit repo-root cwd
+    sleep.assert_awaited_once_with(1)
+
+
+async def test_ensure_fish_s2_process_running_raises_timeout_if_never_reachable(tmp_path) -> None:
+    settings = _settings(
+        fish_s2_log_path=str(tmp_path / "fish_s2.log"),
+        fish_s2_process_startup_timeout_sec=2,
+    )
+    with (
+        patch("core.gpu_sequencer._fish_s2_reachable", new=AsyncMock(return_value=False)),
+        patch("core.gpu_sequencer.asyncio.create_subprocess_exec", new=AsyncMock(return_value=_fake_proc())),
+    ):
+        try:
+            await ensure_fish_s2_process_running(settings, sleep=AsyncMock())
+            assert False, "expected TimeoutError"
+        except TimeoutError as exc:
+            assert "2s" in str(exc)

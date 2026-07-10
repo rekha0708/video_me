@@ -23,6 +23,18 @@ from services.dashboard_worker import DashboardWorker
 # Helpers
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _no_real_fish_s2_pkill(monkeypatch):
+    """_run_action's finally block calls stop_fish_s2_process() unconditionally
+    after every job — a real `pkill -f services.fish_s2_server:app`. Without
+    this, running this test file on a real GPU pod would kill an actual,
+    currently-healthy Fish S2 server serving real jobs. Autouse so no test can
+    accidentally skip it."""
+    mock = AsyncMock(return_value=True)
+    monkeypatch.setattr("services.dashboard_worker.stop_fish_s2_process", mock)
+    return mock
+
+
 def _repo(tmp_path: Path) -> DashboardRepository:
     return DashboardRepository(tmp_path / "dashboard.db")
 
@@ -318,6 +330,30 @@ async def test_worker_runs_noop_job_to_completed(tmp_path: Path) -> None:
     q = repo2.get_queue_item(action.queue_id)
     assert q is not None
     assert q.status == DashboardQueueStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_run_action_stops_fish_s2_after_every_outcome(
+    tmp_path: Path, _no_real_fish_s2_pkill,
+) -> None:
+    """stop_fish_s2_process() must fire after completion, failure, AND cancel —
+    it's in a `finally`, not just the happy path — since Fish S2's process-level
+    memory retention accumulates regardless of how a job ends."""
+    worker, repo = _make_worker(tmp_path)
+
+    # Completed
+    job_ok, _ = repo.create_queued_job(_noop_request())
+    with patch("core.workflow.run_noop_job", new=AsyncMock(return_value=_fake_core_job("completed"))):
+        action = repo.claim_next_action("w1")
+        await worker._run_action(action)
+    assert _no_real_fish_s2_pkill.await_count == 1
+
+    # Failed
+    job_fail, _ = repo.create_queued_job(_noop_request())
+    with patch("core.workflow.run_noop_job", new=AsyncMock(side_effect=RuntimeError("boom"))):
+        action = repo.claim_next_action("w1")
+        await worker._run_action(action)
+    assert _no_real_fish_s2_pkill.await_count == 2
 
 
 # ---------------------------------------------------------------------------
