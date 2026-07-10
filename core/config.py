@@ -108,6 +108,7 @@ class Settings(BaseSettings):
     whisper_model_size: str = "medium"
     whisper_device: str = "cuda"
     whisper_compute_type: str = "int8"
+    whisper_vad_filter: bool = False  # keep sung vocals/lyrics; VAD can be over-aggressive on music
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"
     render_allow_placeholder_lora: bool = False
@@ -119,6 +120,14 @@ class Settings(BaseSettings):
 
     # --- shot duration ---
     max_shot_duration_sec: float = 8.0   # ceiling per shot (words/2, clamped to [5, this])
+    transcript_min_coverage_ratio: float = 0.2  # fail only catastrophic short transcripts on real media
+
+    # --- AV sync / lip-sync policy ---
+    lipsync_failure_policy: Literal["fallback_raw", "fail"] = "fallback_raw"
+    lipsync_max_retries: int = 0
+    av_sync_duration_tolerance_sec: float = 0.35
+    av_sync_failure_policy: Literal["warn", "fail"] = "warn"
+    wan_s2v_fps: int = 16
 
     # --- human approval web UI (storyboard) ---
     approval_port: int = 8765

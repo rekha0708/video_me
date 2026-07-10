@@ -18,6 +18,8 @@ Environment variables:
                       (default: /workspace/Wan2.2-S2V-14B)
   WAN_S2V_SIZE        Area preset passed to --size (default: 1024*704)
   WAN_S2V_INFER_FRAMES Frames per generated S2V clip chunk (default: 80)
+  WAN_S2V_FPS         FPS used to derive infer_frames when request omits it
+                      (default: 16)
   WAN_S2V_TIMEOUT_SEC Subprocess timeout (default: 3600)
 """
 
@@ -40,7 +42,14 @@ WAN_DIR = Path(os.getenv("WAN_DIR", "/workspace/Wan2.2"))
 WAN_S2V_MODEL_DIR = Path(os.getenv("WAN_S2V_MODEL_DIR", "/workspace/Wan2.2-S2V-14B"))
 WAN_S2V_SIZE = os.getenv("WAN_S2V_SIZE", "1024*704")
 WAN_S2V_INFER_FRAMES = int(os.getenv("WAN_S2V_INFER_FRAMES", "80"))
+WAN_S2V_FPS = int(os.getenv("WAN_S2V_FPS", "16"))
 WAN_S2V_TIMEOUT_SEC = int(os.getenv("WAN_S2V_TIMEOUT_SEC", "3600"))
+
+
+def _infer_frames_for_duration(duration_sec: float, fps: int) -> int:
+    if duration_sec <= 0 or fps <= 0:
+        return WAN_S2V_INFER_FRAMES
+    return 4 * max(1, round(duration_sec * fps / 4)) + 1
 
 
 @asynccontextmanager
@@ -76,6 +85,8 @@ async def generate(
     audio: UploadFile = File(...),
     prompt: str = Form(...),
     duration_sec: float = Form(0.0),
+    fps: int = Form(0),
+    infer_frames: int = Form(0),
     shot_id: str = Form("shot"),
 ) -> Response:
     if not WAN_DIR.exists() or not (WAN_DIR / "generate.py").exists():
@@ -91,6 +102,12 @@ async def generate(
 
         image_path.write_bytes(await image.read())
         audio_path.write_bytes(await audio.read())
+        effective_fps = fps if fps > 0 else WAN_S2V_FPS
+        effective_infer_frames = (
+            infer_frames
+            if infer_frames > 0
+            else _infer_frames_for_duration(duration_sec, effective_fps)
+        )
 
         cmd = [
             sys.executable,
@@ -111,7 +128,7 @@ async def generate(
             "--audio",
             str(audio_path),
             "--infer_frames",
-            str(WAN_S2V_INFER_FRAMES),
+            str(effective_infer_frames),
             "--save_file",
             str(output_path),
         ]
@@ -120,9 +137,11 @@ async def generate(
         env["PYTHONPATH"] = str(WAN_DIR) + os.pathsep + env.get("PYTHONPATH", "")
 
         logger.info(
-            "Running Wan S2V for shot %s (duration %.2fs, size %s)",
+            "Running Wan S2V for shot %s (duration %.2fs, fps %s, infer_frames %s, size %s)",
             shot_id,
             duration_sec,
+            effective_fps,
+            effective_infer_frames,
             WAN_S2V_SIZE,
         )
         result = subprocess.run(

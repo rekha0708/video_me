@@ -283,14 +283,15 @@ Video-generation adapters.
 ### `adapters/generate_video/wan_s2v_adapter.py`
 
 - **class `WanS2VAdapter(GenerateVideo)`** — generate_video adapter: Wan2.2 Speech-to-Video via a thin local HTTP wrapper.
-  - `__init__(self, work_dir: Path, base_url: str='http://localhost:8031') -> None`
+  - `__init__(self, work_dir: Path, base_url: str='http://localhost:8031', fps: int=_DEFAULT_FPS) -> None`
   - `async health(self) -> HealthStatus`
   - `async estimate_cost(self, req: VideoRequest) -> CostEstimate`
   - `async run(self, req: VideoRequest) -> VideoClip`
   - `_check_inputs(self, image_path: Path, audio_path: Path, shot_id: str) -> None`
   - `_build_prompt(self, action: str, setting: str='', style_suffix: str='') -> str`
-  - `async _call_wan_s2v(self, *, image_path: Path, audio_path: Path, prompt: str, duration_sec: float, shot_id: str) -> bytes`
+  - `async _call_wan_s2v(self, *, image_path: Path, audio_path: Path, prompt: str, duration_sec: float, fps: int, shot_id: str) -> bytes`
   - `_save_clip(self, mp4_bytes: bytes, out_dir: Path) -> Path`
+- `_infer_frames_for_duration(duration_sec: float, fps: int) -> int` — Wan-style frame counts use 4n+1, matching services/wan_server.py.
 
 ### `adapters/lip_sync/__init__.py`
 
@@ -506,7 +507,7 @@ Transcription adapters.
 ### `adapters/transcribe/whisper_adapter.py`
 
 - **class `WhisperAdapter(Transcribe)`** — Transcription adapter using faster-whisper (CTranslate2 backend).
-  - `__init__(self, model_size: str='medium', device: str='cpu', compute_type: str='int8', beam_size: int=5) -> None`
+  - `__init__(self, model_size: str='medium', device: str='cpu', compute_type: str='int8', beam_size: int=5, vad_filter: bool=False) -> None`
   - `async health(self) -> HealthStatus`
   - `async estimate_cost(self, req: TranscribeRequest) -> CostEstimate`
   - `async run(self, req: TranscribeRequest) -> TranscribeResult`

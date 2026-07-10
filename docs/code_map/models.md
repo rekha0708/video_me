@@ -82,6 +82,7 @@
 - `whisper_model_size: str` = `'medium'`
 - `whisper_device: str` = `'cuda'`
 - `whisper_compute_type: str` = `'int8'`
+- `whisper_vad_filter: bool` = `False`
 - `ffmpeg_bin: str` = `'ffmpeg'`
 - `ffprobe_bin: str` = `'ffprobe'`
 - `render_allow_placeholder_lora: bool` = `False`
@@ -89,6 +90,12 @@
 - `auto_approve_plan: bool` = `False`
 - `auto_approve_transcript: bool` = `False`
 - `max_shot_duration_sec: float` = `8.0`
+- `transcript_min_coverage_ratio: float` = `0.2`
+- `lipsync_failure_policy: Literal['fallback_raw', 'fail']` = `'fallback_raw'`
+- `lipsync_max_retries: int` = `0`
+- `av_sync_duration_tolerance_sec: float` = `0.35`
+- `av_sync_failure_policy: Literal['warn', 'fail']` = `'warn'`
+- `wan_s2v_fps: int` = `16`
 - `approval_port: int` = `8765`
 - `approval_timeout_hours: float` = `24.0`
 - `image_candidates: int` = `1`
@@ -471,6 +478,10 @@ LLM-authored chart/diagram panel composited over the upper third of the shot.
 - `tts_adapter: Literal['chatterbox', 'fish_s2'] | None` = `None`
 - `image_candidates: int | None` = `Field(default=None, ge=1, le=10)`
 - `max_shot_duration_sec: float | None` = `Field(default=None, ge=2.0, le=10.0)`
+- `lipsync_failure_policy: Literal['fallback_raw', 'fail'] | None` = `None`
+- `lipsync_max_retries: int | None` = `Field(default=None, ge=0, le=5)`
+- `av_sync_duration_tolerance_sec: float | None` = `Field(default=None, ge=0.05, le=2.0)`
+- `av_sync_failure_policy: Literal['warn', 'fail'] | None` = `None`
 - `auto_approve_plan: bool | None` = `None`
 - `auto_approve_images: bool | None` = `None`
 - `auto_approve_transcript: bool | None` = `None`

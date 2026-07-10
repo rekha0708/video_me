@@ -157,6 +157,7 @@ def _artifact_flags(artifact_store: Any, work_dir: Path, job_id: str) -> dict[st
         "script": artifact_store.has(job_id, "adapt_script") or has_plan,
         "renders": has_plan
         and ((work_dir / "renders").exists() or (work_dir / "user_images").exists()),
+        "shot_attempts": (work_dir / "shot_attempts").exists(),
         "video": (work_dir / "assembled" / "final.mp4").exists(),
     }
 
@@ -837,6 +838,45 @@ def create_app(
             })
         return _base_response({"shots": shots_out})
 
+    @app.get("/api/jobs/{job_id}/shot_attempts")
+    def get_shot_attempts(job_id: str) -> dict[str, Any]:
+        import base64
+
+        if repo.get_job(job_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "JOB_NOT_FOUND", "message": f"Job not found: {job_id}", "retryable": False},
+            )
+        work_dir = Path(config.settings.data_dir) / "jobs" / job_id
+        attempt_dir = work_dir / "shot_attempts"
+        if not attempt_dir.exists():
+            return _base_response({"shots": []})
+
+        def _path_b64(value: str | None) -> str | None:
+            if not value:
+                return None
+            path = Path(value)
+            if not path.exists():
+                return None
+            return base64.urlsafe_b64encode(str(path).encode()).decode()
+
+        shots: list[dict[str, Any]] = []
+        for path in sorted(attempt_dir.glob("*.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            for run in data.get("runs") or []:
+                run["raw_clip_b64"] = _path_b64(run.get("raw_clip_snapshot_uri") or run.get("raw_clip_uri"))
+                run["selected_clip_b64"] = _path_b64(run.get("selected_clip_snapshot_uri") or run.get("selected_clip_uri"))
+                run["audio_b64"] = _path_b64(run.get("audio_snapshot_uri") or run.get("audio_uri"))
+            latest = data.get("latest") or {}
+            latest["raw_clip_b64"] = _path_b64(latest.get("raw_clip_snapshot_uri") or latest.get("raw_clip_uri"))
+            latest["selected_clip_b64"] = _path_b64(latest.get("selected_clip_snapshot_uri") or latest.get("selected_clip_uri"))
+            latest["audio_b64"] = _path_b64(latest.get("audio_snapshot_uri") or latest.get("audio_uri"))
+            shots.append(data)
+        return _base_response({"shots": shots})
+
     @app.get("/api/jobs/{job_id}/video")
     def get_video(job_id: str) -> dict[str, Any]:
         import base64
@@ -1082,7 +1122,8 @@ def create_app(
 
     _RETRYABLE_OVERRIDE_KEYS = (
         "video_adapter", "lipsync_adapter", "render_adapter", "tts_adapter", "llm_model",
-        "max_shot_duration_sec",
+        "max_shot_duration_sec", "lipsync_failure_policy", "lipsync_max_retries",
+        "av_sync_duration_tolerance_sec", "av_sync_failure_policy",
     )
 
     _RERUN_PHASES = ("transcribe", "script_plan", "render", "assemble", "all")

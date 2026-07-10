@@ -10,6 +10,14 @@ logger = logging.getLogger(__name__)
 
 _PROMPT_PREFIX = "audio-synchronized singing performance video, natural mouth articulation"
 _PROMPT_SUFFIX = "stable identity, expressive performance, high quality, cinematic lighting"
+_DEFAULT_FPS = 16
+
+
+def _infer_frames_for_duration(duration_sec: float, fps: int) -> int:
+    """Wan-style frame counts use 4n+1, matching services/wan_server.py."""
+    if duration_sec <= 0 or fps <= 0:
+        return 0
+    return 4 * max(1, round(duration_sec * fps / 4)) + 1
 
 
 class WanS2VAdapter(GenerateVideo):
@@ -29,9 +37,11 @@ class WanS2VAdapter(GenerateVideo):
         self,
         work_dir: Path,
         base_url: str = "http://localhost:8031",
+        fps: int = _DEFAULT_FPS,
     ) -> None:
         self.work_dir = work_dir
         self._base_url = base_url.rstrip("/")
+        self._fps = fps
 
     async def health(self) -> HealthStatus:
         try:
@@ -83,6 +93,7 @@ class WanS2VAdapter(GenerateVideo):
             audio_path=audio_path,
             prompt=prompt,
             duration_sec=req.duration_sec,
+            fps=self._fps,
             shot_id=req.shot_id,
         )
         clip_path = self._save_clip(mp4_bytes, out_dir)
@@ -125,9 +136,12 @@ class WanS2VAdapter(GenerateVideo):
         audio_path: Path,
         prompt: str,
         duration_sec: float,
+        fps: int,
         shot_id: str,
     ) -> bytes:
         import httpx
+
+        infer_frames = _infer_frames_for_duration(duration_sec, fps)
 
         async with httpx.AsyncClient(timeout=3600.0) as client:
             with image_path.open("rb") as img_file, audio_path.open("rb") as audio_file:
@@ -136,6 +150,8 @@ class WanS2VAdapter(GenerateVideo):
                     data={
                         "prompt": prompt,
                         "duration_sec": str(duration_sec),
+                        "fps": str(fps),
+                        "infer_frames": str(infer_frames) if infer_frames > 0 else "",
                         "shot_id": shot_id,
                     },
                     files={

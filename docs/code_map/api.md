@@ -2,7 +2,7 @@
 
 # Dashboard API routes (`services/dashboard_api.py`)
 
-40 routes.
+41 routes.
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
@@ -30,6 +30,7 @@
 | GET | `/api/jobs/{job_id}/renders` | `get_renders` |  |
 | POST | `/api/jobs/{job_id}/retry` | `retry_job` | Re-queue a failed OR completed job, optionally from a different phase. |
 | GET | `/api/jobs/{job_id}/script` | `get_script` |  |
+| GET | `/api/jobs/{job_id}/shot_attempts` | `get_shot_attempts` |  |
 | GET | `/api/jobs/{job_id}/stream` | `stream_job_events` |  |
 | GET | `/api/jobs/{job_id}/transcript` | `get_transcript` |  |
 | GET | `/api/jobs/{job_id}/video` | `get_video` |  |

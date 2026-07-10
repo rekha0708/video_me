@@ -18,6 +18,7 @@ from core.models.capabilities import (
     TranscribeResult,
     TranscriptSegment,
     VideoClip,
+    WordTimestamp,
 )
 from core.models.content import (
     ContentMetadata,
@@ -35,6 +36,7 @@ from core.workflow import (
     _apply_source_timing_to_script,
     _build_verbatim_script,
     _chunk_shot_durations,
+    _chunk_shot_durations_by_lines,
     _concat_audio,
     _fit_audio_to_duration,
     _generate_shot_video,
@@ -45,6 +47,7 @@ from core.workflow import (
     _run_plan_critique_and_approval,
     _slice_source_audio,
     _storyboard_has_source_timing,
+    _validate_transcript_coverage,
     _validate_timed_storyboard,
     run_pipeline_job,
     run_with_critique,
@@ -121,6 +124,7 @@ def test_make_adapters_uses_runtime_settings(tmp_path) -> None:
         whisper_model_size="small",
         whisper_device="cuda",
         whisper_compute_type="float16",
+        whisper_vad_filter=False,
         ffmpeg_bin="/opt/bin/ffmpeg",
         ffprobe_bin="/opt/bin/ffprobe",
         render_allow_placeholder_lora=True,
@@ -131,6 +135,7 @@ def test_make_adapters_uses_runtime_settings(tmp_path) -> None:
     assert adapters.transcribe._model_size == "small"
     assert adapters.transcribe._device == "cuda"
     assert adapters.transcribe._compute_type == "float16"
+    assert adapters.transcribe._vad_filter is False
     assert adapters.analyze._model == "llm-model"
     assert adapters.analyze._base_url == "http://llm.test/v1"
     assert adapters.adapt._api_key == "llm-key"
@@ -1668,6 +1673,7 @@ async def test_generate_shot_video_emits_shot_progress_events(tmp_path) -> None:
         "synthesize_voice", "synthesize_voice",
         "generate_video", "generate_video",
         "lip_sync", "lip_sync",
+        "lip_sync_qa",
         "shot_complete",
     ]
     assert all(e[2] == "s01" for e in events)  # shot_id on every event
@@ -1779,6 +1785,37 @@ async def test_generate_shot_video_lipsync_failure_falls_back_to_raw_clip(tmp_pa
     # Should fall back to the raw clip, not raise.
     assert synced is raw_clip
     adapters.lipsync.run.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_generate_shot_video_lipsync_failure_policy_fail_raises(tmp_path) -> None:
+    from core.workflow import RunOptions
+
+    adapters = MagicMock()
+    adapters.voice.run = AsyncMock(
+        return_value=AudioTrack(uri="/d.wav", duration_sec=1.0, speaker_id="max")
+    )
+    adapters.video.run = AsyncMock(
+        return_value=VideoClip(uri="/raw.mp4", duration_sec=3.0, shot_id="s01")
+    )
+    adapters.video.native_lipsync = False
+    adapters.video.work_dir = tmp_path / "video" / "wan"
+    adapters.lipsync.work_dir = tmp_path / "synced" / "wan"
+    adapters.lipsync.run = AsyncMock(side_effect=RuntimeError("LatentSync crashed"))
+
+    shot = _storyboard().shots[0]
+    config = _make_config(tmp_path)
+
+    with pytest.raises(RuntimeError, match="lip_sync failed"):
+        await _generate_shot_video(
+            shot,
+            _script(),
+            config.cast,
+            adapters,
+            Path(tmp_path),
+            "/img.png",
+            options=RunOptions(lipsync_failure_policy="fail"),
+        )
 
 
 @pytest.mark.asyncio
@@ -1962,6 +1999,47 @@ def test_build_verbatim_script_setting_unchanged_without_props():
     assert script.scenes[0].setting == "cozy kitchen"
 
 
+def test_build_verbatim_script_splits_long_word_timed_lyrics():
+    cast = _test_cast()
+    words = [
+        WordTimestamp(word="Twinkle", start=0.0, end=0.5),
+        WordTimestamp(word="twinkle", start=0.6, end=1.0),
+        WordTimestamp(word="little", start=1.1, end=1.5),
+        WordTimestamp(word="star.", start=1.6, end=2.2),
+        WordTimestamp(word="How", start=2.3, end=2.8),
+        WordTimestamp(word="I", start=2.9, end=3.1),
+        WordTimestamp(word="wonder", start=3.2, end=3.8),
+        WordTimestamp(word="what", start=3.9, end=4.3),
+        WordTimestamp(word="you", start=4.4, end=4.8),
+        WordTimestamp(word="are.", start=4.9, end=5.6),
+    ]
+    transcript = TranscribeResult(
+        segments=[
+            TranscriptSegment(
+                text="Twinkle twinkle little star. How I wonder what you are.",
+                start=0.0,
+                end=5.6,
+                words=words,
+            )
+        ],
+        language="en",
+        full_text="Twinkle twinkle little star. How I wonder what you are.",
+    )
+
+    script = _build_verbatim_script(
+        transcript,
+        cast,
+        max_line_duration_sec=3.0,
+    )
+
+    lines = script.scenes[0].lines
+    assert [line.text for line in lines] == [
+        "Twinkle twinkle little star.",
+        "How I wonder what you are.",
+    ]
+    assert [(line.start, line.end) for line in lines] == [(0.0, 2.2), (2.3, 5.6)]
+
+
 def test_apply_segment_timing_overrides_duration():
     script = Script(
         mode="verbatim",
@@ -2040,6 +2118,27 @@ def test_validate_timed_storyboard_accepts_full_without_source_bounds():
     _validate_timed_storyboard(_storyboard(), "full")
 
 
+def test_validate_transcript_coverage_rejects_catastrophic_short_capture():
+    transcript = TranscribeResult(
+        segments=[TranscriptSegment(text="Only intro.", start=0.0, end=1.8)],
+        language="en",
+        full_text="Only intro.",
+    )
+
+    with pytest.raises(ValueError, match="Transcription appears truncated"):
+        _validate_transcript_coverage(transcript, 60.0, min_ratio=0.2)
+
+
+def test_validate_transcript_coverage_allows_instrumental_tail():
+    transcript = TranscribeResult(
+        segments=[TranscriptSegment(text="A short sung hook.", start=0.0, end=8.0)],
+        language="en",
+        full_text="A short sung hook.",
+    )
+
+    _validate_transcript_coverage(transcript, 30.0, min_ratio=0.2)
+
+
 # ------------------------------------------------------------------ _chunk_shot_durations
 
 def test_chunk_shot_durations_even_split():
@@ -2069,6 +2168,18 @@ def test_chunk_shot_durations_exact_multiple_has_no_trailing_empty_chunk():
 
 def test_chunk_shot_durations_empty_for_zero_duration():
     assert _chunk_shot_durations(0.0, 8.0) == []
+
+
+def test_chunk_shot_durations_by_lines_prefers_sentence_boundaries():
+    script = _duration_test_script()
+    lines = [
+        (f"scene-1-line-{i}", line)
+        for i, line in enumerate(script.scenes[0].lines)
+    ]
+
+    chunks = _chunk_shot_durations_by_lines(15.0, 8.0, lines)
+
+    assert chunks == [(0.0, 3.0), (3.0, 9.0), (9.0, 15.0)]
 
 
 # ------------------------------------------------------------------ _rebuild_storyboard_by_duration
@@ -2110,14 +2221,16 @@ def test_rebuild_storyboard_preserves_total_duration():
         storyboard, script, total_duration=15.0, max_shot_duration_sec=8.0,
     )
 
-    assert [s.duration_sec for s in result.shots] == [8.0, 7.0]
+    assert [s.duration_sec for s in result.shots] == [3.0, 6.0, 6.0]
     assert sum(s.duration_sec for s in result.shots) == 15.0
     assert result.shots[0].source_start_sec == 0.0
-    assert result.shots[0].source_end_sec == 8.0
-    assert result.shots[1].source_start_sec == 8.0
-    assert result.shots[1].source_end_sec == 15.0
+    assert result.shots[0].source_end_sec == 3.0
+    assert result.shots[1].source_start_sec == 3.0
+    assert result.shots[1].source_end_sec == 9.0
+    assert result.shots[2].source_start_sec == 9.0
+    assert result.shots[2].source_end_sec == 15.0
     # Shot IDs are freshly assigned, not inherited from the original plan.
-    assert [s.shot_id for s in result.shots] == ["s01", "s02"]
+    assert [s.shot_id for s in result.shots] == ["s01", "s02", "s03"]
 
 
 def test_rebuild_storyboard_borrows_camera_action_from_best_overlapping_shot():
@@ -2144,10 +2257,10 @@ def test_rebuild_storyboard_borrows_camera_action_from_best_overlapping_shot():
     )
 
     assert len(result.shots) == 3
-    # Chunk 0-5s overlaps original shot s01 (0-3s) by 3s vs s02 (3-15s) by 2s.
+    # Chunk 0-3s overlaps original shot s01 exactly.
     assert result.shots[0].camera == "close-up"
     assert result.shots[0].action == "greets the viewer excitedly"
-    # Chunks 5-10s and 10-15s are fully inside original shot s02's 3-15s span.
+    # Chunks 3-9s and 9-15s are fully inside original shot s02's 3-15s span.
     assert result.shots[1].camera == "wide shot"
     assert result.shots[2].camera == "wide shot"
 
@@ -2170,8 +2283,7 @@ def test_rebuild_storyboard_dialogue_refs_match_chunk_time_range():
         storyboard, script, total_duration=15.0, max_shot_duration_sec=5.0,
     )
 
-    # line-0 midpoint=1.5 (chunk0 0-5), line-1 midpoint=6.0 (chunk1 5-10),
-    # line-2 midpoint=12.0 (chunk2 10-15).
+    # Boundaries align to line ends: 0-3, 3-9, 9-15.
     assert result.shots[0].dialogue_line_refs == ["scene-1-line-0"]
     assert result.shots[1].dialogue_line_refs == ["scene-1-line-1"]
     assert result.shots[2].dialogue_line_refs == ["scene-1-line-2"]
@@ -2213,8 +2325,9 @@ def test_rebuild_storyboard_by_duration_handles_invalid_old_refs():
     )
 
     assert _storyboard_has_source_timing(result)
-    assert result.shots[0].dialogue_line_refs == ["scene-1-line-0", "scene-1-line-1"]
-    assert result.shots[1].dialogue_line_refs == ["scene-1-line-2"]
+    assert result.shots[0].dialogue_line_refs == ["scene-1-line-0"]
+    assert result.shots[1].dialogue_line_refs == ["scene-1-line-1"]
+    assert result.shots[2].dialogue_line_refs == ["scene-1-line-2"]
     # New refs are valid against the source-timed script.
     for shot in result.shots:
         for ref in shot.dialogue_line_refs:
@@ -2247,8 +2360,8 @@ def test_retime_source_audio_plan_builds_verbatim_timed_artifacts():
 
     assert script.mode == "verbatim"
     assert _storyboard_has_source_timing(storyboard)
-    assert [s.source_start_sec for s in storyboard.shots] == [0.0, 4.0]
-    assert [s.source_end_sec for s in storyboard.shots] == [4.0, 7.0]
+    assert [s.source_start_sec for s in storyboard.shots] == [0.0, 3.5]
+    assert [s.source_end_sec for s in storyboard.shots] == [3.5, 7.0]
     for shot in storyboard.shots:
         for ref in shot.dialogue_line_refs:
             assert _resolve_line(ref, script).text

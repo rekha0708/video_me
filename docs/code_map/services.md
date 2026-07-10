@@ -193,9 +193,10 @@ MuseTalk lip-sync HTTP service wrapper.
 
 Wan2.2 Speech-to-Video HTTP service wrapper.
 
+- `_infer_frames_for_duration(duration_sec: float, fps: int) -> int`
 - `async lifespan(app: FastAPI)`
 - `health() -> JSONResponse`
-- `async generate(image: UploadFile=File(...), audio: UploadFile=File(...), prompt: str=Form(...), duration_sec: float=Form(0.0), shot_id: str=Form('shot')) -> Response`
+- `async generate(image: UploadFile=File(...), audio: UploadFile=File(...), prompt: str=Form(...), duration_sec: float=Form(0.0), fps: int=Form(0), infer_frames: int=Form(0), shot_id: str=Form('shot')) -> Response`
 
 ### `services/wan_server.py`
 

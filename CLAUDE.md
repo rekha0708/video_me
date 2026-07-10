@@ -11,32 +11,34 @@ content are blocked, not silently passed.
 
 ---
 
-## Current state (as of 2026-07-04)
+## Current state (as of 2026-07-10)
 
-**Stack: Flux 2.0 Dev image via musubi-tuner (local) + LTX-2.3 22B distilled video via ComfyUI (native lip-sync) + Fish Audio S2 (TTS). Plan critique loop + human approval gate added. Dashboard UI with story ingest, job creation page, GPU sequencing.**
+**Stack: Flux 2.0 Dev image via musubi-tuner (local subprocess) + Wan2.2-S2V video (audio-conditioned native lip-sync) + Fish Audio S2 (TTS). Plan critique loop + human approval gates + dashboard UI are in place.**
 
-**Default adapter stack is code-enforced in `core/config.py`: `musubi_flux` (image) / `ltx` (video) / `fish_s2` (TTS).** The image stage runs **musubi-tuner** as a subprocess — ComfyUI cannot load Flux 2.0 locally (no Mistral 3 encoder node; the `Flux2*` ComfyUI nodes are paid BFL cloud API), so `comfyui_flux` is a fallback, not the default. ComfyUI (8188) is still required for the **LTX-2.3 video** stage.
+**Default adapter stack is code-enforced in `core/config.py`: `musubi_flux` (image) / `wan_s2v` (video) / `fish_s2` (TTS).** The image stage runs **musubi-tuner** as a subprocess — ComfyUI cannot load Flux 2.0 locally (no Mistral 3 encoder node; the `Flux2*` ComfyUI nodes are paid BFL cloud API), so `comfyui_flux` is a fallback. Wan S2V runs behind a thin local HTTP wrapper on port 8031 and receives the per-shot image + audio directly; the separate lip-sync repair stage is skipped on this default path.
 
-**Test status:** 539 tests (verified 2026-07-08). Local Mac/py3.13 venv: **533 pass / 6 skipped** (tests needing optional deps — fastapi, matplotlib — skip when not installed). Exact current count: `python -m pytest --collect-only -q`.
+**Test status:** full local suite verified 2026-07-10: **667 passed / 30 skipped**. Exact current count: `python -m pytest --collect-only -q`.
 
 - **LLM**: qwen3.6:35b (MoE 35B). Thinking mode disabled via `extra_body={"think": False}` + no `response_format`. `max_tokens=16384`. `json_repair` fallback. Used for all LLM stages including plan critique.
 - **Image generation**: Flux 2.0 Dev (32B, Nov 2025) + Flux LoRA, run **locally via musubi-tuner** (replaces A1111 + SD 1.5). Default adapter: `MusubiFluxAdapter` (subprocess, no server). `ComfyUIFluxAdapter` (port 8188) is a fallback but ComfyUI can't load Flux 2.0 locally — it needs the paid BFL cloud API / a custom Mistral 3 node.
-- **Video generation**: LTX-2.3 22B distilled v1.1 via ComfyUI (replaces Wan 2.7 resident server). Native audio-video sync in one diffusion pass — MuseTalk stage skipped. Adapter: `LtxAdapter` (port 8188). 8-step distilled: ~1 min/shot (was ~21 min with Wan).
+- **Video generation**: Wan2.2-S2V 14B via `WanS2VAdapter` + `services/wan_s2v_server.py` (port 8031). It receives the approved still + the exact shot audio and derives `infer_frames` from shot duration using `VIDEO_ME_WAN_S2V_FPS` (default 16) with Wan-style `4n+1` frame counts. The service invokes Wan's `generate.py` as a subprocess per clip with `--offload_model True`; there is no long-resident S2V model endpoint.
 - **Plan critique loop**: after `plan_shots`, `LlmPlanCritiqueAdapter` scores 5 dimensions (character_fit, scene_achievability, pacing, kids_safety, visual_clarity). All must be ≥ 0.75 to pass. Up to 3 re-plan iterations with specific fix notes injected.
 - **Human approval gate (storyboard)**: after critique passes, web UI at `http://localhost:8765` shows shot table + score bars. Approve → render. Reject + notes → one more re-plan cycle. 2nd rejection → job FAILED. CI bypass: `VIDEO_ME_AUTO_APPROVE_PLAN=true`.
 - **Image candidate generation**: render_character generates N images per shot (default 1 — operator decision 2026-07-07: Flux candidates are near-identical, so extra candidates waste GPU; raise via `VIDEO_ME_IMAGE_CANDIDATES` if variety is needed). `Shot.action` is included in the render prompt so each still shows the shot's pose/angle (LTX still animates the motion). Phase A batches all pending shots into one `run_many()` call per LoRA (one 64 GB model load instead of one per candidate) and dedups identically specified shots (same member/setting/camera/action → PNGs copied, not re-rendered). With a single candidate the VLM critique is skipped (auto-pick, `origin="single"`) — the human image gate stays the quality check. `VlmImageCritiqueAdapter` (qwen3.6:35b, natively multimodal) scores all candidates on 5 dimensions and picks the best. Self-learning: each pick + human override is appended to `assets/kids_duo/critique_feedback.jsonl`; last 5 entries are injected as few-shot context on the next run.
 - **Human approval gate (images)**: after all shots are rendered and critiqued, web UI at `http://localhost:8765 (shared port)` shows a grid of winner images. Operator can override any pick, then clicks Approve. Overrides are written back to the feedback log. CI bypass: `VIDEO_ME_AUTO_APPROVE_IMAGES=true`.
-- **Single VLM for everything**: qwen3.6:35b (MoE 35B, natively multimodal via early-fusion training, MMMU 81.7) handles ALL stages — text LLM + image critique + video frame critique. Drops qwen2.5-vl:32b entirely. VRAM: ~30 GB (qwen3.6:35b) + ~44 GB (LTX-2.3) + ~20 GB (Flux 2.0) + ~20 GB (Fish S2) = ~114 GB peak on G200 (143 GB). 29 GB headroom.
+- **Single VLM for everything**: qwen3.6:35b handles text LLM + image critique + video frame critique. Drops qwen2.5-vl:32b entirely. The workflow unloads Ollama before GPU-heavy render/video/voice phases that opt into managed VRAM.
 - **TTS**: Fish Audio S2 (`FishS2TtsAdapter`, port 8025). Supports English and Hindi (80+ languages, voice cloning from reference WAV). Replaces Chatterbox TTS. Fallback: `VIDEO_ME_TTS_ADAPTER=chatterbox`.
 - **Language selection**: `VIDEO_ME_TARGET_LANGUAGE=en|hi|both`. "both" runs the full pipeline twice (shared images, separate dialogue/audio). Script dialogue is translated by the LLM when language ≠ "en".
-- **Shot duration**: 5–8s (2 words/sec, floor 5s, ceiling 8s).
-- **Resume**: `--resume-job JOB_ID` skips completed stages/shots. LTX completion marker: `clip.mp4`; Wan fallback: `synced.mp4`.
-- **Fallback adapters**: `VIDEO_ME_RENDER_ADAPTER=a1111` → A1111 + SD 1.5. `VIDEO_ME_VIDEO_ADAPTER=wan` → Wan 2.2 + MuseTalk. `VIDEO_ME_TTS_ADAPTER=chatterbox` → Chatterbox TTS.
+- **Source-audio chunking**: when a real source audio track is present, the workflow uses faster-whisper word timestamps and deterministic sentence/lyric boundary splitting to make many small shots instead of forcing every shot toward 8 seconds. No LLM is used for the boundary choice. `VIDEO_ME_WHISPER_VAD_FILTER=false` is the default so sung lyrics are not clipped by over-aggressive VAD; `VIDEO_ME_TRANSCRIPT_MIN_COVERAGE_RATIO` fails only catastrophic short transcripts.
+- **Shot duration**: max planned shot duration defaults to 8s (`VIDEO_ME_MAX_SHOT_DURATION_SEC`), but source-audio jobs may split more finely at sentence/lyric boundaries.
+- **AV/lip-sync QA**: non-native video paths (`VIDEO_ME_VIDEO_ADAPTER=wan`) keep raw video, every LatentSync/MuseTalk attempt, retry metadata, duration deltas, and selected/fallback reason in the dashboard's shot video card. Default failure policy is `fallback_raw`; set `VIDEO_ME_LIPSYNC_FAILURE_POLICY=fail` or `VIDEO_ME_AV_SYNC_FAILURE_POLICY=fail` to hard-fail.
+- **Resume**: `--resume-job JOB_ID` skips completed stages/shots. Default Wan S2V completion marker: `clip.mp4`; Wan I2V + repair marker: `synced.mp4`.
+- **Fallback adapters**: `VIDEO_ME_RENDER_ADAPTER=a1111` → A1111 + SD 1.5. `VIDEO_ME_VIDEO_ADAPTER=wan` → Wan 2.2 I2V + LatentSync by default (`VIDEO_ME_LIPSYNC_ADAPTER=latentsync`; MuseTalk remains fallback). `VIDEO_ME_VIDEO_ADAPTER=ltx` → legacy LTX via ComfyUI. `VIDEO_ME_TTS_ADAPTER=chatterbox` → Chatterbox TTS.
 - **Track B LoRAs**: existing SD 1.5 weights won't work with Flux 2.0 — retrain with `flux_train_network.py` (kohya_ss config already updated).
 - **Per-job cast selection**: each job picks its cast from a dropdown in `/jobs/new`. `GET /api/casts` scans `config/casts/*.yaml`. Worker loads the selected cast via `_config_for_job()`. Default cast: `kids_duo` (env: `VIDEO_ME_CAST_PATH`). `Cast.members` enforces min_length=1 — 0 members gives a clear `ValidationError`. Adapt-script scene guide adjusts for 1/2/3+ member casts.
 - **Dashboard UI**: web UI at `http://localhost:8080` (uvicorn). Job list, detail, health, chat. Dedicated `/jobs/new` page with cast selector + 4 input modes (Video URL / Local file / Story / Story + Images). Per-job "Approval gates" checkboxes set `overrides.auto_approve_plan` / `auto_approve_images` / `auto_approve_transcript` so long unattended runs skip the human gates (dashboard approval adapters and the transcript review gate short-circuit and record an `approval_granted` event). Source kinds: `url`, `upload`, `file`, `story`, `story_images`. Story-kind jobs restricted to `transcribe` or `all` phases. Character image upload via `POST /api/uploads/character-image`.
 - **Story ingest**: `adapters/story_ingest/` — structured parser (`start-end: text`) + LLM segmenter fallback. `_seed_story_job` in worker creates fake TranscribeResult from story text. Story+images mode skips Phase A render; user images go through approval with `origin="user"` label.
-- **GPU sequencer**: `core/gpu_sequencer.py` — coordinates VRAM between Wan adapter and other GPU models. Wan adapter uses deferred loading via `/load`/`/unload` endpoints (409 = busy). Workflow hooks free VRAM before Phase A and between approval and Phase B.
+- **GPU/model lifecycle**: `core/gpu_sequencer.py` coordinates only adapters that declare `managed_vram=True`. Wan I2V uses deferred `/load`/`/unload`; Fish S2 is loaded on demand and the dashboard worker kills the process after every job because its allocator retained VRAM across calls. Wan S2V and LatentSync are subprocess-per-request wrappers, so they release their model process after each clip/repair instead of using resident `/load` endpoints. The workflow unloads Fish before Wan S2V or lip-sync repair when the adapter marks `requires_voice_unloaded=True`.
 
 | Track / Phase | Status | Blocker |
 |---|---|---|
@@ -49,7 +51,7 @@ content are blocked, not silently passed.
 | Dashboard UI + story ingest | ✅ COMPLETE (code) | — |
 | GPU sequencer (Wan VRAM) | ✅ COMPLETE (code) | — |
 | Fish Audio S2 TTS (EN + HI) | ✅ COMPLETE (code) | Fish S2 server setup needed |
-| Track D — GPU services | ⚠️ Manual start required | Ollama ✅, ComfyUI needed, Fish Audio S2 needed |
+| Track D — GPU services | ⚠️ Manual start required | Run `scripts/setup_gpu.sh`, then `scripts/start_services.sh`; defaults require Ollama, Wan S2V, Fish S2 |
 | Track E — Compliance sign-off | ❌ PENDING | Operator hasn't signed off |
 
 Voice reference files are gTTS bootstrap WAVs — acceptable for pipeline runs; replace with recorded
@@ -108,8 +110,8 @@ check_rights()  ◄─── BLOCKS job (status=BLOCKED) if rights_cleared=False
     │
     ▼ (per shot — Phase B, uses approved image)
     ├── [synthesize_voice]   Fish Audio S2 API → AudioTrack (WAV, EN or HI)
-    ├── [generate_video]     LTX-Video 2.3 via ComfyUI → VideoClip (MP4, native lip-sync)  [default]
-    └── [lip_sync]           MuseTalk — SKIPPED when VIDEO_ADAPTER=ltx (default)
+    ├── [generate_video]     Wan2.2-S2V → VideoClip (MP4, native audio-conditioned mouth motion) [default]
+    └── [lip_sync]           LatentSync/MuseTalk repair — SKIPPED when VIDEO_ADAPTER=wan_s2v
     │
     ▼
 [assemble_video]     ffmpeg concat + scale 1080×1920 + captions + disclosure
@@ -205,7 +207,7 @@ the SD prompt. Keep it false for real runs; strict readiness fails placeholder L
 
 ---
 
-## Venv strategy (as of 2026-06-25)
+## Venv strategy (as of 2026-07-10)
 
 Each GPU service uses an **isolated venv that inherits system torch 2.8.0+cu128** via
 `python3 -m venv --system-site-packages`. This avoids cross-service dependency conflicts.
@@ -213,10 +215,13 @@ Each GPU service uses an **isolated venv that inherits system torch 2.8.0+cu128*
 | Venv | Purpose | Key extra packages |
 |---|---|---|
 | `/workspace/video_me/.venv` | Pipeline orchestration + tests (no heavy ML) | httpx, faster-whisper, pydantic-settings |
+| `/workspace/.venv_musubi` | musubi-tuner Flux 2.0 image subprocess | musubi-tuner + Flux deps |
+| `/workspace/.venv_fish_s2` | Fish Audio S2 server (port 8025) | Fish Speech deps, fastapi, uvicorn |
+| `/workspace/.venv_wan` | Wan2.2 S2V server (port 8031) and optional Wan I2V server (port 8030) | decord, diffusers, transformers, accelerate, peft, librosa, dashscope, rotary-embedding-torch, python-multipart |
+| `/workspace/.venv_latentsync` | LatentSync lip-sync repair server (port 8041, opt-in fallback) | LatentSync requirements, fastapi, uvicorn |
+| `/workspace/.venv_chatterbox` | Chatterbox TTS server (port 8020, opt-in fallback) | chatterbox-tts, torchaudio==2.8.0+cu128, resemble-perth |
+| `/workspace/.venv_musetalk` | MuseTalk lip-sync server (port 8040) | opencv, librosa, einops, diffusers, mmengine, mmpose==1.3.2, mmcv==2.1.0 (built from source), face-alignment |
 | `/workspace/venv` | sd-scripts LoRA training | sd-scripts deps |
-| `/workspace/.venv_chatterbox` | Chatterbox TTS server (port 8020) | chatterbox-tts, torchaudio==2.8.0+cu128, resemble-perth |
-| `/workspace/.venv_wan` | Wan2.2 i2v server (port 8030) | decord, diffusers, transformers, accelerate, peft, librosa, moviepy, dashscope, rotary-embedding-torch, python-multipart |
-| `/workspace/.venv_musetalk` | MuseTalk lip-sync server (port 8040) | opencv, librosa, einops, diffusers, mmengine, mmpose==1.3.2, mmcv==2.2.0 (built from source), face-alignment |
 | AUTOMATIC1111 self-managed venv | SD rendering (port 7860) | leave untouched |
 
 **Chatterbox fix note**: `resemble-perth` requires `pkg_resources` from setuptools<81.
@@ -242,19 +247,23 @@ heavy ML packages into the project `.venv` — keep it lightweight for fast CI.
 
 ## Track D — Services required before pipeline runs
 
-All five services must be healthy before `run_pipeline_job()` is called. The executor calls
-`capability.health()` before each stage.
+Required services are adapter-dependent. The executor calls `capability.health()` before each
+stage, and `scripts/check_runtime_readiness.py` builds its service list from `core.config.Settings`.
+`scripts/start_services.sh` also reads `.env` and starts/waits only for the selected adapter stack
+(plus Ollama), so fallback services do not load just because their venv happens to exist.
 
 | Service | Default URL | Purpose | Required? |
 |---|---|---|---|
 | Ollama | `http://localhost:11434` | LLM (analyze, adapt, plan, critique_plan) + VLM critique | ✅ Always |
 | musubi-tuner | (subprocess, no port) | Flux 2.0 Dev image gen (render_character) | ✅ Default |
-| ComfyUI | `http://localhost:8188` | LTX-2.3 22B video gen (generate_video) | ✅ Default |
+| Wan2.2 S2V | `http://localhost:8031` | Audio-conditioned video generation with native mouth motion | ✅ Default (`VIDEO_ME_VIDEO_ADAPTER=wan_s2v`) |
 | Fish Audio S2 | `http://localhost:8025` | TTS (EN + HI) for synthesize_voice | ✅ Default |
-| Chatterbox TTS | `http://localhost:8020` | TTS (EN only, fallback) | ⚠️ `TTS_ADAPTER=chatterbox` only |
-| AUTOMATIC1111 | `http://localhost:7860` | SD 1.5 render_character fallback | ⚠️ `RENDER_ADAPTER=a1111` only |
-| Wan 2.2 | `http://localhost:8030` | Image-to-video fallback | ⚠️ `VIDEO_ADAPTER=wan` only |
-| MuseTalk | `http://localhost:8040` | Lip sync (Wan path only) | ⚠️ `VIDEO_ADAPTER=wan` only |
+| ComfyUI | `http://localhost:8188` | legacy LTX video gen / ComfyUI Flux fallback | ⚠️ `VIDEO_ME_VIDEO_ADAPTER=ltx` or `VIDEO_ME_RENDER_ADAPTER=comfyui_flux` |
+| Chatterbox TTS | `http://localhost:8020` | TTS (EN only, fallback) | ⚠️ `VIDEO_ME_TTS_ADAPTER=chatterbox` only |
+| AUTOMATIC1111 | `http://localhost:7860` | SD 1.5 render_character fallback | ⚠️ `VIDEO_ME_RENDER_ADAPTER=a1111` only |
+| Wan 2.2 I2V | `http://localhost:8030` | Image-to-video fallback | ⚠️ `VIDEO_ME_VIDEO_ADAPTER=wan` only |
+| LatentSync | `http://localhost:8041` | preferred lip-sync repair for Wan I2V | ⚠️ `VIDEO_ME_VIDEO_ADAPTER=wan` + `VIDEO_ME_LIPSYNC_ADAPTER=latentsync` |
+| MuseTalk | `http://localhost:8040` | legacy lip-sync repair fallback | ⚠️ `VIDEO_ME_VIDEO_ADAPTER=wan` + `VIDEO_ME_LIPSYNC_ADAPTER=musetalk` |
 
 Quick health check:
 ```bash
@@ -265,6 +274,17 @@ GPU-machine setup helper:
 ```bash
 bash scripts/setup_gpu.sh
 ```
+
+Default `setup_gpu.sh` installs the default stack: musubi-tuner, Fish S2, Wan2.2 S2V, Ollama,
+and the lightweight project venv. Wan I2V, LatentSync, MuseTalk, Chatterbox, and A1111 are opt-in
+via `--with-wan-i2v`, `--with-latentsync`, `--with-musetalk`, `--with-chatterbox`, and
+`--with-a1111` (or the back-compat `--with-wan` bundle).
+
+Lifecycle policy:
+- Managed resident adapters load only at their phase boundary: Wan I2V (`/load`/`/unload`) and Fish S2.
+- After every dashboard job outcome, `services/dashboard_worker.py` kills Fish S2 and calls Wan I2V `/unload`.
+- Before a Wan S2V or LatentSync/MuseTalk call, the workflow unloads Fish when the selected adapter declares `requires_voice_unloaded=True`.
+- Wan S2V and LatentSync do not use resident `/load` endpoints; their wrappers spawn one subprocess per clip/repair, and that process exit is the release point.
 
 Local/mock placeholder check without services:
 ```bash

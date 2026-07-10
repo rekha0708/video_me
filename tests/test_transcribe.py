@@ -87,6 +87,16 @@ def test_transcribe_builds_segments_and_full_text() -> None:
     assert result.full_text == "One two three. Four five."
 
 
+def test_transcribe_passes_configured_vad_filter() -> None:
+    adapter = _adapter(vad_filter=False)
+    adapter._model = _make_model_mock([])
+
+    adapter._transcribe("song.wav")
+
+    kwargs = adapter._model.transcribe.call_args.kwargs
+    assert kwargs["vad_filter"] is False
+
+
 def test_transcribe_filters_blank_words() -> None:
     adapter = _adapter()
     segs = [

@@ -90,6 +90,19 @@ async def test_run_posts_image_and_audio_to_generate(tmp_path: Path) -> None:
     assert "audio" in call.kwargs["files"]
 
 
+async def test_run_sends_fps_and_infer_frames(tmp_path: Path) -> None:
+    adapter = WanS2VAdapter(work_dir=tmp_path / "video" / "wan_s2v", fps=16)
+    req = _request(tmp_path, duration_sec=5.0)
+    fake_httpx, mock_client = _mock_httpx()
+
+    with patch.dict(sys.modules, {"httpx": fake_httpx}):
+        await adapter.run(req)
+
+    data = mock_client.post.call_args.kwargs["data"]
+    assert data["fps"] == "16"
+    assert data["infer_frames"] == "81"
+
+
 async def test_health_down_when_service_unreachable(tmp_path: Path) -> None:
     fake_httpx, mock_client = _mock_httpx()
     mock_client.get = AsyncMock(side_effect=ConnectionError("refused"))

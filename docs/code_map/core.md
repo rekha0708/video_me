@@ -271,15 +271,20 @@ Shared Pydantic models for orchestration.
 - `async _run_image_approval_gate(shots: list[Shot], critique_results: list['ImageCritiqueResult'], adapters: _Adapters, cast_id: str) -> list[str]` — Show the image approval grid UI; return approved URI per shot.
 - `_notify_shot(stage_hook: Callable[..., None] | None, stage_name: str, event_type: str, *, shot_id: str, label: str, detail: str) -> None` — Emit a stage_hook event carrying shot progress (e.g. "Shot s01 (1/14): synthesizing voice").
 - `_existing_audio_for_shot(work_dir: Path, shot: Shot, speaker_id: str, render_mode: str) -> str | None`
+- `_snapshot_attempt_file(src_uri: str, out_dir: Path, filename: str) -> str | None`
+- `async _write_shot_attempt_audit(*, work_dir: Path, shot: Shot, render_mode: str, native_lipsync: bool, raw_clip: VideoClip, selected_clip: VideoClip, audio_track: AudioTrack, ffprobe_bin: str, tolerance_sec: float, lipsync_attempts: list[dict[str, Any]], lipsync_failure_policy: str) -> dict[str, Any]`
 - `async _generate_shot_video(shot: Shot, script: Script, cast: Cast, adapters: _Adapters, work_dir: Path, image_uri: str, options: RunOptions | None=None, *, shot_index: int=1, total_shots: int=1, render_mode: str='full', source_audio_uri: str | None=None) -> tuple[VideoClip, AudioTrack]` — Phase B: synthesize voice + generate video for one shot using the approved image.
 - `async _concat_audio(tracks: list[AudioTrack], work_dir: Path, ffmpeg_bin: str='ffmpeg') -> AudioTrack` — Concatenate per-shot WAV files into one combined dialogue track.
-- `_build_verbatim_script(transcribe_result, cast: Cast, visual_context: 'VisualContext | None'=None, rights_cleared: bool=True) -> Script` — Build a Script directly from transcript segments (source_audio mode).
+- `_segment_to_verbatim_lines(segment, *, speaker: str, max_line_duration_sec: float | None=None) -> list['Line']` — Turn one Whisper segment into one or more timed script lines.
+- `_build_verbatim_script(transcribe_result, cast: Cast, visual_context: 'VisualContext | None'=None, rights_cleared: bool=True, max_line_duration_sec: float | None=None) -> Script` — Build a Script directly from transcript segments (source_audio mode).
 - `_flatten_script_lines(script: Script) -> list[tuple[int, int, Any]]`
 - `_apply_source_timing_to_script(script: Script, transcribe_result, *, total_duration: float | None=None) -> Script` — Attach source-video timing to an adapted script for re_voice mode.
 - `_apply_segment_timing_to_storyboard(storyboard: Storyboard, script: Script) -> Storyboard` — Override shot durations with source segment timing (source_audio/re_voice).
 - `_validate_timed_storyboard(storyboard: Storyboard, render_mode: str) -> None` — Fail fast when a timed mode is asked to render an untimed plan.
 - `_storyboard_has_source_timing(storyboard: Storyboard) -> bool`
+- `_validate_transcript_coverage(transcribe_result, source_duration_sec: float, *, min_ratio: float=0.2) -> None` — Catch catastrophic partial transcripts before source-timed planning.
 - `_chunk_shot_durations(total_duration: float, max_shot_duration_sec: float) -> list[tuple[float, float]]` — Greedy-fill the source video's total duration into ≤max_shot_duration_sec
+- `_chunk_shot_durations_by_lines(total_duration: float, max_shot_duration_sec: float, timed_lines: list[tuple[str, Any]]) -> list[tuple[float, float]]` — Prefer transcript/script line ends over fixed-size duration cuts.
 - `_rebuild_storyboard_by_duration(storyboard: Storyboard, script: Script, total_duration: float, max_shot_duration_sec: float) -> Storyboard` — Replace the LLM-planned shot count/boundaries with deterministic
 - `_retime_source_audio_plan(storyboard: Storyboard, transcribe_result, fetch_result, cast: Cast, *, visual_context: 'VisualContext | None'=None, rights_cleared: bool=True, max_shot_duration_sec: float=8.0) -> tuple[Script, Storyboard]` — Build a verbatim script and source-timed storyboard for source_audio.
 - `async _slice_source_audio(source_audio_uri: str, start: float, end: float, out_path: Path, ffmpeg_bin: str='ffmpeg') -> AudioTrack` — Extract an audio segment from the source audio file.

@@ -105,6 +105,10 @@ class DashboardJobOverrides(BaseModel):
     tts_adapter: Literal["chatterbox", "fish_s2"] | None = None
     image_candidates: int | None = Field(default=None, ge=1, le=10)
     max_shot_duration_sec: float | None = Field(default=None, ge=2.0, le=10.0)
+    lipsync_failure_policy: Literal["fallback_raw", "fail"] | None = None
+    lipsync_max_retries: int | None = Field(default=None, ge=0, le=5)
+    av_sync_duration_tolerance_sec: float | None = Field(default=None, ge=0.05, le=2.0)
+    av_sync_failure_policy: Literal["warn", "fail"] | None = None
     auto_approve_plan: bool | None = None
     auto_approve_images: bool | None = None
     auto_approve_transcript: bool | None = None

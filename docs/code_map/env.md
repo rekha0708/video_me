@@ -63,6 +63,7 @@
 | `VIDEO_ME_WHISPER_MODEL_SIZE` | `str` | `'medium'` |
 | `VIDEO_ME_WHISPER_DEVICE` | `str` | `'cuda'` |
 | `VIDEO_ME_WHISPER_COMPUTE_TYPE` | `str` | `'int8'` |
+| `VIDEO_ME_WHISPER_VAD_FILTER` | `bool` | `False` |
 | `VIDEO_ME_FFMPEG_BIN` | `str` | `'ffmpeg'` |
 | `VIDEO_ME_FFPROBE_BIN` | `str` | `'ffprobe'` |
 | `VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA` | `bool` | `False` |
@@ -70,6 +71,12 @@
 | `VIDEO_ME_AUTO_APPROVE_PLAN` | `bool` | `False` |
 | `VIDEO_ME_AUTO_APPROVE_TRANSCRIPT` | `bool` | `False` |
 | `VIDEO_ME_MAX_SHOT_DURATION_SEC` | `float` | `8.0` |
+| `VIDEO_ME_TRANSCRIPT_MIN_COVERAGE_RATIO` | `float` | `0.2` |
+| `VIDEO_ME_LIPSYNC_FAILURE_POLICY` | `Literal['fallback_raw', 'fail']` | `'fallback_raw'` |
+| `VIDEO_ME_LIPSYNC_MAX_RETRIES` | `int` | `0` |
+| `VIDEO_ME_AV_SYNC_DURATION_TOLERANCE_SEC` | `float` | `0.35` |
+| `VIDEO_ME_AV_SYNC_FAILURE_POLICY` | `Literal['warn', 'fail']` | `'warn'` |
+| `VIDEO_ME_WAN_S2V_FPS` | `int` | `16` |
 | `VIDEO_ME_APPROVAL_PORT` | `int` | `8765` |
 | `VIDEO_ME_APPROVAL_TIMEOUT_HOURS` | `float` | `24.0` |
 | `VIDEO_ME_IMAGE_CANDIDATES` | `int` | `1` |

@@ -308,6 +308,17 @@
 </div>
 {% endif %}
 
+{% if artifact_flags.shot_attempts %}
+<div class="card" id="shot_attempts-card">
+  <div class="flex justify-between items-center" style="margin-bottom:10px">
+    <div class="card-title mt-0">Shot Video Attempts</div>
+    <button class="btn btn-sm" style="font-size:12px;padding:3px 10px"
+            onclick="toggleArtifactCard('shot_attempts', this)">Show</button>
+  </div>
+  <div id="shot_attempts-body" style="display:none"></div>
+</div>
+{% endif %}
+
 {% if artifact_flags.video %}
 <div class="card" id="video-card">
   <div class="card-title mt-0" style="margin-bottom:10px">Final Video</div>
@@ -470,6 +481,44 @@ const ARTIFACT_RENDERERS = {
           <div class="candidates-grid">${cards}</div>
           ${sh.reasoning ? `<div class="text-muted" style="font-size:12px;margin-top:6px">${sh.reasoning}</div>` : ''}
         </div>`;
+    }).join('');
+  },
+  shot_attempts: (data) => {
+    const shots = data.shots;
+    if (!shots?.length) return '<p class="text-muted" style="font-size:13px;padding:6px 0">No shot attempts recorded yet.</p>';
+    const media = (label, b64, type) => b64 ? `
+      <div style="min-width:180px;max-width:260px">
+        <div class="text-muted" style="font-size:12px;margin-bottom:4px">${label}</div>
+        ${type === 'audio'
+          ? `<audio controls preload="metadata" style="width:100%"><source src="/img/${b64}"></audio>`
+          : `<video controls preload="metadata" style="width:100%;border-radius:6px"><source src="/img/${b64}" type="video/mp4"></video>`}
+      </div>` : '';
+    return shots.map(sh => {
+      const runs = (sh.runs || []).map(run => {
+        const qaClass = run.qa_status === 'fail' ? 'badge-error' : (run.qa_status === 'pass' ? 'badge-success' : 'badge-warning');
+        const lipRows = (run.lipsync_attempts || []).map(a =>
+          `<tr><td class="td-mono">${a.attempt ?? ''}</td><td>${a.status || ''}</td><td class="td-muted">${a.reason || a.error || a.clip_uri || ''}</td></tr>`
+        ).join('');
+        return `
+          <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px">
+            <div class="flex items-center gap-8" style="margin-bottom:8px;flex-wrap:wrap">
+              <span class="td-mono">Attempt ${run.attempt_index}</span>
+              <span class="badge ${qaClass}" style="font-size:10px">${run.qa_status || 'unknown'}</span>
+              <span class="text-muted" style="font-size:12px">delta ${(run.av_duration_delta_sec ?? 0).toFixed(3)}s / tol ${run.av_duration_tolerance_sec}s</span>
+              <span class="text-muted" style="font-size:12px">requested ${run.requested_duration_sec}s, selected ${(run.selected_clip_duration_sec ?? 0).toFixed(3)}s, audio ${(run.audio_duration_sec ?? 0).toFixed(3)}s</span>
+            </div>
+            <div class="flex gap-8" style="align-items:flex-start;flex-wrap:wrap">
+              ${media('Raw', run.raw_clip_b64, 'video')}
+              ${media('Selected', run.selected_clip_b64, 'video')}
+              ${media('Audio', run.audio_b64, 'audio')}
+            </div>
+            ${lipRows ? `<div class="table-wrap" style="margin-top:10px"><table><thead><tr><th>Try</th><th>Status</th><th>Detail</th></tr></thead><tbody>${lipRows}</tbody></table></div>` : ''}
+          </div>`;
+      }).join('');
+      return `<div style="margin-bottom:20px">
+        <div style="font-weight:600;margin-bottom:4px">${sh.shot_id}</div>
+        ${runs}
+      </div>`;
     }).join('');
   },
 };

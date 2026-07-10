@@ -41,11 +41,13 @@ class WhisperAdapter(Transcribe):
         device: str = "cpu",
         compute_type: str = "int8",
         beam_size: int = 5,
+        vad_filter: bool = False,
     ) -> None:
         self._model_size = model_size
         self._device = device
         self._compute_type = compute_type
         self._beam_size = beam_size
+        self._vad_filter = vad_filter
         self._model: "_WhisperModel | None" = None
 
     async def health(self) -> HealthStatus:
@@ -102,7 +104,7 @@ class WhisperAdapter(Transcribe):
             audio_uri,
             beam_size=self._beam_size,
             word_timestamps=True,
-            vad_filter=True,  # skip silence — faster and more accurate
+            vad_filter=self._vad_filter,
         )
 
         segments: list[TranscriptSegment] = []

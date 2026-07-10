@@ -1,5 +1,8 @@
 import asyncio
+import json
 import logging
+import math
+import re
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace as _dc_replace
@@ -91,8 +94,15 @@ class RunOptions:
     stage_hook: Callable[..., None] | None = None
     error_hook: Callable[[str, Exception], Any] | None = None
     user_images: dict[str, str] | None = None
+    lipsync_failure_policy: Literal["fallback_raw", "fail"] | None = None
+    lipsync_max_retries: int | None = None
+    av_sync_duration_tolerance_sec: float | None = None
+    av_sync_failure_policy: Literal["warn", "fail"] | None = None
 
 logger = logging.getLogger(__name__)
+
+_SENTENCE_END_RE = re.compile(r"[.!?。！？।]+[\"')\]]*$")
+_SOFT_PHRASE_END_RE = re.compile(r"[,;:،؛]+[\"')\]]*$")
 
 # ------------------------------------------------------------------ Phase 0 compat
 
@@ -204,7 +214,11 @@ def _make_video_adapter(s, work_dir: Path):
         return LtxAdapter(work_dir=work_dir / "video" / "ltx", base_url=s.ltx_base_url)
     if s.video_adapter == "wan_s2v":
         from adapters.generate_video.wan_s2v_adapter import WanS2VAdapter
-        return WanS2VAdapter(work_dir=work_dir / "video" / "wan_s2v", base_url=s.wan_s2v_base_url)
+        return WanS2VAdapter(
+            work_dir=work_dir / "video" / "wan_s2v",
+            base_url=s.wan_s2v_base_url,
+            fps=s.wan_s2v_fps,
+        )
     from adapters.generate_video.wan_adapter import WanAdapter
     return WanAdapter(work_dir=work_dir / "video" / "wan", base_url=s.wan_base_url)
 
@@ -273,6 +287,7 @@ def _make_adapters(
             model_size=s.whisper_model_size,
             device=s.whisper_device,
             compute_type=s.whisper_compute_type,
+            vad_filter=s.whisper_vad_filter,
         ),
         analyze=LlmAnalyzeAdapter(
             model=s.llm_model,
@@ -752,6 +767,90 @@ def _existing_audio_for_shot(
     return str(audio_files[0]) if audio_files else None
 
 
+def _snapshot_attempt_file(src_uri: str, out_dir: Path, filename: str) -> str | None:
+    src = Path(src_uri)
+    if not src.exists() or not src.is_file():
+        return None
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dst = out_dir / filename
+    try:
+        if src.resolve() != dst.resolve():
+            shutil.copyfile(src, dst)
+        return str(dst)
+    except Exception:
+        logger.warning("Could not snapshot attempt file %s -> %s", src, dst, exc_info=True)
+        return None
+
+
+async def _write_shot_attempt_audit(
+    *,
+    work_dir: Path,
+    shot: Shot,
+    render_mode: str,
+    native_lipsync: bool,
+    raw_clip: VideoClip,
+    selected_clip: VideoClip,
+    audio_track: AudioTrack,
+    ffprobe_bin: str,
+    tolerance_sec: float,
+    lipsync_attempts: list[dict[str, Any]],
+    lipsync_failure_policy: str,
+) -> dict[str, Any]:
+    audit_root = work_dir / "shot_attempts"
+    audit_root.mkdir(parents=True, exist_ok=True)
+    audit_path = audit_root / f"{shot.shot_id}.json"
+    existing: dict[str, Any] = {}
+    if audit_path.exists():
+        try:
+            existing = json.loads(audit_path.read_text(encoding="utf-8"))
+        except Exception:
+            existing = {}
+    runs = list(existing.get("runs") or [])
+    attempt_index = len(runs) + 1
+    attempt_dir = audit_root / shot.shot_id / f"attempt_{attempt_index:02d}"
+
+    raw_actual = await _probe_duration_sec(raw_clip.uri, ffprobe_bin)
+    selected_actual = await _probe_duration_sec(selected_clip.uri, ffprobe_bin)
+    audio_actual = await _probe_duration_sec(audio_track.uri, ffprobe_bin)
+    selected_duration = selected_actual if selected_actual is not None else selected_clip.duration_sec
+    audio_duration = audio_actual if audio_actual is not None else audio_track.duration_sec
+    delta = abs(selected_duration - audio_duration)
+    if selected_actual is None or audio_actual is None:
+        qa_status = "unknown"
+    elif delta <= tolerance_sec:
+        qa_status = "pass"
+    else:
+        qa_status = "fail"
+
+    run = {
+        "attempt_index": attempt_index,
+        "shot_id": shot.shot_id,
+        "render_mode": render_mode,
+        "native_lipsync": native_lipsync,
+        "requested_duration_sec": shot.duration_sec,
+        "source_start_sec": shot.source_start_sec,
+        "source_end_sec": shot.source_end_sec,
+        "raw_clip_uri": raw_clip.uri,
+        "selected_clip_uri": selected_clip.uri,
+        "audio_uri": audio_track.uri,
+        "raw_clip_snapshot_uri": _snapshot_attempt_file(raw_clip.uri, attempt_dir, "raw.mp4"),
+        "selected_clip_snapshot_uri": _snapshot_attempt_file(selected_clip.uri, attempt_dir, "selected.mp4"),
+        "audio_snapshot_uri": _snapshot_attempt_file(audio_track.uri, attempt_dir, "audio.wav"),
+        "raw_clip_duration_sec": raw_actual if raw_actual is not None else raw_clip.duration_sec,
+        "selected_clip_duration_sec": selected_duration,
+        "audio_duration_sec": audio_duration,
+        "av_duration_delta_sec": round(delta, 3),
+        "av_duration_tolerance_sec": tolerance_sec,
+        "qa_status": qa_status,
+        "lipsync_failure_policy": lipsync_failure_policy,
+        "lipsync_attempts": lipsync_attempts,
+    }
+    runs.append(run)
+    payload = {"shot_id": shot.shot_id, "latest": run, "runs": runs}
+    audit_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    return run
+
+
 async def _generate_shot_video(
     shot: Shot,
     script: Script,
@@ -919,9 +1018,22 @@ async def _generate_shot_video(
             shot_id=shot.shot_id, label=label, detail="video done",
         )
 
+    raw_clip = clip
+    lipsync_attempts: list[dict[str, Any]] = []
+    lipsync_failure_policy = opts.lipsync_failure_policy or "fallback_raw"
+    lipsync_max_retries = max(0, int(opts.lipsync_max_retries or 0))
+    av_sync_tolerance = float(opts.av_sync_duration_tolerance_sec or 0.35)
+    av_sync_failure_policy = opts.av_sync_failure_policy or "warn"
+
     # ── 3. lip_sync (skipped when video adapter handles it natively) ──────────
     if native_lipsync:
         log_event(logger, "lip_sync_skipped", shot_id=shot.shot_id, reason="native_lipsync")
+        lipsync_attempts.append({
+            "attempt": 1,
+            "status": "skipped",
+            "reason": "native_lipsync",
+            "clip_uri": clip.uri,
+        })
         synced = clip
     else:
         if getattr(adapters.lipsync, "requires_voice_unloaded", False) is True and is_managed(adapters.voice):
@@ -938,15 +1050,45 @@ async def _generate_shot_video(
             opts.stage_hook, "lip_sync", "stage_started",
             shot_id=shot.shot_id, label=label, detail="lip-syncing",
         )
-        try:
-            synced = await adapters.lipsync.run(
-                LipSyncRequest(
-                    video_uri=clip.uri,
-                    audio_uri=audio_track.uri,
-                    shot_id=shot.shot_id,
+        synced = None
+        last_exc: Exception | None = None
+        for attempt in range(1, lipsync_max_retries + 2):
+            try:
+                synced = await adapters.lipsync.run(
+                    LipSyncRequest(
+                        video_uri=clip.uri,
+                        audio_uri=audio_track.uri,
+                        shot_id=shot.shot_id,
+                    )
                 )
-            )
-        except Exception as exc:
+            except Exception as exc:
+                last_exc = exc
+                lipsync_attempts.append({
+                    "attempt": attempt,
+                    "status": "failed",
+                    "error": str(exc),
+                })
+                if attempt <= lipsync_max_retries:
+                    _notify_shot(
+                        opts.stage_hook, "lip_sync", "stage_started",
+                        shot_id=shot.shot_id, label=label,
+                        detail=f"retrying lip sync ({attempt + 1}/{lipsync_max_retries + 1})",
+                    )
+                    continue
+                break
+            else:
+                lipsync_attempts.append({
+                    "attempt": attempt,
+                    "status": "success",
+                    "clip_uri": synced.uri,
+                })
+                _notify_shot(
+                    opts.stage_hook, "lip_sync", "stage_completed",
+                    shot_id=shot.shot_id, label=label, detail="lip sync done",
+                )
+                break
+
+        if synced is None:
             # Fall back to the raw (un-lip-synced) clip rather than failing the
             # whole job — but report this honestly as a failure, not success.
             # Previously this always emitted "stage_completed"/"lip sync done"
@@ -956,20 +1098,58 @@ async def _generate_shot_video(
             # could tell from the UI that the final video had no lip sync at
             # all applied.
             logger.warning(
-                "lip_sync failed for %s — falling back to raw clip at %s",
-                shot.shot_id, clip.uri, exc_info=True,
+                "lip_sync failed for %s — policy=%s raw_clip=%s error=%s",
+                shot.shot_id,
+                lipsync_failure_policy,
+                clip.uri,
+                last_exc,
             )
-            synced = clip
             _notify_shot(
                 opts.stage_hook, "lip_sync", "stage_failed",
                 shot_id=shot.shot_id, label=label,
-                detail=f"lip sync failed, using un-synced clip: {exc}",
+                detail=(
+                    f"lip sync failed"
+                    + (
+                        ", using un-synced clip"
+                        if lipsync_failure_policy == "fallback_raw"
+                        else ", failing job"
+                    )
+                    + f": {last_exc}"
+                ),
             )
-        else:
-            _notify_shot(
-                opts.stage_hook, "lip_sync", "stage_completed",
-                shot_id=shot.shot_id, label=label, detail="lip sync done",
-            )
+            if lipsync_failure_policy == "fail":
+                raise RuntimeError(f"lip_sync failed for {shot.shot_id}: {last_exc}") from last_exc
+            synced = clip
+
+    qa_run = await _write_shot_attempt_audit(
+        work_dir=work_dir,
+        shot=shot,
+        render_mode=render_mode,
+        native_lipsync=native_lipsync,
+        raw_clip=raw_clip,
+        selected_clip=synced,
+        audio_track=audio_track,
+        ffprobe_bin=getattr(adapters, "ffprobe_bin", "ffprobe"),
+        tolerance_sec=av_sync_tolerance,
+        lipsync_attempts=lipsync_attempts,
+        lipsync_failure_policy=lipsync_failure_policy,
+    )
+    qa_detail = (
+        f"AV duration delta {qa_run['av_duration_delta_sec']:.3f}s "
+        f"(status={qa_run['qa_status']})"
+    )
+    _notify_shot(
+        opts.stage_hook,
+        "lip_sync_qa",
+        "stage_completed" if qa_run["qa_status"] != "fail" or av_sync_failure_policy == "warn" else "stage_failed",
+        shot_id=shot.shot_id,
+        label=label,
+        detail=qa_detail,
+    )
+    if qa_run["qa_status"] == "fail" and av_sync_failure_policy == "fail":
+        raise RuntimeError(
+            f"AV sync duration QA failed for {shot.shot_id}: {qa_detail}"
+        )
 
     log_event(logger, "shot_completed", shot_id=shot.shot_id)
     _notify_shot(
@@ -1016,11 +1196,92 @@ async def _concat_audio(
     )
 
 
+def _segment_to_verbatim_lines(
+    segment,
+    *,
+    speaker: str,
+    max_line_duration_sec: float | None = None,
+) -> list["Line"]:
+    """Turn one Whisper segment into one or more timed script lines."""
+    from core.models.content import Line
+
+    text = str(getattr(segment, "text", "") or "").strip()
+    start = float(getattr(segment, "start", 0.0) or 0.0)
+    end = float(getattr(segment, "end", start) or start)
+    max_sec = float(max_line_duration_sec or 0.0)
+    if not text:
+        return []
+    if max_sec <= 0 or end - start <= max_sec:
+        return [Line(speaker=speaker, text=text, start=start, end=end)]
+
+    words = [
+        w for w in (getattr(segment, "words", None) or [])
+        if str(getattr(w, "word", "") or "").strip()
+    ]
+    if words:
+        groups: list[list[Any]] = []
+        current: list[Any] = []
+        for word in words:
+            if current:
+                candidate_duration = float(word.end) - float(current[0].start)
+                if candidate_duration > max_sec * 1.25 and current:
+                    groups.append(current)
+                    current = []
+            current.append(word)
+            word_text = str(getattr(word, "word", "") or "").strip()
+            current_duration = float(current[-1].end) - float(current[0].start)
+            if (
+                current_duration >= 0.75
+                and (_SENTENCE_END_RE.search(word_text) or _SOFT_PHRASE_END_RE.search(word_text))
+                and (current_duration >= max_sec * 0.45 or (end - float(word.end)) > max_sec)
+            ):
+                groups.append(current)
+                current = []
+        if current:
+            groups.append(current)
+        return [
+            Line(
+                speaker=speaker,
+                text=" ".join(str(getattr(w, "word", "")).strip() for w in group).strip(),
+                start=round(float(group[0].start), 3),
+                end=round(float(group[-1].end), 3),
+            )
+            for group in groups
+            if group
+        ]
+
+    tokens = text.split()
+    if not tokens:
+        return [Line(speaker=speaker, text=text, start=start, end=end)]
+    chunk_count = max(1, math.ceil((end - start) / max_sec))
+    tokens_per_chunk = max(1, math.ceil(len(tokens) / chunk_count))
+    lines: list[Line] = []
+    cursor = start
+    total_words = len(tokens)
+    consumed_words = 0
+    for idx in range(0, len(tokens), tokens_per_chunk):
+        chunk_tokens = tokens[idx:idx + tokens_per_chunk]
+        consumed_words += len(chunk_tokens)
+        if consumed_words >= total_words:
+            chunk_end = end
+        else:
+            chunk_end = start + (end - start) * (consumed_words / total_words)
+        lines.append(Line(
+            speaker=speaker,
+            text=" ".join(chunk_tokens),
+            start=round(cursor, 3),
+            end=round(max(chunk_end, cursor + 0.1), 3),
+        ))
+        cursor = chunk_end
+    return lines
+
+
 def _build_verbatim_script(
     transcribe_result,
     cast: Cast,
     visual_context: "VisualContext | None" = None,
     rights_cleared: bool = True,
+    max_line_duration_sec: float | None = None,
 ) -> Script:
     """Build a Script directly from transcript segments (source_audio mode).
 
@@ -1036,25 +1297,30 @@ def _build_verbatim_script(
 
     primary_speaker = cast.members[0].id
     secondary_speaker = cast.members[1].id if len(cast.members) > 1 else primary_speaker
+    timed_lines: list[Line] = []
+    for i, seg in enumerate(segments):
+        speaker = primary_speaker if i % 2 == 0 else secondary_speaker
+        timed_lines.extend(
+            _segment_to_verbatim_lines(
+                seg,
+                speaker=speaker,
+                max_line_duration_sec=max_line_duration_sec,
+            )
+        )
 
     vis_segments = getattr(visual_context, "segments", None) if visual_context else None
     if vis_segments:
         scenes: list[Scene] = []
-        seg_idx = 0
+        line_idx = 0
         for vs in vis_segments:
             scene_lines: list[Line] = []
-            while seg_idx < len(segments):
-                seg = segments[seg_idx]
-                if seg.start >= vs.end and vs != vis_segments[-1]:
+            while line_idx < len(timed_lines):
+                line = timed_lines[line_idx]
+                line_start = line.start if line.start is not None else 0.0
+                if line_start >= vs.end and vs != vis_segments[-1]:
                     break
-                speaker = primary_speaker if seg_idx % 2 == 0 else secondary_speaker
-                scene_lines.append(Line(
-                    speaker=speaker,
-                    text=seg.text.strip(),
-                    start=seg.start,
-                    end=seg.end,
-                ))
-                seg_idx += 1
+                scene_lines.append(line)
+                line_idx += 1
             if scene_lines:
                 setting = getattr(vs, "setting", None) or getattr(vs, "description", "indoor scene")
                 # adapt_script's LLM prompt weaves VisualSegment.props into the
@@ -1069,40 +1335,24 @@ def _build_verbatim_script(
                     characters_present=[primary_speaker],
                     lines=scene_lines,
                 ))
-        if seg_idx < len(segments):
+        if line_idx < len(timed_lines):
             leftover: list[Line] = []
-            while seg_idx < len(segments):
-                seg = segments[seg_idx]
-                speaker = primary_speaker if seg_idx % 2 == 0 else secondary_speaker
-                leftover.append(Line(
-                    speaker=speaker,
-                    text=seg.text.strip(),
-                    start=seg.start,
-                    end=seg.end,
-                ))
-                seg_idx += 1
+            while line_idx < len(timed_lines):
+                leftover.append(timed_lines[line_idx])
+                line_idx += 1
             scenes.append(Scene(
                 setting="indoor scene",
                 characters_present=[primary_speaker],
                 lines=leftover,
             ))
     else:
-        lines = []
-        for i, seg in enumerate(segments):
-            speaker = primary_speaker if i % 2 == 0 else secondary_speaker
-            lines.append(Line(
-                speaker=speaker,
-                text=seg.text.strip(),
-                start=seg.start,
-                end=seg.end,
-            ))
         scenes = [Scene(
             setting="indoor scene",
             characters_present=[primary_speaker],
-            lines=lines,
+            lines=timed_lines,
         )]
 
-    full_text = " ".join(seg.text.strip() for seg in segments)
+    full_text = " ".join(line.text.strip() for line in timed_lines)
     return Script(
         mode="verbatim",
         learning_objective=LearningObjective(
@@ -1225,6 +1475,34 @@ def _storyboard_has_source_timing(storyboard: Storyboard) -> bool:
     )
 
 
+def _validate_transcript_coverage(
+    transcribe_result,
+    source_duration_sec: float,
+    *,
+    min_ratio: float = 0.2,
+) -> None:
+    """Catch catastrophic partial transcripts before source-timed planning.
+
+    Songs often have instrumental intros/outros, so this deliberately does not
+    require near-100% coverage. It only fails when a real media source is much
+    longer than the transcript span, which is the "only first 1-2 seconds were
+    captured" failure mode.
+    """
+    segments = list(getattr(transcribe_result, "segments", []) or [])
+    if source_duration_sec <= 10.0 or not segments:
+        return
+    transcript_end = max(float(seg.end) for seg in segments)
+    ratio = transcript_end / source_duration_sec if source_duration_sec else 1.0
+    if ratio < min_ratio:
+        raise ValueError(
+            "Transcription appears truncated: transcript ends at "
+            f"{transcript_end:.2f}s for a {source_duration_sec:.2f}s source "
+            f"({ratio:.0%} coverage; minimum {min_ratio:.0%}). "
+            "For singing/source_audio jobs, rerun transcription with VAD disabled "
+            "or a larger Whisper model before planning."
+        )
+
+
 def _chunk_shot_durations(
     total_duration: float, max_shot_duration_sec: float
 ) -> list[tuple[float, float]]:
@@ -1246,6 +1524,55 @@ def _chunk_shot_durations(
     return chunks
 
 
+def _chunk_shot_durations_by_lines(
+    total_duration: float,
+    max_shot_duration_sec: float,
+    timed_lines: list[tuple[str, Any]],
+) -> list[tuple[float, float]]:
+    """Prefer transcript/script line ends over fixed-size duration cuts."""
+    if total_duration <= 0 or max_shot_duration_sec <= 0:
+        return []
+    line_ends = sorted({
+        round(min(total_duration, max(0.0, float(line.end))), 3)
+        for _, line in timed_lines
+        if line.start is not None
+        and line.end is not None
+        and float(line.end) > 0
+    })
+    if not line_ends:
+        return _chunk_shot_durations(total_duration, max_shot_duration_sec)
+
+    chunks: list[tuple[float, float]] = []
+    start = 0.0
+    min_chunk_sec = min(1.0, max_shot_duration_sec)
+    boundary_slack_sec = min(1.5, max_shot_duration_sec * 0.25)
+    while start < total_duration - 1e-6:
+        limit = min(total_duration, start + max_shot_duration_sec)
+        candidates = [
+            boundary for boundary in line_ends
+            if start + min_chunk_sec <= boundary <= limit + 1e-6
+        ]
+        if candidates:
+            end = max(candidates)
+        else:
+            next_boundaries = [
+                boundary for boundary in line_ends
+                if limit < boundary <= min(total_duration, limit + boundary_slack_sec)
+            ]
+            end = min(next_boundaries) if next_boundaries else limit
+        if end <= start + 1e-6:
+            end = limit if limit > start else total_duration
+        chunks.append((round(start, 3), round(end, 3)))
+        start = end
+
+    if len(chunks) >= 2 and chunks[-1][1] - chunks[-1][0] < min_chunk_sec:
+        prev_start, _ = chunks[-2]
+        _, last_end = chunks[-1]
+        chunks[-2] = (prev_start, last_end)
+        chunks.pop()
+    return chunks
+
+
 def _rebuild_storyboard_by_duration(
     storyboard: Storyboard,
     script: Script,
@@ -1263,10 +1590,6 @@ def _rebuild_storyboard_by_duration(
     inside its time range, and its own source_start_sec/source_end_sec for
     audio slicing.
     """
-    chunks = _chunk_shot_durations(total_duration, max_shot_duration_sec)
-    if not chunks:
-        return storyboard
-
     def _safe_line(ref: str):
         try:
             return _resolve_line(ref, script)
@@ -1291,6 +1614,11 @@ def _rebuild_storyboard_by_duration(
         for j, line in enumerate(scene.lines)
         if line.start is not None and line.end is not None
     ]
+    chunks = _chunk_shot_durations_by_lines(
+        total_duration, max_shot_duration_sec, all_lines
+    )
+    if not chunks:
+        return storyboard
 
     new_shots: list[Shot] = []
     for idx, (chunk_start, chunk_end) in enumerate(chunks, start=1):
@@ -1304,10 +1632,18 @@ def _rebuild_storyboard_by_duration(
                 best_overlap = overlap
                 best_shot = shot
 
-        refs = [
-            ref for ref, line in all_lines
-            if chunk_start <= (line.start + line.end) / 2 < chunk_end
-        ]
+        refs = []
+        for ref, line in all_lines:
+            line_start = float(line.start)
+            line_end = float(line.end)
+            line_mid = (line_start + line_end) / 2
+            overlap = min(line_end, chunk_end) - max(line_start, chunk_start)
+            line_duration = max(0.001, line_end - line_start)
+            if overlap > 0 and (
+                chunk_start <= line_mid < chunk_end
+                or overlap / line_duration >= 0.5
+            ):
+                refs.append(ref)
         if not refs and all_lines:
             chunk_mid = (chunk_start + chunk_end) / 2
             nearest_ref, _ = min(
@@ -1350,6 +1686,7 @@ def _retime_source_audio_plan(
         cast,
         visual_context=visual_context,
         rights_cleared=rights_cleared,
+        max_line_duration_sec=max_shot_duration_sec,
     )
     timed = _rebuild_storyboard_by_duration(
         storyboard,
@@ -1764,6 +2101,12 @@ async def _run_to_assembled_video(
                 VisualContext,
             )
 
+        _validate_transcript_coverage(
+            transcribe_result,
+            fetch_result.duration_sec,
+            min_ratio=config.settings.transcript_min_coverage_ratio,
+        )
+
         # Stop here for "transcribe" phase — artifacts are saved, human can review.
         if opts.phase == "transcribe":
             logger.info("Phase 'transcribe' complete — stopping after analyze_content.")
@@ -1780,6 +2123,7 @@ async def _run_to_assembled_video(
                 transcribe_result, config.cast,
                 visual_context=visual_context,
                 rights_cleared=job.rights_cleared,
+                max_line_duration_sec=config.settings.max_shot_duration_sec,
             )
             artifact_store.put_json(job.job_id, "adapt_script", script.model_dump(mode="json"))
 
@@ -2302,6 +2646,14 @@ async def run_pipeline_job(
         # Copy all fields from caller options (preserves stage_hook, error_hook, etc.)
         # and override language only.
         lang_opts = _dc_replace(options or RunOptions(), language=lang)
+        if lang_opts.lipsync_failure_policy is None:
+            lang_opts.lipsync_failure_policy = config.settings.lipsync_failure_policy
+        if lang_opts.lipsync_max_retries is None:
+            lang_opts.lipsync_max_retries = config.settings.lipsync_max_retries
+        if lang_opts.av_sync_duration_tolerance_sec is None:
+            lang_opts.av_sync_duration_tolerance_sec = config.settings.av_sync_duration_tolerance_sec
+        if lang_opts.av_sync_failure_policy is None:
+            lang_opts.av_sync_failure_policy = config.settings.av_sync_failure_policy
         # resume needs a job id to locate cached artifacts — either an existing
         # job (resume_job_id) or a fresh job created under a caller-chosen job_id
         # whose artifacts were pre-seeded (story input mode).

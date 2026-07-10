@@ -152,6 +152,9 @@ body {
 .badge-cancel_requested { background: var(--amber-lt); color: var(--amber); }
 .badge-stalled   { background: var(--amber-lt); color: var(--amber); }
 .badge-created   { background: var(--gray-lt);  color: var(--gray);  }
+.badge-success   { background: var(--green-lt); color: var(--green); }
+.badge-warning   { background: var(--amber-lt); color: var(--amber); }
+.badge-error     { background: var(--red-lt);   color: var(--red);   }
 
 .pulse::before {
   content: "";

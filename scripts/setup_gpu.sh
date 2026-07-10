@@ -910,6 +910,9 @@ write_env_file() {
 
 VIDEO_ME_WHISPER_DEVICE=cuda
 VIDEO_ME_WHISPER_COMPUTE_TYPE=float16
+VIDEO_ME_WHISPER_MODEL_SIZE=medium
+VIDEO_ME_WHISPER_VAD_FILTER=false
+VIDEO_ME_TRANSCRIPT_MIN_COVERAGE_RATIO=0.2
 
 VIDEO_ME_DATA_DIR=$WORKSPACE/video_me/data
 VIDEO_ME_REVIEW_DIR=$WORKSPACE/video_me/review
@@ -930,6 +933,15 @@ VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188
 # Video: Wan2.2 S2V image+audio singing video (default) | wan I2V | ltx legacy
 VIDEO_ME_VIDEO_ADAPTER=wan_s2v
 VIDEO_ME_WAN_S2V_BASE_URL=http://localhost:8031
+VIDEO_ME_WAN_S2V_FPS=16
+
+# Video/lip-sync QA policy. Wan S2V is native audio-conditioned video, so the
+# lip-sync repair policy applies only when VIDEO_ME_VIDEO_ADAPTER=wan.
+VIDEO_ME_MAX_SHOT_DURATION_SEC=8.0
+VIDEO_ME_LIPSYNC_FAILURE_POLICY=fallback_raw
+VIDEO_ME_LIPSYNC_MAX_RETRIES=0
+VIDEO_ME_AV_SYNC_DURATION_TOLERANCE_SEC=0.35
+VIDEO_ME_AV_SYNC_FAILURE_POLICY=warn
 
 # TTS: Fish Audio S2 (default, EN + HI + 80 languages) | chatterbox (EN-only fallback)
 VIDEO_ME_TTS_ADAPTER=fish_s2
