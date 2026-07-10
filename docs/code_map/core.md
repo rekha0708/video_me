@@ -71,6 +71,7 @@ GPU model sequencing between pipeline phases.
   - `async unload(self) -> bool`
 - `is_managed(adapter: Any) -> bool`
 - `unload_ollama_model(base_url: str, model: str) -> None` — Tell Ollama to evict the model from VRAM (keep_alive=0) before GPU-heavy stages.
+- `async free_comfyui(comfyui_base_url: str) -> bool` — Free ComfyUI's resident model unconditionally, independent of whether
 - `async ensure_video_model_unloaded(video_adapter: Any) -> None` — Make sure a VRAM-managed video model is out of VRAM before the render phase.
 - `async _prepare_managed_adapter(adapter: Any, settings: Any, *, gap_sec: float, timeout_sec: float, stage_name: str, sleep: Callable[[float], Any], notify: Callable[[str, str], Any] | None) -> None` — Bring a VRAM-managed adapter's model into memory.
 - `async prepare_video_model(video_adapter: Any, settings: Any, *, sleep: Callable[[float], Any]=asyncio.sleep, notify: Callable[[str, str], Any] | None=None) -> None` — Bring a VRAM-managed video model into memory after the render phase.

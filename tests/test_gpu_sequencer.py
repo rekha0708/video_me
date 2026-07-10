@@ -1,3 +1,4 @@
+import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -5,6 +6,7 @@ from core.gpu_sequencer import (
     VIDEO_MODEL_LOAD_STAGE,
     VOICE_MODEL_LOAD_STAGE,
     ensure_video_model_unloaded,
+    free_comfyui,
     prepare_video_model,
     prepare_voice_model,
 )
@@ -186,3 +188,70 @@ async def test_prepare_voice_no_events_for_unmanaged_adapter() -> None:
     notify = MagicMock()
     await prepare_voice_model(_unmanaged_adapter(), _settings(), sleep=AsyncMock(), notify=notify)
     notify.assert_not_called()
+
+
+# ------------------------------------------------------------------ free_comfyui
+# ComfyUI is invisible to ensure_video_model_unloaded/prepare_*_model unless it's
+# THIS job's own render/video adapter — free_comfyui talks to it directly by URL
+# instead, so a model left resident by a *different* job's adapter choice still
+# gets freed. See ComfyUIUnloadMixin.unload() for the identical adapter-bound
+# version of this same call.
+
+def _mock_httpx(*, post_error: Exception | None = None, status_code: int = 200):
+    mock_post_resp = MagicMock()
+    mock_post_resp.status_code = status_code
+    mock_post_resp.text = "error body"
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.post = AsyncMock(
+        side_effect=post_error if post_error else None,
+        return_value=mock_post_resp,
+    )
+
+    fake_httpx = MagicMock()
+    fake_httpx.AsyncClient = MagicMock(return_value=mock_client)
+    return fake_httpx, mock_client
+
+
+async def test_free_comfyui_posts_to_free_endpoint() -> None:
+    fake_httpx, mock_client = _mock_httpx()
+    with patch.dict(sys.modules, {"httpx": fake_httpx}):
+        result = await free_comfyui("http://localhost:8188")
+    assert result is True
+    assert mock_client.post.call_args.args[0] == "http://localhost:8188/free"
+    assert mock_client.post.call_args.kwargs["json"] == {
+        "unload_models": True,
+        "free_memory": True,
+    }
+
+
+async def test_free_comfyui_strips_trailing_slash() -> None:
+    fake_httpx, mock_client = _mock_httpx()
+    with patch.dict(sys.modules, {"httpx": fake_httpx}):
+        await free_comfyui("http://localhost:8188/")
+    assert mock_client.post.call_args.args[0] == "http://localhost:8188/free"
+
+
+async def test_free_comfyui_returns_false_when_unreachable() -> None:
+    class _FakeConnectError(Exception):
+        pass
+
+    fake_httpx, _ = _mock_httpx(post_error=_FakeConnectError("refused"))
+    fake_httpx.ConnectError = _FakeConnectError
+    with patch.dict(sys.modules, {"httpx": fake_httpx}):
+        result = await free_comfyui("http://localhost:8188")
+    assert result is False
+
+
+async def test_free_comfyui_returns_false_on_http_error_without_raising() -> None:
+    # Deliberately not the same contract as ComfyUIUnloadMixin.unload() (which
+    # raises) — free_comfyui is a best-effort safety net called unconditionally
+    # regardless of whether ComfyUI is even in use, so a hiccup here must never
+    # fail an otherwise-healthy job.
+    fake_httpx, _ = _mock_httpx(status_code=500)
+    fake_httpx.ConnectError = ConnectionError
+    with patch.dict(sys.modules, {"httpx": fake_httpx}):
+        result = await free_comfyui("http://localhost:8188")
+    assert result is False

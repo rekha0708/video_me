@@ -11,6 +11,7 @@ from core.config import AppConfig, load_app_config
 from core.executor import StageError, check_rights, run_stage
 from core.gpu_sequencer import (
     ensure_video_model_unloaded,
+    free_comfyui,
     is_managed,
     prepare_video_model,
     prepare_voice_model,
@@ -1877,10 +1878,16 @@ async def _run_to_assembled_video(
     else:
         # Release LLM from VRAM before the GPU-heavy shot loop, and make sure
         # VRAM-managed video (Wan) and voice (Fish S2) models are not resident
-        # during render_character — neither is needed until Phase B.
+        # during render_character — neither is needed until Phase B. Also free
+        # ComfyUI unconditionally: it's invisible to the two calls above unless
+        # it's THIS job's own render/video adapter, so a resident model left
+        # over from an earlier, different job (e.g. render_adapter=comfyui_flux
+        # or video_adapter=ltx) would otherwise sit stranded through this job's
+        # entire render phase.
         _unload_ollama_model(config.settings.llm_base_url, config.settings.llm_model)
         await ensure_video_model_unloaded(adapters.video)
         await ensure_video_model_unloaded(adapters.voice)
+        await free_comfyui(config.settings.comfyui_base_url)
 
         shots_to_run = (
             [s for s in storyboard.shots if s.shot_id == opts.only_shot]

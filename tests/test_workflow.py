@@ -54,6 +54,19 @@ from core.workflow import (
 # ------------------------------------------------------------------ shared fixtures
 
 
+@pytest.fixture(autouse=True)
+def _no_real_comfyui_free(monkeypatch):
+    """free_comfyui() talks to ComfyUI by raw URL, not through a mockable
+    adapter instance — without this, every Phase-A test would fire a real
+    HTTP call at whatever's listening on the default comfyui_base_url (which,
+    on a real GPU pod, is a real ComfyUI serving real jobs). Autouse so no
+    test can accidentally skip it; tests that care about this call still
+    patch/assert on it explicitly and override this default."""
+    mock = AsyncMock(return_value=True)
+    monkeypatch.setattr("core.workflow.free_comfyui", mock)
+    return mock
+
+
 def _make_config(tmp_path):
     config = load_app_config()
     config.settings = Settings(
@@ -563,6 +576,56 @@ async def test_vram_managed_video_adapter_sequencing(tmp_path) -> None:
         await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
 
     assert call_order == ["wan_unload", "render", "approve", "wan_load", "wan_wait", "video"]
+
+
+@pytest.mark.asyncio
+async def test_free_comfyui_called_before_render_loop_even_when_unused(
+    tmp_path, _no_real_comfyui_free,
+) -> None:
+    """ComfyUI must get freed before Phase A even when this job's own render
+    (musubi_flux) and video (wan) adapters are neither one ComfyUI — otherwise
+    a model left resident by a *different* job's render_adapter=comfyui_flux
+    or video_adapter=ltx choice sits stranded through this job's whole render
+    phase (the actual cause of a production OOM)."""
+    config = _make_config(tmp_path)
+    config.settings.wan_load_gap_sec = 0
+    config.settings.comfyui_base_url = "http://comfyui.test:8188"
+
+    adapters = MagicMock(ffmpeg_bin="ffmpeg")
+    adapters.render = MagicMock(spec=[])  # musubi_flux: not managed_vram
+    adapters.video.managed_vram = True
+    adapters.video.unload = AsyncMock(return_value=True)
+    adapters.video.load = AsyncMock()
+    adapters.video.wait_until_loaded = AsyncMock()
+
+    with (
+        patch("core.workflow._make_adapters", return_value=adapters),
+        patch("core.workflow.run_stage", new=_make_run_stage(_stage_results())),
+        patch("core.workflow._unload_ollama_model"),
+        patch("core.gpu_sequencer.unload_ollama_model"),
+        patch(
+            "core.workflow._run_plan_critique_and_approval",
+            new=AsyncMock(return_value=(_storyboard(), _script())),
+        ),
+        patch(
+            "core.workflow._render_shot_candidates",
+            new=AsyncMock(return_value=_image_critique_result()),
+        ),
+        patch(
+            "core.workflow._run_image_approval_gate",
+            new=AsyncMock(return_value=["/tmp/render_00.png"]),
+        ),
+        patch(
+            "core.workflow._generate_shot_video",
+            new=AsyncMock(return_value=(_synced_clip(), _audio_track())),
+        ),
+        patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
+        patch("core.workflow.create_job_store", return_value=MagicMock()),
+        patch("core.workflow.create_artifact_store", return_value=MagicMock()),
+    ):
+        await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
+
+    _no_real_comfyui_free.assert_awaited_once_with("http://comfyui.test:8188")
 
 
 @pytest.mark.asyncio

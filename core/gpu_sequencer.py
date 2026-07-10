@@ -107,6 +107,37 @@ def unload_ollama_model(base_url: str, model: str) -> None:
         logger.warning("Could not unload Ollama model (non-fatal): %s", exc)
 
 
+async def free_comfyui(comfyui_base_url: str) -> bool:
+    """Free ComfyUI's resident model unconditionally, independent of whether
+    ComfyUI is even one of THIS job's own selected adapters.
+
+    ensure_video_model_unloaded/prepare_*_model below only manage the current
+    job's own render/video/voice adapter slots — a job running musubi_flux +
+    wan never touches ComfyUI at all, so ComfyUI's resident LTX/Flux model
+    left over from a *different, earlier* job's render_adapter=comfyui_flux or
+    video_adapter=ltx choice is invisible to those hooks and never gets freed.
+    That exact gap stranded ~50GB and OOM'd a later job's render. This talks
+    to ComfyUI directly by URL, so it always sees it regardless of adapter
+    selection. Best-effort: unreachable or already-idle is a no-op, not an
+    error — call sites don't need to know or care whether ComfyUI is in use.
+    """
+    import httpx
+    url = f"{comfyui_base_url.rstrip('/')}/free"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json={"unload_models": True, "free_memory": True})
+        if resp.status_code >= 400:
+            logger.warning("ComfyUI refused to free VRAM (%s): %s", resp.status_code, resp.text[:300])
+            return False
+        return True
+    except httpx.ConnectError:
+        logger.info("ComfyUI unreachable at %s — assuming nothing resident", url)
+        return False
+    except Exception as exc:
+        logger.warning("Could not free ComfyUI (non-fatal): %s", exc)
+        return False
+
+
 async def ensure_video_model_unloaded(video_adapter: Any) -> None:
     """Make sure a VRAM-managed video model is out of VRAM before the render phase."""
     if not is_managed(video_adapter):
