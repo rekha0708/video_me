@@ -946,16 +946,30 @@ async def _generate_shot_video(
                     shot_id=shot.shot_id,
                 )
             )
-        except Exception:
+        except Exception as exc:
+            # Fall back to the raw (un-lip-synced) clip rather than failing the
+            # whole job — but report this honestly as a failure, not success.
+            # Previously this always emitted "stage_completed"/"lip sync done"
+            # even on this path, so the dashboard showed lip_sync as having
+            # succeeded on every job all session while it was silently 500ing
+            # on every single call (missing deps in .venv_musetalk) — nobody
+            # could tell from the UI that the final video had no lip sync at
+            # all applied.
             logger.warning(
                 "lip_sync failed for %s — falling back to raw clip at %s",
                 shot.shot_id, clip.uri, exc_info=True,
             )
             synced = clip
-        _notify_shot(
-            opts.stage_hook, "lip_sync", "stage_completed",
-            shot_id=shot.shot_id, label=label, detail="lip sync done",
-        )
+            _notify_shot(
+                opts.stage_hook, "lip_sync", "stage_failed",
+                shot_id=shot.shot_id, label=label,
+                detail=f"lip sync failed, using un-synced clip: {exc}",
+            )
+        else:
+            _notify_shot(
+                opts.stage_hook, "lip_sync", "stage_completed",
+                shot_id=shot.shot_id, label=label, detail="lip sync done",
+            )
 
     log_event(logger, "shot_completed", shot_id=shot.shot_id)
     _notify_shot(

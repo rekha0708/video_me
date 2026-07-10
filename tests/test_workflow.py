@@ -1781,6 +1781,79 @@ async def test_generate_shot_video_lipsync_failure_falls_back_to_raw_clip(tmp_pa
     adapters.lipsync.run.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_generate_shot_video_lipsync_failure_reports_stage_failed(tmp_path) -> None:
+    """The dashboard must be told lip_sync actually failed, not "done" — this
+    exact silent-success bug meant a real MuseTalk outage (missing deps) went
+    undetected all session: every job's events showed "lip sync done" while
+    every single call was 500ing and falling back to the un-synced raw clip."""
+    from core.workflow import RunOptions
+
+    adapters = MagicMock()
+    adapters.voice.run = AsyncMock(
+        return_value=AudioTrack(uri="/d.wav", duration_sec=1.0, speaker_id="max")
+    )
+    adapters.video.run = AsyncMock(
+        return_value=VideoClip(uri="/raw.mp4", duration_sec=3.0, shot_id="s01")
+    )
+    adapters.video.native_lipsync = False
+    adapters.video.work_dir = tmp_path / "video" / "wan"
+    adapters.lipsync.work_dir = tmp_path / "synced" / "wan"
+    adapters.lipsync.run = AsyncMock(side_effect=RuntimeError("MuseTalk crashed"))
+
+    events: list[tuple] = []
+    opts = RunOptions(
+        stage_hook=lambda stage, event_type, **kw: events.append((stage, event_type, kw))
+    )
+    shot = _storyboard().shots[0]
+    config = _make_config(tmp_path)
+
+    await _generate_shot_video(
+        shot, _script(), config.cast, adapters, Path(tmp_path), "/img.png", options=opts,
+    )
+
+    lip_sync_events = [e for e in events if e[0] == "lip_sync"]
+    assert ("lip_sync", "stage_started", {"shot_id": "s01", "message": "Shot s01 (1/1): lip-syncing"}) in lip_sync_events
+    failed = [e for e in lip_sync_events if e[1] == "stage_failed"]
+    assert len(failed) == 1
+    assert "MuseTalk crashed" in failed[0][2]["message"]
+    assert not any(e[1] == "stage_completed" for e in lip_sync_events)
+
+
+@pytest.mark.asyncio
+async def test_generate_shot_video_lipsync_success_reports_stage_completed(tmp_path) -> None:
+    from core.workflow import RunOptions
+
+    adapters = MagicMock()
+    adapters.voice.run = AsyncMock(
+        return_value=AudioTrack(uri="/d.wav", duration_sec=1.0, speaker_id="max")
+    )
+    adapters.video.run = AsyncMock(
+        return_value=VideoClip(uri="/raw.mp4", duration_sec=3.0, shot_id="s01")
+    )
+    adapters.video.native_lipsync = False
+    adapters.video.work_dir = tmp_path / "video" / "wan"
+    adapters.lipsync.work_dir = tmp_path / "synced" / "wan"
+    synced_clip = VideoClip(uri="/synced.mp4", duration_sec=3.0, shot_id="s01")
+    adapters.lipsync.run = AsyncMock(return_value=synced_clip)
+
+    events: list[tuple] = []
+    opts = RunOptions(
+        stage_hook=lambda stage, event_type, **kw: events.append((stage, event_type, kw))
+    )
+    shot = _storyboard().shots[0]
+    config = _make_config(tmp_path)
+
+    synced, _ = await _generate_shot_video(
+        shot, _script(), config.cast, adapters, Path(tmp_path), "/img.png", options=opts,
+    )
+
+    assert synced is synced_clip
+    lip_sync_events = [e for e in events if e[0] == "lip_sync"]
+    assert any(e[1] == "stage_completed" for e in lip_sync_events)
+    assert not any(e[1] == "stage_failed" for e in lip_sync_events)
+
+
 # ================================================================== source_audio helpers
 # _build_verbatim_script, _apply_segment_timing_to_storyboard, _slice_source_audio
 
