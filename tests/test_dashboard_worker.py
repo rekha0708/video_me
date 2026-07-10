@@ -35,6 +35,18 @@ def _no_real_fish_s2_pkill(monkeypatch):
     return mock
 
 
+@pytest.fixture(autouse=True)
+def _no_real_wan_unload(monkeypatch):
+    """_run_action's finally block also calls unload_wan() unconditionally
+    after every job — a real POST to the configured wan_base_url. Without
+    this, running this test file on a real GPU pod would hit an actual,
+    currently-running Wan server mid-job. Autouse so no test can accidentally
+    skip it (same reasoning as _no_real_fish_s2_pkill above)."""
+    mock = AsyncMock(return_value=True)
+    monkeypatch.setattr("services.dashboard_worker.unload_wan", mock)
+    return mock
+
+
 def _repo(tmp_path: Path) -> DashboardRepository:
     return DashboardRepository(tmp_path / "dashboard.db")
 
@@ -334,11 +346,12 @@ async def test_worker_runs_noop_job_to_completed(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_run_action_stops_fish_s2_after_every_outcome(
-    tmp_path: Path, _no_real_fish_s2_pkill,
+    tmp_path: Path, _no_real_fish_s2_pkill, _no_real_wan_unload,
 ) -> None:
-    """stop_fish_s2_process() must fire after completion, failure, AND cancel —
-    it's in a `finally`, not just the happy path — since Fish S2's process-level
-    memory retention accumulates regardless of how a job ends."""
+    """stop_fish_s2_process() and unload_wan() must fire after completion,
+    failure, AND cancel — both are in a `finally`, not just the happy path —
+    since neither Fish S2's process-level retention nor Wan's never-unloaded-
+    after-Phase-B gap depend on how a job ends."""
     worker, repo = _make_worker(tmp_path)
 
     # Completed
@@ -347,6 +360,7 @@ async def test_run_action_stops_fish_s2_after_every_outcome(
         action = repo.claim_next_action("w1")
         await worker._run_action(action)
     assert _no_real_fish_s2_pkill.await_count == 1
+    assert _no_real_wan_unload.await_count == 1
 
     # Failed
     job_fail, _ = repo.create_queued_job(_noop_request())
@@ -354,6 +368,7 @@ async def test_run_action_stops_fish_s2_after_every_outcome(
         action = repo.claim_next_action("w1")
         await worker._run_action(action)
     assert _no_real_fish_s2_pkill.await_count == 2
+    assert _no_real_wan_unload.await_count == 2
 
 
 # ---------------------------------------------------------------------------

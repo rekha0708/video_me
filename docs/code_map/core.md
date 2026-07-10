@@ -72,6 +72,7 @@ GPU model sequencing between pipeline phases.
 - `is_managed(adapter: Any) -> bool`
 - `unload_ollama_model(base_url: str, model: str) -> None` — Tell Ollama to evict the model from VRAM (keep_alive=0) before GPU-heavy stages.
 - `async free_comfyui(comfyui_base_url: str) -> bool` — Free ComfyUI's resident model unconditionally, independent of whether
+- `async unload_wan(wan_base_url: str) -> bool` — Unload Wan's resident video model unconditionally, after every job.
 - `async stop_fish_s2_process() -> bool` — Kill the Fish S2 server process entirely, not just POST /unload.
 - `async _fish_s2_reachable(base_url: str) -> bool`
 - `async ensure_fish_s2_process_running(settings: Any, *, sleep: Callable[[float], Any]=asyncio.sleep) -> None` — Start the Fish S2 server process if it isn't already running, and wait

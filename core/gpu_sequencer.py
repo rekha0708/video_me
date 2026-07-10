@@ -138,6 +138,39 @@ async def free_comfyui(comfyui_base_url: str) -> bool:
         return False
 
 
+async def unload_wan(wan_base_url: str) -> bool:
+    """Unload Wan's resident video model unconditionally, after every job.
+
+    Nothing in the mainline pipeline ever unloads Wan after Phase B — the only
+    call to ensure_video_model_unloaded(adapters.video) runs once, *before*
+    Phase A, to keep Wan out of VRAM during image rendering. Once Phase B
+    loads it, it stays resident (56GB+) through assemble_video/publish and
+    beyond, for every job outcome (completed, failed, or cancelled) — the
+    only thing that ever evicts it is the *next* job's own pre-Phase-A hook.
+    Called from dashboard_worker's per-job `finally`, alongside
+    stop_fish_s2_process(), so no job leaves Wan loaded for an indefinite
+    number of unrelated jobs after it. Unlike Fish S2, Wan hasn't shown
+    retention that /unload can't reclaim, so a plain HTTP call — not a
+    process kill — is enough here. Best-effort: unreachable or already-idle
+    is a no-op, not an error.
+    """
+    import httpx
+    url = f"{wan_base_url.rstrip('/')}/unload"
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(url)
+        if resp.status_code >= 400:
+            logger.warning("Wan refused to unload (%s): %s", resp.status_code, resp.text[:300])
+            return False
+        return True
+    except httpx.ConnectError:
+        logger.info("Wan unreachable at %s — assuming nothing resident", url)
+        return False
+    except Exception as exc:
+        logger.warning("Could not unload Wan (non-fatal): %s", exc)
+        return False
+
+
 FISH_S2_PROCESS_MATCH = "services.fish_s2_server:app"  # unique pgrep -f pattern
 
 

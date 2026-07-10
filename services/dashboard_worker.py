@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from core.config import AppConfig, load_app_config
-from core.gpu_sequencer import stop_fish_s2_process
+from core.gpu_sequencer import stop_fish_s2_process, unload_wan
 from core.models.dashboard import (
     CreateDashboardJobRequest,
     DashboardApprovalKind,
@@ -177,6 +177,14 @@ class DashboardWorker:
             # only reliable reset; the next job that needs it respawns it on
             # demand (core.gpu_sequencer.ensure_fish_s2_process_running).
             await stop_fish_s2_process()
+            # Wan is never unloaded anywhere in the mainline pipeline after
+            # Phase A's pre-render-loop hook — once Phase B loads it, it stays
+            # resident (56GB+) through assemble_video/publish and beyond, for
+            # every outcome, until some *future* job's own pre-Phase-A hook
+            # happens to evict it. Unlike Fish S2 this is a plain HTTP
+            # /unload, not a process kill — Wan hasn't shown retention beyond
+            # what /unload reclaims.
+            await unload_wan(self.config.settings.wan_base_url)
 
     async def _execute_pipeline(self, action: DashboardQueueItem) -> None:
         """Dispatch to the right workflow function based on job phase."""

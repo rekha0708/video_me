@@ -11,6 +11,7 @@ from core.gpu_sequencer import (
     prepare_video_model,
     prepare_voice_model,
     stop_fish_s2_process,
+    unload_wan,
 )
 
 
@@ -369,3 +370,47 @@ async def test_ensure_fish_s2_process_running_raises_timeout_if_never_reachable(
             assert False, "expected TimeoutError"
         except TimeoutError as exc:
             assert "2s" in str(exc)
+
+
+# ------------------------------------------------------------------ unload_wan
+# Nothing in the mainline pipeline ever unloads Wan after Phase B loads it —
+# the only ensure_video_model_unloaded(adapters.video) call runs once, before
+# Phase A. unload_wan() is called unconditionally from dashboard_worker's
+# per-job `finally` instead, independent of adapter instances (same URL-based
+# shape as free_comfyui, since dashboard_worker never constructs adapters).
+
+async def test_unload_wan_posts_to_unload_endpoint() -> None:
+    fake_httpx, mock_client = _mock_httpx()
+    with patch.dict(sys.modules, {"httpx": fake_httpx}):
+        result = await unload_wan("http://localhost:8030")
+    assert result is True
+    assert mock_client.post.call_args.args[0] == "http://localhost:8030/unload"
+
+
+async def test_unload_wan_strips_trailing_slash() -> None:
+    fake_httpx, mock_client = _mock_httpx()
+    with patch.dict(sys.modules, {"httpx": fake_httpx}):
+        await unload_wan("http://localhost:8030/")
+    assert mock_client.post.call_args.args[0] == "http://localhost:8030/unload"
+
+
+async def test_unload_wan_returns_false_when_unreachable() -> None:
+    class _FakeConnectError(Exception):
+        pass
+
+    fake_httpx, _ = _mock_httpx(post_error=_FakeConnectError("refused"))
+    fake_httpx.ConnectError = _FakeConnectError
+    with patch.dict(sys.modules, {"httpx": fake_httpx}):
+        result = await unload_wan("http://localhost:8030")
+    assert result is False
+
+
+async def test_unload_wan_returns_false_on_http_error_without_raising() -> None:
+    # Best-effort, unlike WanAdapter.unload() (which raises) — this is called
+    # unconditionally after every job regardless of which video_adapter it
+    # used, so a hiccup here must never fail an otherwise-healthy job.
+    fake_httpx, _ = _mock_httpx(status_code=500)
+    fake_httpx.ConnectError = ConnectionError
+    with patch.dict(sys.modules, {"httpx": fake_httpx}):
+        result = await unload_wan("http://localhost:8030")
+    assert result is False
