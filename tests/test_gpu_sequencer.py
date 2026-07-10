@@ -29,7 +29,6 @@ def _settings(**overrides) -> SimpleNamespace:
         fish_s2_venv_python="/workspace/.venv_fish_s2/bin/uvicorn",
         fish_s2_speech_dir="/workspace/fish-speech",
         fish_s2_log_path="/workspace/logs/fish_s2.log",
-        fish_s2_process_startup_timeout_sec=240,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -353,13 +352,15 @@ async def test_ensure_fish_s2_process_running_spawns_when_unreachable(tmp_path) 
     kwargs = fake_exec.call_args.kwargs
     assert kwargs["env"]["FISH_SPEECH_DIR"] == "/fake/fish-speech"
     assert kwargs["cwd"]  # spawned with an explicit repo-root cwd
-    sleep.assert_awaited_once_with(1)
+    sleep.assert_awaited_once_with(2.0)  # default poll_sec
 
 
 async def test_ensure_fish_s2_process_running_raises_timeout_if_never_reachable(tmp_path) -> None:
+    # fish_s2_load_timeout_sec is the ONE shared budget (see core/config.py) —
+    # no separate "process startup" timeout to independently get wrong.
     settings = _settings(
         fish_s2_log_path=str(tmp_path / "fish_s2.log"),
-        fish_s2_process_startup_timeout_sec=2,
+        fish_s2_load_timeout_sec=2,
     )
     with (
         patch("core.gpu_sequencer._fish_s2_reachable", new=AsyncMock(return_value=False)),

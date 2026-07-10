@@ -206,16 +206,22 @@ async def _fish_s2_reachable(base_url: str) -> bool:
 
 
 async def ensure_fish_s2_process_running(
-    settings: Any, *, sleep: Callable[[float], Any] = asyncio.sleep,
+    settings: Any, *, sleep: Callable[[float], Any] = asyncio.sleep, poll_sec: float = 2.0,
 ) -> None:
     """Start the Fish S2 server process if it isn't already running, and wait
     for it to accept connections before returning.
 
     Pairs with stop_fish_s2_process(): the worker kills the process after
     every job, so the next job that needs voice synthesis must (re)spawn it
-    on demand. This only starts the ASGI process itself — the model weights
-    load (POST /load, polled separately by _prepare_managed_adapter below) is
-    unaffected and still happens afterward.
+    on demand.
+
+    Uses fish_s2_load_timeout_sec — the SAME setting _prepare_managed_adapter
+    uses below for wait_until_loaded — deliberately, not a separate value.
+    fish_s2_server.py's lifespan() loads the model eagerly at startup and
+    blocks the whole ASGI app on it, so "process accepting connections" and
+    "model fully loaded" are the same real-world event for this service, not
+    two independent waits (see core/config.py's fish_s2_load_timeout_sec for
+    the verified timing data this budget is based on).
     """
     if await _fish_s2_reachable(settings.fish_s2_base_url):
         return
@@ -247,15 +253,15 @@ async def ensure_fish_s2_process_running(
         # here (end of `with`) doesn't affect the detached child's logging,
         # the same fire-and-forget pattern `nohup ... > log 2>&1 &` uses.
 
-    deadline_tries = max(1, int(settings.fish_s2_process_startup_timeout_sec))
+    deadline_tries = max(1, int(settings.fish_s2_load_timeout_sec / poll_sec))
     for _ in range(deadline_tries):
         if await _fish_s2_reachable(settings.fish_s2_base_url):
             log_event(logger, "fish_s2_process_started")
             return
-        await sleep(1)
+        await sleep(poll_sec)
     raise TimeoutError(
         f"Fish Audio S2 process did not start within "
-        f"{settings.fish_s2_process_startup_timeout_sec}s. Check {log_path}."
+        f"{settings.fish_s2_load_timeout_sec}s. Check {log_path}."
     )
 
 

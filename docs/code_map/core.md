@@ -75,7 +75,7 @@ GPU model sequencing between pipeline phases.
 - `async unload_wan(wan_base_url: str) -> bool` — Unload Wan's resident video model unconditionally, after every job.
 - `async stop_fish_s2_process() -> bool` — Kill the Fish S2 server process entirely, not just POST /unload.
 - `async _fish_s2_reachable(base_url: str) -> bool`
-- `async ensure_fish_s2_process_running(settings: Any, *, sleep: Callable[[float], Any]=asyncio.sleep) -> None` — Start the Fish S2 server process if it isn't already running, and wait
+- `async ensure_fish_s2_process_running(settings: Any, *, sleep: Callable[[float], Any]=asyncio.sleep, poll_sec: float=2.0) -> None` — Start the Fish S2 server process if it isn't already running, and wait
 - `async ensure_video_model_unloaded(video_adapter: Any) -> None` — Make sure a VRAM-managed video model is out of VRAM before the render phase.
 - `async _prepare_managed_adapter(adapter: Any, settings: Any, *, gap_sec: float, timeout_sec: float, stage_name: str, sleep: Callable[[float], Any], notify: Callable[[str, str], Any] | None) -> None` — Bring a VRAM-managed adapter's model into memory.
 - `async prepare_video_model(video_adapter: Any, settings: Any, *, sleep: Callable[[float], Any]=asyncio.sleep, notify: Callable[[str, str], Any] | None=None) -> None` — Bring a VRAM-managed video model into memory after the render phase.

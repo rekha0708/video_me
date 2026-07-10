@@ -282,7 +282,14 @@ printf '\nWaiting for required services to become ready...\n'
 FAILED=0
 wait_for "Ollama"         "http://localhost:11434/api/tags"          20 || FAILED=1
 wait_for "ComfyUI"        "http://localhost:8188/"                   40 || FAILED=1
-wait_for "Fish Audio S2"  "http://localhost:8025/health"             15 '"model_loaded":true' || FAILED=1
+# 150 tries * 4s = 600s, matching core/config.py's fish_s2_load_timeout_sec —
+# same real-world wait (fish_s2_server.py's lifespan() loads the model
+# eagerly at startup, so /health can't even respond, let alone report
+# model_loaded=true, until the full load finishes). 5 real loads timed this
+# session ranged 63.8-122.6s; the previous 15-try/60s budget here was never
+# enough and failed silently (this check is advisory, not job-blocking, so
+# nobody noticed until the same under-budget assumption also broke real jobs).
+wait_for "Fish Audio S2"  "http://localhost:8025/health"             150 '"model_loaded":true' || FAILED=1
 
 printf '\n'
 cd "$ROOT_DIR"

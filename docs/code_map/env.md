@@ -48,11 +48,10 @@
 | `VIDEO_ME_TTS_BASE_URL` | `str` | `'http://localhost:8020'` |
 | `VIDEO_ME_FISH_S2_BASE_URL` | `str` | `'http://localhost:8025'` |
 | `VIDEO_ME_FISH_S2_LOAD_GAP_SEC` | `int` | `5` |
-| `VIDEO_ME_FISH_S2_LOAD_TIMEOUT_SEC` | `int` | `240` |
+| `VIDEO_ME_FISH_S2_LOAD_TIMEOUT_SEC` | `int` | `600` |
 | `VIDEO_ME_FISH_S2_VENV_PYTHON` | `str` | `'/workspace/.venv_fish_s2/bin/uvicorn'` |
 | `VIDEO_ME_FISH_S2_SPEECH_DIR` | `str` | `'/workspace/fish-speech'` |
 | `VIDEO_ME_FISH_S2_LOG_PATH` | `str` | `'/workspace/logs/fish_s2.log'` |
-| `VIDEO_ME_FISH_S2_PROCESS_STARTUP_TIMEOUT_SEC` | `int` | `240` |
 | `VIDEO_ME_TARGET_LANGUAGE` | `str` | `'en'` |
 | `VIDEO_ME_LIPSYNC_BASE_URL` | `str` | `'http://localhost:8040'` |
 | `VIDEO_ME_WHISPER_MODEL_SIZE` | `str` | `'medium'` |

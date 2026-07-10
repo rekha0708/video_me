@@ -74,11 +74,11 @@ def _no_real_fish_s2_process_spawn(monkeypatch):
     core.workflow, hence patching the former) before loading a managed voice
     adapter. Without this, any test exercising a managed voice adapter with
     real default Settings() would attempt to actually spawn a Fish S2
-    subprocess and poll it for up to fish_s2_process_startup_timeout_sec
-    (30s) — this bit a real test run: it silently no-op'd while the real
-    Fish S2 happened to be up, then started genuinely timing out and failing
-    once it was correctly down (per stop_fish_s2_process's own fix). Autouse
-    so passing never again depends on incidental real-service state."""
+    subprocess and poll it for up to fish_s2_load_timeout_sec (600s) — this
+    bit a real test run: it silently no-op'd while the real Fish S2 happened
+    to be up, then started genuinely timing out and failing once it was
+    correctly down (per stop_fish_s2_process's own fix). Autouse so passing
+    never again depends on incidental real-service state."""
     mock = AsyncMock(return_value=None)
     monkeypatch.setattr("core.gpu_sequencer.ensure_fish_s2_process_running", mock)
     return mock

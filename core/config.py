@@ -64,13 +64,26 @@ class Settings(BaseSettings):
     tts_adapter: Literal["chatterbox", "fish_s2"] = "fish_s2"
     tts_base_url: str = "http://localhost:8020"       # Chatterbox (fallback)
     fish_s2_base_url: str = "http://localhost:8025"   # Fish Audio S2 (default)
-    # Fish S2 deferred-loading sequence (core/gpu_sequencer.py), mirroring the Wan
-    # gap/timeout above. Still far shorter than Wan's 1800s, but a plain weights
-    # load (LLAMA + DAC decoder + warmup generation) has been observed taking
-    # ~120-150s cold on this hardware — 120s left ~0 margin and timed out in
-    # production; 240s gives real headroom without approaching Wan's budget.
     fish_s2_load_gap_sec: int = 5
-    fish_s2_load_timeout_sec: int = 240
+    # ONE budget for the entire eager-load-to-ready wait, used by both
+    # ensure_fish_s2_process_running (waiting for the process to accept
+    # connections at all) and _prepare_managed_adapter's wait_until_loaded
+    # (waiting for model_loaded=true) — deliberately the same setting, not two
+    # independently-guessable ones. fish_s2_server.py's lifespan() loads the
+    # model EAGERLY at startup and blocks the whole ASGI app on it — /health
+    # can't respond at all, let alone report model_loaded=true, until the load
+    # finishes — so "process reachable" and "model loaded" are literally the
+    # same real-world event here, not two separate waits (confirmed in the
+    # code and in log ordering: "Application startup complete" only ever
+    # prints after "Models warmed up"). A previous version of this setting
+    # split these into two values (240s / 30s) picked without checking that;
+    # the second one caused two production job failures in one session.
+    # Real data — 5 successful loads timestamped this session (2026-07-10):
+    # 63.8s, 63.8s, 94.3s, 122.6s, 80.1s -> min 63.8s, max 122.6s, mean 88.8s.
+    # 600s is a stated ~5x margin over the verified max, not a fresh guess —
+    # errs toward waiting (a slow load that succeeds costs nothing) rather
+    # than a tight bound that risks another false-timeout job failure.
+    fish_s2_load_timeout_sec: int = 600
     # Fish S2's own CUDA allocator retains memory across synthesis calls that
     # POST /unload + torch.cuda.empty_cache() cannot reclaim (observed ~63GB
     # resident vs ~20GB fresh-process baseline after one job's worth of TTS
@@ -80,15 +93,6 @@ class Settings(BaseSettings):
     fish_s2_venv_python: str = "/workspace/.venv_fish_s2/bin/uvicorn"
     fish_s2_speech_dir: str = "/workspace/fish-speech"
     fish_s2_log_path: str = "/workspace/logs/fish_s2.log"
-    # Fish S2's lifespan() loads the model EAGERLY at startup and that load
-    # blocks the whole ASGI app — /health can't respond until it's done —
-    # unlike Wan's genuinely deferred POST /load. So "process reachable" and
-    # "model loaded" are the same ~120-150s wait here, not two separate
-    # budgets; this needs the same headroom as fish_s2_load_timeout_sec above,
-    # not a short "is the process merely up yet" check. 30s (the original
-    # value) timed out in production twice in one session before a job even
-    # got a chance to synthesize anything.
-    fish_s2_process_startup_timeout_sec: int = 240
 
     # --- language selection ---
     target_language: str = "en"  # "en" | "hi" | "both"
