@@ -15,10 +15,13 @@ SKIP_PYTHON_DEPS=0
 SKIP_SERVICES=0
 SKIP_OLLAMA=0
 SKIP_COMFYUI=0
+SKIP_LTX=1
 SKIP_FISH_S2=0
 SKIP_A1111=1
 SKIP_CHATTERBOX=1
-SKIP_WAN=1
+SKIP_WAN=0
+SKIP_WAN_I2V=1
+SKIP_LATENTSYNC=1
 SKIP_MUSETALK=1
 SKIP_ENV_FILE=0
 ALLOW_MISSING_SERVICES=0
@@ -39,15 +42,20 @@ Full GPU-machine setup for video_me on RunPod (or any Ubuntu+CUDA box):
   2. Install system packages  (ffmpeg, yt-dlp, curl, git)
   3. Create Python venv + install runtime extras
   4. Install Ollama + pull qwen3.6:35b (LLM + VLM for all stages)
-  5. Clone + set up ComfyUI (Flux 2.0 Dev image gen + LTX-2.3 22B video gen)
+  5. Clone + set up ComfyUI model dirs (Flux 2.0 Dev image weights)
   6. Clone + set up Fish Audio S2 TTS (EN + HI, port 8025)
-  7. Write .env with GPU-correct settings
-  8. Run runtime readiness check
+  7. Clone + set up Wan2.2 S2V (singing video, port 8031)
+  8. Write .env with GPU-correct settings
+  9. Run runtime readiness check
 
   Fallback services (opt-in only, not installed by default):
     --with-a1111        AUTOMATIC1111 + SD 1.5  (RENDER_ADAPTER=a1111)
     --with-chatterbox   Chatterbox TTS           (TTS_ADAPTER=chatterbox)
-    --with-wan          Wan 2.2 + MuseTalk       (VIDEO_ADAPTER=wan)
+    --with-wan-i2v      Wan 2.2 I2V model        (VIDEO_ADAPTER=wan)
+    --with-latentsync   LatentSync repair        (LIPSYNC_ADAPTER=latentsync)
+    --with-musetalk     MuseTalk repair fallback (LIPSYNC_ADAPTER=musetalk)
+    --with-ltx          Legacy LTX/ComfyUI video (VIDEO_ADAPTER=ltx)
+    --with-wan          Back-compat: Wan I2V + LatentSync + MuseTalk
 
 Network volume (RunPod):
   Models and service repos are placed under WORKSPACE (default /workspace) so
@@ -59,11 +67,19 @@ Options:
   --skip-system-deps        Skip apt-get installs
   --skip-python-deps        Skip pip install
   --skip-ollama             Skip Ollama install + model pull
-  --skip-comfyui            Skip ComfyUI install (Flux + LTX, default render/video)
+  --skip-comfyui            Skip ComfyUI/model-dir install (Flux weights + legacy fallbacks)
+  --skip-ltx                Skip legacy LTX weights/custom nodes [default]
   --skip-fish-s2            Skip Fish Audio S2 install (default TTS, port 8025)
+  --skip-wan                Skip Wan2.2 S2V install (default video, port 8031)
+  --skip-wan-i2v            Skip Wan2.2 I2V fallback weights
+  --skip-latentsync         Skip LatentSync fallback setup
   --with-a1111              Also install AUTOMATIC1111 (SD 1.5 render fallback, port 7860)
   --with-chatterbox         Also install Chatterbox TTS (EN-only fallback, port 8020)
-  --with-wan                Also install Wan2.2 + MuseTalk (video/lipsync fallback)
+  --with-wan-i2v            Also install Wan2.2 I2V weights (VIDEO_ADAPTER=wan)
+  --with-latentsync         Also install LatentSync repair (preferred for Wan I2V)
+  --with-musetalk           Also install MuseTalk repair (legacy Wan I2V fallback)
+  --with-ltx                Also install legacy LTX ComfyUI nodes + weights
+  --with-wan                Back-compat alias for --with-wan-i2v --with-latentsync --with-musetalk
   --skip-env-file           Do not write .env (keep existing)
   --skip-services           Skip service HTTP checks in final readiness
   --allow-missing-services  Treat missing services as warnings not failures
@@ -80,13 +96,13 @@ Quick commands:
   bash scripts/setup_gpu.sh
 
   # Full setup + fallback adapters:
-  bash scripts/setup_gpu.sh --with-a1111 --with-chatterbox --with-wan
+  bash scripts/setup_gpu.sh --with-a1111 --with-chatterbox --with-wan-i2v --with-latentsync
 
   # Dry-run to preview all steps:
   bash scripts/setup_gpu.sh --dry-run
 
   # Code-only smoke test (no GPU, no services):
-  bash scripts/setup_gpu.sh --code-test --skip-services --skip-ollama --skip-comfyui --skip-fish-s2
+  bash scripts/setup_gpu.sh --code-test --skip-services --skip-ollama --skip-comfyui --skip-fish-s2 --skip-wan
 
   # After pod restart (services not running, everything already installed):
   bash scripts/start_services.sh
@@ -116,13 +132,20 @@ while [[ $# -gt 0 ]]; do
     --skip-python-deps)   SKIP_PYTHON_DEPS=1; shift ;;
     --skip-ollama)        SKIP_OLLAMA=1; shift ;;
     --skip-comfyui)       SKIP_COMFYUI=1; shift ;;
+    --skip-ltx)           SKIP_LTX=1; shift ;;
     --skip-fish-s2)       SKIP_FISH_S2=1; shift ;;
     --with-a1111)         SKIP_A1111=0; shift ;;
     --with-chatterbox)    SKIP_CHATTERBOX=0; shift ;;
-    --with-wan)           SKIP_WAN=0; SKIP_MUSETALK=0; shift ;;
-    # kept for back-compat but now defaults to skip
+    --with-wan-i2v)       SKIP_WAN=0; SKIP_WAN_I2V=0; shift ;;
+    --with-latentsync)    SKIP_LATENTSYNC=0; shift ;;
+    --with-musetalk)      SKIP_MUSETALK=0; shift ;;
+    --with-ltx)           SKIP_LTX=0; shift ;;
+    --with-wan)           SKIP_WAN=0; SKIP_WAN_I2V=0; SKIP_LATENTSYNC=0; SKIP_MUSETALK=0; shift ;;
+    # Kept for back-compat with older setup commands.
     --skip-a1111)         SKIP_A1111=1; shift ;;
     --skip-wan)           SKIP_WAN=1; shift ;;
+    --skip-wan-i2v)       SKIP_WAN_I2V=1; shift ;;
+    --skip-latentsync)    SKIP_LATENTSYNC=1; shift ;;
     --skip-musetalk)      SKIP_MUSETALK=1; shift ;;
     --skip-env-file)      SKIP_ENV_FILE=1; shift ;;
     --skip-services)      SKIP_SERVICES=1; shift ;;
@@ -165,11 +188,11 @@ check_cuda() {
 
 # ── Step 2: System packages ──────────────────────────────────────────────────
 install_system_deps() {
-  log "Installing system packages (ffmpeg, yt-dlp, curl, git)"
+  log "Installing system packages (ffmpeg, yt-dlp, curl, git, libgl1)"
 
   if need_cmd apt-get; then
     run sudo apt-get update -qq
-    run sudo apt-get install -y --no-install-recommends ffmpeg curl git
+    run sudo apt-get install -y --no-install-recommends ffmpeg curl git libgl1
     ok "apt packages installed"
 
     # yt-dlp system binary (in addition to the Python package)
@@ -256,7 +279,7 @@ setup_ollama() {
 
   # Start Ollama server in background for model pulls, stop it after
   # qwen3.6:35b handles ALL stages: text LLM + image critique + video critique (one model).
-  # ~30 GB VRAM. G200 budget: qwen3.6:35b (~30 GB) + LTX (~44 GB) + Fish S2 (~20 GB) = ~94 GB peak.
+  # ~30 GB VRAM. Wan S2V and Fish S2 are sequenced later by the workflow.
   log "Pulling Ollama models (qwen3.6:35b — all stages)"
   if [[ "$DRY_RUN" == "0" ]]; then
     OLLAMA_MODELS="$WORKSPACE/ollama" nohup ollama serve &>/tmp/ollama_setup.log &
@@ -273,9 +296,9 @@ setup_ollama() {
   fi
 }
 
-# ── Step 5: ComfyUI (Flux 2.0 Dev + LTX-Video 2.3) ──────────────────────────
+# ── Step 5: ComfyUI model dirs (Flux 2.0 Dev + optional LTX) ────────────────
 setup_comfyui() {
-  log "Setting up ComfyUI (Flux 2.0 Dev image gen + LTX-2.3 22B video gen, port 8188)"
+  log "Setting up ComfyUI model dirs (Flux 2.0 Dev image weights; LTX optional)"
 
   local comfyui_dir="$WORKSPACE/ComfyUI"
 
@@ -289,7 +312,7 @@ setup_comfyui() {
   run pip3 install -r "$comfyui_dir/requirements.txt" || \
       warn "Some ComfyUI deps may have failed — check $comfyui_dir/requirements.txt"
 
-  # Custom nodes for Flux + LTX
+  # Custom nodes for Flux + optional LTX
   local custom_nodes="$comfyui_dir/custom_nodes"
   if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$custom_nodes"; fi
 
@@ -300,14 +323,18 @@ setup_comfyui() {
     ok "ComfyUI-Manager already installed"
   fi
 
-  if [[ ! -d "$custom_nodes/ComfyUI-LTXVideo" ]]; then
-    run git clone https://github.com/Lightricks/ComfyUI-LTXVideo.git \
-        "$custom_nodes/ComfyUI-LTXVideo"
-    run pip3 install -r "$custom_nodes/ComfyUI-LTXVideo/requirements.txt" || \
-        warn "Some LTX node deps may have failed"
-    ok "LTX-Video custom nodes installed"
+  if [[ "$SKIP_LTX" == "0" ]]; then
+    if [[ ! -d "$custom_nodes/ComfyUI-LTXVideo" ]]; then
+      run git clone https://github.com/Lightricks/ComfyUI-LTXVideo.git \
+          "$custom_nodes/ComfyUI-LTXVideo"
+      run pip3 install -r "$custom_nodes/ComfyUI-LTXVideo/requirements.txt" || \
+          warn "Some LTX node deps may have failed"
+      ok "LTX-Video custom nodes installed"
+    else
+      ok "LTX-Video custom nodes already installed"
+    fi
   else
-    ok "LTX-Video custom nodes already installed"
+    ok "Skipping legacy LTX custom nodes (use --with-ltx to install)"
   fi
 
   # Model directories
@@ -385,39 +412,43 @@ setup_comfyui() {
     ok "CLIP-L already at $clip_model"
   fi
 
-  # ── LTX-2.3 22B distilled v1.1 (~42 GB) ─────────────────────────────────
-  local ltx_model="$models_dir/checkpoints/ltx-2.3-22b-distilled-1.1.safetensors"
-  if [[ ! -f "$ltx_model" ]]; then
-    log "Downloading LTX-2.3 22B distilled v1.1 (~42 GB) — this will take a while"
-    run hf download Lightricks/LTX-2.3 \
-        ltx-2.3-22b-distilled-1.1.safetensors \
-        --local-dir "$models_dir/checkpoints" \
-        ${HF_TOKEN:+--token "$HF_TOKEN"}
-    ok "LTX-2.3 22B distilled v1.1 downloaded to $ltx_model"
-  else
-    ok "LTX-2.3 already at $ltx_model"
-  fi
-
-  # ── LTX-AV Gemma-3 text encoder (~8.8 GB) ───────────────────────────────
-  # Required by the LTXAVTextEncoderLoader node (assets/comfyui_workflows/ltx_i2v.json).
-  # This node is hardcoded to a Gemma-3 tokenizer regardless of which file is
-  # passed in — any other text encoder (e.g. t5xxl) fails with "invalid tokenizer".
-  local ltx_text_encoder="$models_dir/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors"
-  if [[ ! -f "$ltx_text_encoder" ]]; then
-    log "Downloading LTX-AV Gemma-3 text encoder (~8.8 GB)"
-    run hf download Comfy-Org/ltx-2 \
-        split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors \
-        --local-dir "$models_dir/text_encoders" \
-        ${HF_TOKEN:+--token "$HF_TOKEN"}
-    # hf download preserves the split_files/text_encoders/ subpath — flatten it.
-    if [[ -f "$models_dir/text_encoders/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors" ]]; then
-      run mv "$models_dir/text_encoders/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors" \
-          "$ltx_text_encoder"
-      run rm -rf "$models_dir/text_encoders/split_files"
+  if [[ "$SKIP_LTX" == "0" ]]; then
+    # ── LTX-2.3 22B distilled v1.1 (~42 GB) ───────────────────────────────
+    local ltx_model="$models_dir/checkpoints/ltx-2.3-22b-distilled-1.1.safetensors"
+    if [[ ! -f "$ltx_model" ]]; then
+      log "Downloading LTX-2.3 22B distilled v1.1 (~42 GB) — this will take a while"
+      run hf download Lightricks/LTX-2.3 \
+          ltx-2.3-22b-distilled-1.1.safetensors \
+          --local-dir "$models_dir/checkpoints" \
+          ${HF_TOKEN:+--token "$HF_TOKEN"}
+      ok "LTX-2.3 22B distilled v1.1 downloaded to $ltx_model"
+    else
+      ok "LTX-2.3 already at $ltx_model"
     fi
-    ok "LTX-AV Gemma-3 text encoder downloaded to $ltx_text_encoder"
+
+    # ── LTX-AV Gemma-3 text encoder (~8.8 GB) ─────────────────────────────
+    # Required by the LTXAVTextEncoderLoader node (assets/comfyui_workflows/ltx_i2v.json).
+    # This node is hardcoded to a Gemma-3 tokenizer regardless of which file is
+    # passed in — any other text encoder (e.g. t5xxl) fails with "invalid tokenizer".
+    local ltx_text_encoder="$models_dir/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors"
+    if [[ ! -f "$ltx_text_encoder" ]]; then
+      log "Downloading LTX-AV Gemma-3 text encoder (~8.8 GB)"
+      run hf download Comfy-Org/ltx-2 \
+          split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors \
+          --local-dir "$models_dir/text_encoders" \
+          ${HF_TOKEN:+--token "$HF_TOKEN"}
+      # hf download preserves the split_files/text_encoders/ subpath — flatten it.
+      if [[ -f "$models_dir/text_encoders/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors" ]]; then
+        run mv "$models_dir/text_encoders/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors" \
+            "$ltx_text_encoder"
+        run rm -rf "$models_dir/text_encoders/split_files"
+      fi
+      ok "LTX-AV Gemma-3 text encoder downloaded to $ltx_text_encoder"
+    else
+      ok "LTX-AV Gemma-3 text encoder already at $ltx_text_encoder"
+    fi
   else
-    ok "LTX-AV Gemma-3 text encoder already at $ltx_text_encoder"
+    ok "Skipping legacy LTX weights (use --with-ltx to install)"
   fi
 
   # Symlink project LoRA dir into ComfyUI's loras folder
@@ -624,21 +655,21 @@ setup_chatterbox() {
 
 # ── Step 6b: Wan 2.2 ─────────────────────────────────────────────────────────
 setup_wan() {
-  log "Setting up Wan2.2 image-to-video (port 8030)"
-  # Wan2.2 is a fallback video adapter (VIDEO_ADAPTER=wan). The default adapter
-  # is LTX-2.3 via ComfyUI — only install Wan if you need the fallback path.
+  log "Setting up Wan2.2 Speech-to-Video (port 8031)"
+  # Wan2.2 S2V is the default singing video adapter (VIDEO_ADAPTER=wan_s2v).
+  # The I2V model is optional for fallback comparison runs (VIDEO_ADAPTER=wan).
   #
-  # Clone layout: git clone → $WORKSPACE/Wan2.2/Wan2.2/ (repo root with wan/ pkg)
+  # Clone layout: git clone → $WORKSPACE/Wan2.2/ (repo root with generate.py + wan/ pkg)
   # The wan Python package is installed as editable so `import wan` works without
-  # sys.path tricks. WAN_DIR in start_services.sh points to the inner repo root.
+  # sys.path tricks. WAN_DIR in start_services.sh points to this repo root.
 
-  local wan_outer="$WORKSPACE/Wan2.2"
-  local wan_dir="$WORKSPACE/Wan2.2/Wan2.2"   # repo root containing wan/ package
-  local wan_model_dir="$WORKSPACE/Wan2.2-I2V-A14B"
+  local wan_dir="$WORKSPACE/Wan2.2"   # repo root containing generate.py + wan/ package
+  local wan_s2v_model_dir="$WORKSPACE/Wan2.2-S2V-14B"
+  local wan_i2v_model_dir="$WORKSPACE/Wan2.2-I2V-A14B"
   local venv_dir="$WORKSPACE/.venv_wan"
 
   if [[ ! -d "$wan_dir" ]]; then
-    run git clone https://github.com/Wan-Video/Wan2.2.git "$wan_outer"
+    run git clone https://github.com/Wan-Video/Wan2.2.git "$wan_dir"
   else
     ok "Wan2.2 already cloned at $wan_dir"
     run git -C "$wan_dir" pull --ff-only || warn "git pull failed — continuing"
@@ -678,18 +709,83 @@ setup_wan() {
     ok "flash_attn already installed"
   fi
 
-  if [[ ! -d "$wan_model_dir" ]] || [[ -z "$(ls -A "$wan_model_dir" 2>/dev/null)" ]]; then
-    log "Downloading Wan2.2-I2V-A14B model (~30 GB) — this will take a while"
-    if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$wan_model_dir"; fi
+  if [[ ! -d "$wan_s2v_model_dir" ]] || [[ -z "$(ls -A "$wan_s2v_model_dir" 2>/dev/null)" ]]; then
+    log "Downloading Wan2.2-S2V-14B model — this will take a while"
+    if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$wan_s2v_model_dir"; fi
     run env HF_HUB_ENABLE_HF_TRANSFER=0 ${HF_TOKEN:+HF_TOKEN="$HF_TOKEN"} \
-        hf download Wan-AI/Wan2.2-I2V-A14B --local-dir "$wan_model_dir"
-    ok "Wan2.2-I2V-A14B downloaded to $wan_model_dir"
+        hf download Wan-AI/Wan2.2-S2V-14B --local-dir "$wan_s2v_model_dir"
+    ok "Wan2.2-S2V-14B downloaded to $wan_s2v_model_dir"
   else
-    ok "Wan2.2 model already at $wan_model_dir"
+    ok "Wan2.2-S2V model already at $wan_s2v_model_dir"
+  fi
+
+  if [[ "$SKIP_WAN_I2V" == "0" ]]; then
+    if [[ ! -d "$wan_i2v_model_dir" ]] || [[ -z "$(ls -A "$wan_i2v_model_dir" 2>/dev/null)" ]]; then
+      log "Downloading Wan2.2-I2V-A14B model (~30 GB) — this will take a while"
+      if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$wan_i2v_model_dir"; fi
+      run env HF_HUB_ENABLE_HF_TRANSFER=0 ${HF_TOKEN:+HF_TOKEN="$HF_TOKEN"} \
+          hf download Wan-AI/Wan2.2-I2V-A14B --local-dir "$wan_i2v_model_dir"
+      ok "Wan2.2-I2V-A14B downloaded to $wan_i2v_model_dir"
+    else
+      ok "Wan2.2-I2V model already at $wan_i2v_model_dir"
+    fi
   fi
 }
 
-# ── Step 6c: MuseTalk ─────────────────────────────────────────────────────────
+# ── Step 6c: LatentSync ───────────────────────────────────────────────────────
+setup_latentsync() {
+  log "Setting up LatentSync lip-sync repair (port 8041)"
+  # LatentSync is the preferred repair stage for VIDEO_ADAPTER=wan. It is not
+  # used by the default S2V path because Wan S2V receives the audio directly.
+
+  local latentsync_dir="$WORKSPACE/LatentSync"
+  local venv_dir="$WORKSPACE/.venv_latentsync"
+
+  if [[ ! -d "$latentsync_dir" ]]; then
+    run git clone https://github.com/bytedance/LatentSync.git "$latentsync_dir"
+  else
+    ok "LatentSync already cloned at $latentsync_dir"
+    run git -C "$latentsync_dir" pull --ff-only || warn "git pull failed — continuing"
+  fi
+
+  local bootstrap_python="python3"
+  if need_cmd python3.10; then
+    bootstrap_python="python3.10"
+  else
+    warn "python3.10 not found — using python3; LatentSync upstream recommends Python 3.10"
+  fi
+
+  if [[ ! -d "$venv_dir" ]]; then
+    log "Creating $venv_dir (system-site-packages for torch/CUDA)"
+    run "$bootstrap_python" -m venv --system-site-packages "$venv_dir"
+  else
+    ok "LatentSync venv already exists at $venv_dir"
+  fi
+
+  local pip="$venv_dir/bin/pip"
+  run "$pip" install --upgrade pip
+  run "$pip" install -r "$latentsync_dir/requirements.txt" || warn "Some LatentSync deps may have failed"
+  run "$pip" install fastapi uvicorn python-multipart "huggingface_hub[cli]"
+
+  local ckpt_dir="$latentsync_dir/checkpoints"
+  if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$ckpt_dir"; fi
+  if [[ ! -f "$ckpt_dir/latentsync_unet.pt" ]]; then
+    run "$venv_dir/bin/huggingface-cli" download ByteDance/LatentSync-1.6 \
+      latentsync_unet.pt --local-dir "$ckpt_dir"
+  else
+    ok "LatentSync U-Net checkpoint already exists"
+  fi
+  if [[ ! -f "$ckpt_dir/whisper/tiny.pt" ]]; then
+    run "$venv_dir/bin/huggingface-cli" download ByteDance/LatentSync-1.6 \
+      whisper/tiny.pt --local-dir "$ckpt_dir"
+  else
+    ok "LatentSync Whisper checkpoint already exists"
+  fi
+
+  ok "LatentSync setup complete (venv: $venv_dir)"
+}
+
+# ── Step 6d: MuseTalk ─────────────────────────────────────────────────────────
 setup_musetalk() {
   log "Setting up MuseTalk lip-sync (port 8040)"
   # Strategy: isolated venv at /workspace/.venv_musetalk with --system-site-packages
@@ -827,12 +923,13 @@ VIDEO_ME_LLM_BASE_URL=http://localhost:11434/v1
 VIDEO_ME_CRITIQUE_MODEL=qwen3.6:35b
 VIDEO_ME_CRITIQUE_BASE_URL=http://localhost:11434/v1
 
-# Render: ComfyUI + Flux 2.0 Dev (default) | a1111 (fallback)
+# Render: musubi Flux 2.0 Dev (default) | a1111/comfyui_flux (fallback)
 VIDEO_ME_RENDER_ADAPTER=musubi_flux
 VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188
 
-# Video: LTX-Video 2.3 via ComfyUI (default) | wan (fallback)
-VIDEO_ME_VIDEO_ADAPTER=ltx
+# Video: Wan2.2 S2V image+audio singing video (default) | wan I2V | ltx legacy
+VIDEO_ME_VIDEO_ADAPTER=wan_s2v
+VIDEO_ME_WAN_S2V_BASE_URL=http://localhost:8031
 
 # TTS: Fish Audio S2 (default, EN + HI + 80 languages) | chatterbox (EN-only fallback)
 VIDEO_ME_TTS_ADAPTER=fish_s2
@@ -845,6 +942,9 @@ VIDEO_ME_TARGET_LANGUAGE=en
 VIDEO_ME_SD_BASE_URL=http://localhost:7860
 VIDEO_ME_TTS_BASE_URL=http://localhost:8020
 VIDEO_ME_WAN_BASE_URL=http://localhost:8030
+VIDEO_ME_LIPSYNC_ADAPTER=latentsync
+VIDEO_ME_LATENTSYNC_BASE_URL=http://localhost:8041
+VIDEO_ME_MUSETALK_BASE_URL=http://localhost:8040
 VIDEO_ME_LIPSYNC_BASE_URL=http://localhost:8040
 
 # Uncomment for PostgreSQL job store + S3 artifact store:
@@ -923,6 +1023,10 @@ if [[ "$SKIP_FISH_S2" == "0" ]]; then
   setup_fish_s2
 fi
 
+if [[ "$SKIP_WAN" == "0" ]]; then
+  setup_wan
+fi
+
 # Fallback adapters (opt-in via --with-*)
 if [[ "$SKIP_A1111" == "0" ]]; then
   setup_a1111
@@ -932,8 +1036,8 @@ if [[ "$SKIP_CHATTERBOX" == "0" ]]; then
   setup_chatterbox
 fi
 
-if [[ "$SKIP_WAN" == "0" ]]; then
-  setup_wan
+if [[ "$SKIP_LATENTSYNC" == "0" ]]; then
+  setup_latentsync
 fi
 
 if [[ "$SKIP_MUSETALK" == "0" ]]; then

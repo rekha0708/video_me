@@ -100,7 +100,8 @@ class DashboardJobOverrides(BaseModel):
     whisper_device: Literal["cpu", "cuda"] | None = None
     whisper_compute_type: str | None = None
     render_adapter: Literal["a1111", "comfyui_flux", "musubi_flux"] | None = None
-    video_adapter: Literal["wan", "ltx"] | None = None
+    video_adapter: Literal["wan_s2v", "wan", "ltx"] | None = None
+    lipsync_adapter: Literal["latentsync", "musetalk"] | None = None
     tts_adapter: Literal["chatterbox", "fish_s2"] | None = None
     image_candidates: int | None = Field(default=None, ge=1, le=10)
     max_shot_duration_sec: float | None = Field(default=None, ge=2.0, le=10.0)

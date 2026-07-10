@@ -257,6 +257,7 @@ Shared Pydantic models for orchestration.
 - `async run_noop_job(source_url: str='noop://phase-0', app_config: AppConfig | None=None) -> Job`
 - `_make_render_adapter(s, work_dir: Path)` — Select render_character adapter based on VIDEO_ME_RENDER_ADAPTER env var.
 - `_make_video_adapter(s, work_dir: Path)` — Select generate_video adapter based on VIDEO_ME_VIDEO_ADAPTER env var.
+- `_make_lipsync_adapter(s, work_dir: Path)` — Select lip_sync repair adapter for video backends without native sync.
 - `_make_tts_adapter(s, work_dir: Path)` — Select synthesize_voice adapter based on VIDEO_ME_TTS_ADAPTER env var.
 - `_make_adapters(config: AppConfig, work_dir: Path, *, approval_overrides: dict | None=None) -> _Adapters` — Instantiate all Phase 1 adapters with job-scoped work directories.
 - `_make_job_context(source_url: str, rights_cleared: bool, config: AppConfig, *, job_id: str | None=None, approval_overrides: dict | None=None) -> _JobContext` — Create stores, job record, work directory, and adapters for one run.
@@ -292,7 +293,7 @@ Shared Pydantic models for orchestration.
 - `async _probe_duration_sec(path: str, ffprobe_bin: str) -> float | None` — Actual media duration via ffprobe; None on any failure.
 - `async _probe_clip_durations(clips: list[VideoClip], ffprobe_bin: str) -> list[VideoClip]` — Replace each clip's duration_sec with its real ffprobe-measured length.
 - `async _build_overlay_windows(shots: list[Shot], clips: list[VideoClip], ffprobe_bin: str) -> 'list[OverlayWindow]'` — Compute the absolute time window of each shot's overlay in the final video.
-- `_collect_existing_shot_artifacts(storyboard: Storyboard, script: Script, cast: Cast, work_dir: Path, video_adapter: str='ltx', render_mode: str='full') -> tuple[list[VideoClip], list[AudioTrack]]` — Reconstruct clip/audio lists from files written by a previous render phase.
+- `_collect_existing_shot_artifacts(storyboard: Storyboard, script: Script, cast: Cast, work_dir: Path, video_adapter: str='wan_s2v', lipsync_adapter: str='latentsync', render_mode: str='full') -> tuple[list[VideoClip], list[AudioTrack]]` — Reconstruct clip/audio lists from files written by a previous render phase.
 - `async _publish_candidate(ctx: _JobContext, script: Script, final_video: FinalVideo, *, language: str='en', stage_hook: Callable[[str, str], None] | None=None) -> None` — Publish an assembled candidate to the manual review folder.
 - `async _critique_candidate(ctx: _JobContext, script: Script, final_video: FinalVideo, attempt: int, *, stage_hook: Callable[[str, str], None] | None=None) -> CritiqueResult` — Run and persist one critique attempt.
 - `_critique_reason(result: CritiqueResult) -> str`

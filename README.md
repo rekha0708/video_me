@@ -7,7 +7,7 @@ interchangeable adapter behind a typed capability ABC.
 ## Status
 
 **Phase 2 code-complete — 315 tests (312 pass locally; 3 stale `json_repair` tests, see CLAUDE.md).**
-Stack: Flux 2.0 Dev (image, 32B) via musubi-tuner + LTX-2.3 22B distilled (video, native lip-sync) via ComfyUI + Fish Audio S2 (TTS).
+Stack: Flux 2.0 Dev (image, 32B) via musubi-tuner + Wan2.2-S2V-14B (image+audio singing video) + Fish Audio S2 (TTS).
 See `BUILD_PROGRESS.md` for the full implementation journal and next steps.
 
 ```
@@ -15,7 +15,7 @@ Phase 0  Skeleton + storage          ✅ COMPLETE
 Phase 1  Full pipeline A1.0–A1.12   ✅ COMPLETE (code)
 Phase 2  Critic loop A2.x            ✅ COMPLETE (code) — VLM service needed for real judgment
 Track B  LoRAs + voice files         ⚠️ PARTIAL — SD1.5 LoRAs trained; Flux 2.0 LoRAs need retraining
-Track D  GPU services                ⚠️ ComfyUI + Fish Audio S2 + Ollama needed
+Track D  GPU services                ⚠️ Wan S2V + Fish Audio S2 + Ollama needed
 ```
 
 ## Quick start (tests only — no services needed)
@@ -234,16 +234,18 @@ and `scripts.check_runtime_readiness`.
 |---|---|---|---|
 | Ollama | 11434 | LLM (analyze, adapt, plan) + VLM critique | ✅ Always |
 | musubi-tuner | — | Flux 2.0 image gen (subprocess, no server) | ✅ Default (image) |
-| ComfyUI | 8188 | LTX-2.3 22B video gen | ✅ Default (video) |
+| Wan 2.2 S2V | 8031 | Image + audio to singing video | ✅ Default (video) |
 | Fish Audio S2 | 8025 | Voice synthesis (EN + HI) | ✅ Default |
+| ComfyUI | 8188 | LTX-2.3 22B video gen / `comfyui_flux` fallback | ⚠️ Legacy/fallback |
 | Chatterbox TTS | 8020 | Voice synthesis (EN only, fallback) | ⚠️ Only if `TTS_ADAPTER=chatterbox` |
 | AUTOMATIC1111 | 7860 | SD 1.5 image gen | ⚠️ Only if `RENDER_ADAPTER=a1111` |
-| Wan 2.2 | 8030 | Image-to-video | ⚠️ Only if `VIDEO_ADAPTER=wan` |
-| MuseTalk | 8040 | Lip sync | ⚠️ Only if `VIDEO_ADAPTER=wan` |
+| Wan 2.2 I2V | 8030 | Image-to-video | ⚠️ Only if `VIDEO_ADAPTER=wan` |
+| LatentSync | 8041 | Lip-sync repair for Wan I2V | ⚠️ Only if `VIDEO_ADAPTER=wan` + `LIPSYNC_ADAPTER=latentsync` |
+| MuseTalk | 8040 | Legacy lip-sync repair | ⚠️ Only if `VIDEO_ADAPTER=wan` + `LIPSYNC_ADAPTER=musetalk` |
 
-> **Default stack needs only 3 services: Ollama + ComfyUI + Fish Audio S2.**
+> **Default singing stack needs 3 services: Ollama + Wan2.2 S2V + Fish Audio S2.**
 
-See `.claude/agents/pipeline-runner.md` for startup commands and pre-flight check.
+See [`docs/WAN_S2V_LATENTSYNC_SETUP.md`](docs/WAN_S2V_LATENTSYNC_SETUP.md) for S2V/LatentSync setup and `.claude/agents/pipeline-runner.md` for startup commands.
 
 ## Architecture
 
@@ -319,15 +321,17 @@ VIDEO_ME_APPROVAL_TIMEOUT_HOURS=24
 | render_character ×N | `MusubiFluxAdapter` | musubi-tuner Flux 2.0 local inference (subprocess) · N=3 candidates |
 | critique_images | `VlmImageCritiqueAdapter` | Ollama qwen3.6:35b · port 11434 · self-learning |
 | approve_images | `ImageApprovalAdapter` | Web UI · localhost:8765 (shared) · grid with per-shot override |
-| generate_video | `LtxAdapter` | LTX-2.3 22B via ComfyUI · port 8188 · native lip-sync |
-| lip_sync | **skipped** | LTX handles it in the same diffusion pass |
 | synthesize_voice | `FishS2TtsAdapter` | Fish Audio S2 · port 8025 · EN + HI |
+| generate_video | `WanS2VAdapter` | Wan2.2 S2V · port 8031 · image + rendered audio, native singing sync |
+| lip_sync | **skipped** | Wan S2V receives the audio before video generation |
 | All LLM + VLM stages | `LlmAdapter` / `VlmCritiqueAdapter` | Ollama qwen3.6:35b · port 11434 (single model, natively multimodal) |
 
 Switch adapters with env vars — no code change needed:
 ```bash
 VIDEO_ME_RENDER_ADAPTER=a1111        # fall back to AUTOMATIC1111 + SD 1.5
-VIDEO_ME_VIDEO_ADAPTER=wan           # fall back to Wan 2.2 + MuseTalk lip-sync
+VIDEO_ME_VIDEO_ADAPTER=wan           # Wan 2.2 I2V + lip-sync repair
+VIDEO_ME_LIPSYNC_ADAPTER=latentsync  # preferred repair for Wan I2V; or: musetalk
+VIDEO_ME_VIDEO_ADAPTER=ltx           # legacy LTX path via ComfyUI
 VIDEO_ME_TTS_ADAPTER=chatterbox      # fall back to Chatterbox TTS (English only)
 ```
 
@@ -354,18 +358,22 @@ VIDEO_ME_CRITIQUE_BASE_URL=http://localhost:11434/v1
 # Language
 VIDEO_ME_TARGET_LANGUAGE=en            # en | hi | both
 
-# Adapter selection (default: musubi_flux + ltx + fish_s2)
+# Adapter selection (default: musubi_flux + wan_s2v + fish_s2)
 VIDEO_ME_RENDER_ADAPTER=musubi_flux    # or: comfyui_flux (needs BFL cloud API), a1111
-VIDEO_ME_VIDEO_ADAPTER=ltx             # or: wan
+VIDEO_ME_VIDEO_ADAPTER=wan_s2v         # or: wan, ltx
 VIDEO_ME_TTS_ADAPTER=fish_s2           # or: chatterbox
+VIDEO_ME_LIPSYNC_ADAPTER=latentsync    # repair for wan I2V; or: musetalk
 
 # Service URLs
-VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188   # ComfyUI (Flux 2.0 image + LTX-2.3 video)
+VIDEO_ME_WAN_S2V_BASE_URL=http://localhost:8031   # Wan2.2 S2V default video
+VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188   # ComfyUI legacy LTX / comfyui_flux fallback
 VIDEO_ME_FISH_S2_BASE_URL=http://localhost:8025   # Fish Audio S2 (EN + HI TTS)
 VIDEO_ME_TTS_BASE_URL=http://localhost:8020        # Chatterbox TTS (fallback)
 VIDEO_ME_SD_BASE_URL=http://localhost:7860         # A1111 (fallback only)
-VIDEO_ME_WAN_BASE_URL=http://localhost:8030        # Wan 2.2 (fallback only)
-VIDEO_ME_LIPSYNC_BASE_URL=http://localhost:8040    # MuseTalk (fallback only)
+VIDEO_ME_WAN_BASE_URL=http://localhost:8030        # Wan 2.2 I2V (fallback only)
+VIDEO_ME_LATENTSYNC_BASE_URL=http://localhost:8041 # LatentSync repair (Wan I2V)
+VIDEO_ME_MUSETALK_BASE_URL=http://localhost:8040   # MuseTalk repair fallback
+VIDEO_ME_LIPSYNC_BASE_URL=http://localhost:8040    # legacy alias for MuseTalk
 
 # Whisper
 VIDEO_ME_WHISPER_DEVICE=cpu              # use cuda on a GPU box

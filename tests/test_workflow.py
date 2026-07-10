@@ -116,7 +116,8 @@ def test_make_adapters_uses_runtime_settings(tmp_path) -> None:
         render_adapter="a1111",
         video_adapter="wan",
         wan_base_url="http://wan.test",
-        lipsync_base_url="http://lipsync.test",
+        lipsync_adapter="musetalk",
+        musetalk_base_url="http://lipsync.test",
         whisper_model_size="small",
         whisper_device="cuda",
         whisper_compute_type="float16",
@@ -145,6 +146,27 @@ def test_make_adapters_uses_runtime_settings(tmp_path) -> None:
     assert adapters.critique._ffprobe_bin == "/opt/bin/ffprobe"
     assert adapters.assemble._ffmpeg_bin == "/opt/bin/ffmpeg"
     assert adapters.ffmpeg_bin == "/opt/bin/ffmpeg"
+
+
+def test_make_adapters_uses_latentsync_runtime_settings(tmp_path) -> None:
+    config = load_app_config()
+    config.settings = Settings(
+        data_dir=tmp_path,
+        artifact_dir=tmp_path / "artifacts",
+        sqlite_path=tmp_path / "video_me.db",
+        video_adapter="wan",
+        lipsync_adapter="latentsync",
+        latentsync_base_url="http://latentsync.test",
+        latentsync_inference_steps=24,
+        latentsync_guidance_scale=1.8,
+    )
+
+    adapters = _make_adapters(config, tmp_path / "job")
+
+    assert adapters.lipsync._base_url == "http://latentsync.test"
+    assert adapters.lipsync._inference_steps == 24
+    assert adapters.lipsync._guidance_scale == 1.8
+    assert adapters.lipsync.work_dir == tmp_path / "job" / "synced" / "wan_latentsync"
 
 
 def test_make_adapters_chatterbox_fallback(tmp_path) -> None:
@@ -715,7 +737,7 @@ async def test_vram_managed_voice_and_render_adapters_sequencing(tmp_path) -> No
 
 @pytest.mark.asyncio
 async def test_unmanaged_video_adapter_skips_sequencing(tmp_path) -> None:
-    """The default LTX adapter (no managed_vram attr) must not get load/unload calls."""
+    """An unmanaged video adapter (no managed_vram attr) must not get load/unload calls."""
     config = _make_config(tmp_path)
     adapters = MagicMock(ffmpeg_bin="ffmpeg")
     adapters.video = MagicMock(spec=[])  # like LtxAdapter: no managed_vram / load / unload
@@ -1552,6 +1574,61 @@ async def test_generate_shot_video_skips_lipsync_for_native(tmp_path) -> None:
 
     adapters.lipsync.run.assert_not_called()
     assert synced.uri == "/c.mp4"
+
+
+@pytest.mark.asyncio
+async def test_generate_shot_video_passes_audio_to_native_video_adapter(tmp_path) -> None:
+    """Wan S2V/LTX-style native sync adapters receive audio_uri during generate_video."""
+    expected_audio = AudioTrack(uri="/dialogue.wav", duration_sec=1.0, speaker_id="max")
+    adapters = MagicMock()
+    adapters.voice.run = AsyncMock(return_value=expected_audio)
+    adapters.video.run = AsyncMock(
+        return_value=VideoClip(uri="/native.mp4", duration_sec=1.0, shot_id="s01")
+    )
+    adapters.video.native_lipsync = True
+    adapters.video.requires_voice_unloaded = False
+    adapters.lipsync.run = AsyncMock()
+
+    shot = _storyboard().shots[0]
+    config = _make_config(tmp_path)
+
+    await _generate_shot_video(
+        shot, _script(), config.cast, adapters, Path(tmp_path), "/img.png"
+    )
+
+    video_req = adapters.video.run.call_args[0][0]
+    assert video_req.audio_uri == "/dialogue.wav"
+
+
+@pytest.mark.asyncio
+async def test_generate_shot_video_unloads_voice_before_s2v_video(tmp_path) -> None:
+    call_order: list[str] = []
+
+    adapters = MagicMock()
+    adapters.voice.managed_vram = True
+    adapters.voice.run = AsyncMock(
+        side_effect=lambda req: call_order.append("voice") or AudioTrack(
+            uri="/dialogue.wav", duration_sec=1.0, speaker_id="max"
+        )
+    )
+    adapters.voice.unload = AsyncMock(side_effect=lambda: call_order.append("voice_unload") or True)
+    adapters.video.run = AsyncMock(
+        side_effect=lambda req: call_order.append("video") or VideoClip(
+            uri="/native.mp4", duration_sec=1.0, shot_id="s01"
+        )
+    )
+    adapters.video.native_lipsync = True
+    adapters.video.requires_voice_unloaded = True
+    adapters.lipsync.run = AsyncMock()
+
+    shot = _storyboard().shots[0]
+    config = _make_config(tmp_path)
+
+    await _generate_shot_video(
+        shot, _script(), config.cast, adapters, Path(tmp_path), "/img.png"
+    )
+
+    assert call_order == ["voice", "voice_unload", "video"]
 
 
 @pytest.mark.asyncio

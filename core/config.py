@@ -49,12 +49,13 @@ class Settings(BaseSettings):
     # --- render_character backend ("a1111", "comfyui_flux", or "musubi_flux") ---
     render_adapter: Literal["a1111", "comfyui_flux", "musubi_flux"] = "musubi_flux"
     sd_base_url: str = "http://localhost:7860"       # AUTOMATIC1111 (kept for fallback)
-    comfyui_base_url: str = "http://localhost:8188"  # ComfyUI (Flux + LTX)
+    comfyui_base_url: str = "http://localhost:8188"  # ComfyUI (legacy LTX + comfyui_flux fallback)
 
-    # --- generate_video backend ("wan" or "ltx") ---
-    video_adapter: Literal["wan", "ltx"] = "ltx"
+    # --- generate_video backend ("wan_s2v", "wan", or legacy "ltx") ---
+    video_adapter: Literal["wan_s2v", "wan", "ltx"] = "wan_s2v"
     wan_base_url: str = "http://localhost:8030"      # Wan 2.2 deferred-load server (fallback)
-    ltx_base_url: str = "http://localhost:8188"      # LTX-Video 2.3 via ComfyUI (default same host)
+    wan_s2v_base_url: str = "http://localhost:8031"  # Wan 2.2 Speech-to-Video server (singing/default)
+    ltx_base_url: str = "http://localhost:8188"      # LTX-Video 2.3 via ComfyUI (legacy)
     # Wan deferred-loading sequence (core/gpu_sequencer.py): gap between unloading
     # the render-phase models and loading Wan, and the readiness-poll ceiling.
     wan_load_gap_sec: int = 30
@@ -97,7 +98,13 @@ class Settings(BaseSettings):
     # --- language selection ---
     target_language: str = "en"  # "en" | "hi" | "both"
 
-    lipsync_base_url: str = "http://localhost:8040"
+    # --- lip-sync repair backend for non-native video adapters ("latentsync" or "musetalk") ---
+    lipsync_adapter: Literal["latentsync", "musetalk"] = "latentsync"
+    lipsync_base_url: str = "http://localhost:8040"   # legacy alias for MuseTalk
+    musetalk_base_url: str = "http://localhost:8040"
+    latentsync_base_url: str = "http://localhost:8041"
+    latentsync_inference_steps: int = 20
+    latentsync_guidance_scale: float = 1.5
     whisper_model_size: str = "medium"
     whisper_device: str = "cuda"
     whisper_compute_type: str = "int8"

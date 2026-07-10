@@ -4,13 +4,15 @@
 #
 # Required services (default stack):
 #   Ollama        (port 11434) — qwen3.6:35b for all LLM + VLM stages
-#   ComfyUI       (port 8188)  — Flux 2.0 Dev image gen + LTX-2.3 22B video gen
+#   Wan 2.2 S2V   (port 8031)  — audio-conditioned singing video generation
 #   Fish Audio S2 (port 8025)  — TTS, EN + HI + 80 languages
 #
 # Fallback services (started only if their dir exists):
 #   AUTOMATIC1111 (port 7860)  — SD 1.5 render_character fallback (RENDER_ADAPTER=a1111)
-#   Wan 2.2       (port 8030)  — image-to-video fallback (VIDEO_ADAPTER=wan)
-#   MuseTalk      (port 8040)  — lip-sync for Wan path
+#   ComfyUI       (port 8188)  — LTX-2.3 legacy video gen / Flux fallback
+#   Wan 2.2 I2V   (port 8030)  — image-to-video fallback (VIDEO_ADAPTER=wan)
+#   LatentSync    (port 8041)  — lip-sync repair for Wan I2V
+#   MuseTalk      (port 8040)  — legacy lip-sync fallback
 #   Chatterbox    (port 8020)  — EN-only TTS fallback (TTS_ADAPTER=chatterbox)
 #
 # Key fact: Ollama lives in base Linux (/usr/local/bin/ollama) which is wiped on
@@ -146,8 +148,8 @@ else
 fi
 
 # ── ComfyUI ───────────────────────────────────────────────────────────────────
-# ComfyUI serves both Flux 2.0 Dev image gen and LTX-2.3 22B video gen (port 8188).
-log "ComfyUI (Flux 2.0 Dev + LTX-2.3 22B, port 8188)"
+# ComfyUI serves the legacy LTX video path and the comfyui_flux render fallback.
+log "ComfyUI (legacy LTX + Flux fallback, port 8188)"
 COMFYUI_DIR="$WORKSPACE/ComfyUI"
 if [[ ! -d "$COMFYUI_DIR" ]]; then
   warn "ComfyUI not found at $COMFYUI_DIR — run setup_gpu.sh first or install manually"
@@ -243,27 +245,57 @@ else
   ok "Chatterbox TTS starting (log: $LOG_DIR/chatterbox.log)"
 fi
 
-# ── Wan 2.2 (fallback only — skip if not installed) ───────────────────────────
+# ── Wan 2.2 S2V (audio-conditioned singing video) ─────────────────────────────
+log "Wan2.2 Speech-to-Video (port 8031, VIDEO_ADAPTER=wan_s2v)"
+if [[ ! -d "$WORKSPACE/.venv_wan" ]]; then
+  warn "Wan2.2 venv not found — skipping"
+elif curl -sf http://localhost:8031/health >/dev/null 2>&1; then
+  ok "Wan2.2 S2V already responding"
+else
+  cd "$ROOT_DIR"
+  WAN_DIR="$WORKSPACE/Wan2.2" WAN_S2V_MODEL_DIR="$WORKSPACE/Wan2.2-S2V-14B" \
+  launch_with_self_heal "Wan2.2 S2V" "$LOG_DIR/wan_s2v.log" "$WORKSPACE/.venv_wan/bin/pip" -- \
+    nohup "$WORKSPACE/.venv_wan/bin/uvicorn" services.wan_s2v_server:app \
+    --host 0.0.0.0 --port 8031
+  ok "Wan2.2 S2V starting (log: $LOG_DIR/wan_s2v.log)"
+fi
+
+# ── Wan 2.2 I2V (fallback only — skip if not installed) ───────────────────────
 log "Wan2.2 image-to-video (port 8030, fallback for VIDEO_ADAPTER=wan)"
 if [[ ! -d "$WORKSPACE/.venv_wan" ]]; then
-  warn "Wan2.2 venv not found — skipping (not needed with default ltx adapter)"
+  warn "Wan2.2 venv not found — skipping (needed for VIDEO_ADAPTER=wan)"
 elif curl -sf http://localhost:8030/health >/dev/null 2>&1; then
   ok "Wan2.2 already responding"
 else
   cd "$ROOT_DIR"
   # wan package is installed as an editable package in .venv_wan so WAN_DIR is
-  # only needed as an existence guard; use the inner repo dir so the path check passes.
-  WAN_DIR="$WORKSPACE/Wan2.2/Wan2.2" WAN_MODEL_DIR="$WORKSPACE/Wan2.2-I2V-A14B" \
+  # also used as an existence guard for the repo root.
+  WAN_DIR="$WORKSPACE/Wan2.2" WAN_MODEL_DIR="$WORKSPACE/Wan2.2-I2V-A14B" \
   launch_with_self_heal "Wan2.2" "$LOG_DIR/wan.log" "$WORKSPACE/.venv_wan/bin/pip" -- \
     nohup "$WORKSPACE/.venv_wan/bin/uvicorn" services.wan_server:app \
     --host 0.0.0.0 --port 8030
   ok "Wan2.2 starting (log: $LOG_DIR/wan.log)"
 fi
 
-# ── MuseTalk (fallback only — skip if not installed) ──────────────────────────
+# ── LatentSync (preferred repair for Wan I2V) ─────────────────────────────────
+log "LatentSync lip-sync (port 8041, LIPSYNC_ADAPTER=latentsync)"
+if [[ ! -d "$WORKSPACE/.venv_latentsync" ]]; then
+  warn "LatentSync venv not found — skipping"
+elif curl -sf http://localhost:8041/health >/dev/null 2>&1; then
+  ok "LatentSync already responding"
+else
+  cd "$ROOT_DIR"
+  LATENTSYNC_DIR="$WORKSPACE/LatentSync" \
+  launch_with_self_heal "LatentSync" "$LOG_DIR/latentsync.log" "$WORKSPACE/.venv_latentsync/bin/pip" -- \
+    nohup "$WORKSPACE/.venv_latentsync/bin/uvicorn" services.latentsync_server:app \
+    --host 0.0.0.0 --port 8041
+  ok "LatentSync starting (log: $LOG_DIR/latentsync.log)"
+fi
+
+# ── MuseTalk (legacy fallback only — skip if not installed) ───────────────────
 log "MuseTalk lip-sync (port 8040, fallback for VIDEO_ADAPTER=wan)"
 if [[ ! -d "$WORKSPACE/.venv_musetalk" ]]; then
-  warn "MuseTalk venv not found — skipping (not needed with default ltx adapter)"
+  warn "MuseTalk venv not found — skipping (needed only for LIPSYNC_ADAPTER=musetalk)"
 elif curl -sf http://localhost:8040/health >/dev/null 2>&1; then
   ok "MuseTalk already responding"
 else
@@ -281,7 +313,8 @@ printf '\nWaiting for required services to become ready...\n'
 
 FAILED=0
 wait_for "Ollama"         "http://localhost:11434/api/tags"          20 || FAILED=1
-wait_for "ComfyUI"        "http://localhost:8188/"                   40 || FAILED=1
+wait_for "Wan2.2 S2V"     "http://localhost:8031/health"             20 || FAILED=1
+wait_for "ComfyUI"        "http://localhost:8188/"                   40 || true
 # 150 tries * 4s = 600s, matching core/config.py's fish_s2_load_timeout_sec —
 # same real-world wait (fish_s2_server.py's lifespan() loads the model
 # eagerly at startup, so /health can't even respond, let alone report

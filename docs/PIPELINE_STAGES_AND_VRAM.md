@@ -1,8 +1,8 @@
 # Pipeline stages — model / service / VRAM
 
-End-to-end reference for the **default stack** (musubi Flux image + ComfyUI/LTX
+End-to-end reference for the **default stack** (musubi Flux image + Wan2.2 S2V
 video + Fish S2 TTS), on the G200 (143 GB). Kept in sync with `core/workflow.py`
-and `core/config.py`. Last updated 2026-07-05.
+and `core/config.py`. Last updated 2026-07-10.
 
 One model does all reasoning **and** vision: **qwen3.6:35b** (~30 GB, natively
 multimodal, resident in Ollama). Every LLM/VLM stage below shares that one
@@ -28,18 +28,21 @@ There are no per-stage "agents" — it's a single async pipeline process
 | 9 | render_character ×N (per shot) | **Flux 2.0 Dev** via musubi (subprocess) | ~20 GB | image per shot from `visual_descriptor + setting + camera` + LoRA; freed after each image; Ollama unloaded first. LoRA/weight/steps/trigger from `config/casts/<cast>/params.py`. **Skipped** in story_images mode. |
 | 10 | critique_images | qwen3.6:35b | 30 | pick best candidate; self-learning feedback log |
 | — | **image approval gate** | web UI | 0 | human confirms/overrides per shot |
-| — | *gpu_sequencer* | — | — | wan path only: unload Ollama → 30 s → POST /load → poll |
+| — | *gpu_sequencer* | — | — | managed adapters only: unload Ollama/ComfyUI/Wan I2V around render/video boundaries |
 | 11 | synthesize_voice (per shot) | **Fish Audio S2** | ~20 GB | TTS EN/HI; voice ref from cast params/YAML |
-| 12 | generate_video (per shot) | **LTX-2.3 22B** via ComfyUI *(default)* | ~44 GB | i2v from image + `setting` prompt + audio; **native lip-sync** |
-| 12b | generate_video *(fallback)* | **Wan 2.2** :8030 | ~52 GB | silent i2v; deferred-loaded; then MuseTalk lip_sync (subprocess, broken on cartoon faces) |
+| 11b | voice_model_unload | Fish Audio S2 | frees ~20 GB | Wan S2V/LatentSync request this before video/repair to avoid VRAM contention |
+| 12 | generate_video (per shot) | **Wan2.2-S2V-14B** :8031 *(default)* | ~80 GB class | i2v from rendered image + audio; **native audio-conditioned singing sync**; lip_sync skipped |
+| 12b | generate_video *(fallback)* | **Wan 2.2 I2V** :8030 | ~52 GB | silent i2v; deferred-loaded; then LatentSync/MuseTalk repair |
+| 12c | lip_sync *(fallback)* | **LatentSync** :8041 | ~18 GB | preferred repair for Wan I2V; MuseTalk :8040 remains a faster legacy fallback |
 | 13 | assemble_video | ffmpeg (CPU) | 0 | concat, scale 1080×1920, captions, AI-disclosure label |
 | 14 | critique (video, Phase 2) | qwen3.6:35b | 30 | rubric on sampled output frames → pass/regenerate/reject |
 | 15 | publish | file copy (CPU) | 0 | → `review/<ts>_<lang>_<stem>/` + metadata.json |
 
 ## VRAM peak
 
-Default stack, worst simultaneous residency:
-`qwen(30) + LTX(44) + Flux(20) + Fish(20) ≈ 114 / 143 GB` (~29 GB headroom).
+Default stack is sequenced rather than all-resident: Flux render runs first,
+Fish generates the per-shot audio, then Fish is unloaded before Wan S2V starts.
+Do not keep Fish resident during S2V on smaller cards.
 
 The **gpu_sequencer** guarantees **Wan(52) and Flux(20) never coexist** — loading
 both was the render_character OOM (commit 58ce9d8) that motivated Wan deferred
@@ -50,11 +53,13 @@ loading. Wan is unloaded during render and loaded only after image approval.
 | Service | Port | Required (default)? |
 |---------|------|---------------------|
 | Ollama (qwen3.6:35b) | 11434 | ✅ always |
-| ComfyUI (LTX video) | 8188 | ✅ default |
+| Wan2.2 S2V | 8031 | ✅ default video |
 | Fish Audio S2 (TTS) | 8025 | ✅ default |
 | musubi-tuner (Flux) | — (subprocess) | ✅ default |
-| Wan 2.2 | 8030 | ⚠️ `VIDEO_ME_VIDEO_ADAPTER=wan` |
-| MuseTalk | 8040 | ⚠️ wan path only |
+| ComfyUI (LTX video) | 8188 | ⚠️ `VIDEO_ME_VIDEO_ADAPTER=ltx` |
+| Wan 2.2 I2V | 8030 | ⚠️ `VIDEO_ME_VIDEO_ADAPTER=wan` |
+| LatentSync | 8041 | ⚠️ `VIDEO_ME_VIDEO_ADAPTER=wan`, `VIDEO_ME_LIPSYNC_ADAPTER=latentsync` |
+| MuseTalk | 8040 | ⚠️ `VIDEO_ME_LIPSYNC_ADAPTER=musetalk` |
 | Chatterbox TTS | 8020 | ⚠️ `TTS_ADAPTER=chatterbox` |
 | AUTOMATIC1111 | 7860 | ⚠️ `RENDER_ADAPTER=a1111` |
 
@@ -71,5 +76,7 @@ Start everything + health-check: `bash scripts/start_services.sh`.
   `image_candidates` for real runs.
 - **Multi-character shot**: only the speaker (`characters_on_screen[0]`) is
   rendered; a second character does not appear. Not handled today.
-- **Wan `/unload` vs in-flight inference**: unload waits out inference; the
+- **Wan I2V `/unload` vs in-flight inference**: unload waits out inference; the
   adapter's 120 s timeout raises rather than OOM the next render.
+- **S2V requires audio before video**: `WanS2VAdapter` raises if `audio_uri`
+  is missing, because the model conditions video length and mouth motion on audio.

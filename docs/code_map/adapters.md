@@ -16,6 +16,8 @@
 | fetch_media | `YtDlpAdapter` | `adapters/fetch_media/ytdlp_adapter.py` |
 | generate_video | `LtxAdapter` | `adapters/generate_video/ltx_adapter.py` |
 | generate_video | `WanAdapter` | `adapters/generate_video/wan_adapter.py` |
+| generate_video | `WanS2VAdapter` | `adapters/generate_video/wan_s2v_adapter.py` |
+| lip_sync | `LatentSyncAdapter` | `adapters/lip_sync/latentsync_adapter.py` |
 | lip_sync | `LipSyncAdapter` | `adapters/lip_sync/lip_sync_adapter.py` |
 | plan_shots | `LlmPlanShotsAdapter` | `adapters/plan_shots/llm_adapter.py` |
 | publish | `ManualPublishAdapter` | `adapters/publish/manual_adapter.py` |
@@ -278,10 +280,34 @@ Video-generation adapters.
   - `async _call_wan(self, image_path: Path, prompt: str, duration_sec: float) -> bytes` — POST to the Wan service; return raw MP4 bytes.
   - `_save_clip(self, mp4_bytes: bytes, out_dir: Path) -> Path` — Write MP4 bytes to out_dir/clip.mp4 and return the path.
 
+### `adapters/generate_video/wan_s2v_adapter.py`
+
+- **class `WanS2VAdapter(GenerateVideo)`** — generate_video adapter: Wan2.2 Speech-to-Video via a thin local HTTP wrapper.
+  - `__init__(self, work_dir: Path, base_url: str='http://localhost:8031') -> None`
+  - `async health(self) -> HealthStatus`
+  - `async estimate_cost(self, req: VideoRequest) -> CostEstimate`
+  - `async run(self, req: VideoRequest) -> VideoClip`
+  - `_check_inputs(self, image_path: Path, audio_path: Path, shot_id: str) -> None`
+  - `_build_prompt(self, action: str, setting: str='', style_suffix: str='') -> str`
+  - `async _call_wan_s2v(self, *, image_path: Path, audio_path: Path, prompt: str, duration_sec: float, shot_id: str) -> bytes`
+  - `_save_clip(self, mp4_bytes: bytes, out_dir: Path) -> Path`
+
 ### `adapters/lip_sync/__init__.py`
 
 Lip-sync adapters.
 
+
+### `adapters/lip_sync/latentsync_adapter.py`
+
+- **class `LatentSyncAdapter(LipSync)`** — lip_sync adapter: audio-conditioned LatentSync repair for Wan I2V clips.
+  - `__init__(self, work_dir: Path, base_url: str='http://localhost:8041', inference_steps: int=20, guidance_scale: float=1.5) -> None`
+  - `async health(self) -> HealthStatus`
+  - `async estimate_cost(self, req: LipSyncRequest) -> CostEstimate`
+  - `async run(self, req: LipSyncRequest) -> VideoClip`
+  - `_check_inputs(self, video_path: Path, audio_path: Path, shot_id: str) -> None`
+  - `async _call_latentsync(self, video_path: Path, audio_path: Path, shot_id: str) -> bytes`
+  - `_save_clip(self, mp4_bytes: bytes, out_dir: Path) -> Path`
+  - `_audio_duration(self, audio_path: Path) -> float`
 
 ### `adapters/lip_sync/lip_sync_adapter.py`
 

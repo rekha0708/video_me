@@ -119,7 +119,7 @@
 
   {# Re-run controls — show when the job is FAILED or COMPLETED.
      Lets the operator pick which phase to start from and optionally swap
-     the video model (e.g. LTX vs Wan) while keeping cached renders. #}
+     the video/lip-sync model while keeping cached renders. #}
   {% if status in ('failed', 'completed') %}
   <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
     <div class="flex items-center gap-8" style="flex-wrap:wrap">
@@ -138,9 +138,19 @@
 
       <label style="font-size:13px;font-weight:500;margin-left:8px">Video model</label>
       <select id="rerun-video-adapter" style="font-size:13px;padding:3px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg)">
-        {% set current_va = (job.request.get('overrides', {}).get('video_adapter')) or 'ltx' %}
-        <option value="" {% if current_va == 'ltx' %}selected{% endif %}>LTX (default)</option>
-        <option value="wan" {% if current_va == 'wan' %}selected{% endif %}>Wan</option>
+        {% set requested_va = job.request.get('overrides', {}).get('video_adapter') %}
+        <option value="" {% if not requested_va %}selected{% endif %}>Default</option>
+        <option value="wan_s2v" {% if requested_va == 'wan_s2v' %}selected{% endif %}>Wan 2.2 S2V</option>
+        <option value="wan" {% if requested_va == 'wan' %}selected{% endif %}>Wan 2.2 I2V</option>
+        <option value="ltx" {% if requested_va == 'ltx' %}selected{% endif %}>LTX legacy</option>
+      </select>
+
+      <label style="font-size:13px;font-weight:500;margin-left:8px">Lip-sync repair</label>
+      <select id="rerun-lipsync-adapter" style="font-size:13px;padding:3px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg)">
+        {% set requested_la = job.request.get('overrides', {}).get('lipsync_adapter') %}
+        <option value="" {% if not requested_la %}selected{% endif %}>Default</option>
+        <option value="latentsync" {% if requested_la == 'latentsync' %}selected{% endif %}>LatentSync</option>
+        <option value="musetalk" {% if requested_la == 'musetalk' %}selected{% endif %}>MuseTalk</option>
       </select>
 
       <button class="btn btn-primary" id="retry-btn"
@@ -553,6 +563,7 @@ async function advancePhase(jobId, btn) {
 async function retryJob(jobId, btn) {
   const phase = document.getElementById("rerun-phase")?.value || "";
   const videoAdapter = document.getElementById("rerun-video-adapter")?.value || "";
+  const lipsyncAdapter = document.getElementById("rerun-lipsync-adapter")?.value || "";
   const phaseLabel = phase || "same phase";
   if (!confirm(`Re-run job ${jobId} from "${phaseLabel}"?\n\nStages that already completed will be skipped.`)) return;
   const label = btn.textContent;
@@ -561,6 +572,7 @@ async function retryJob(jobId, btn) {
   const body = {};
   if (phase) body.phase = phase;
   if (videoAdapter) body.video_adapter = videoAdapter;
+  if (lipsyncAdapter) body.lipsync_adapter = lipsyncAdapter;
   try {
     const res = await fetch(`/api/jobs/${jobId}/retry`, {
       method: "POST",

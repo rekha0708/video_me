@@ -164,6 +164,16 @@ Runtime GPU/server status collection for the dashboard.
 - `_collect_system_status() -> dict[str, Any]`
 - `collect_gpu_status(*, workspace: Path | None=None, log_lines: int=120, runner: CommandRunner=_default_runner) -> dict[str, Any]` — Collect host, GPU, process, and service-log status for the dashboard.
 
+### `services/latentsync_server.py`
+
+LatentSync lip-sync HTTP service wrapper.
+
+- `async lifespan(app: FastAPI)`
+- `_resolve_repo_path(value: str) -> Path`
+- `health() -> JSONResponse`
+- `async lipsync(video: UploadFile=File(...), audio: UploadFile=File(...), shot_id: str=Form(...), inference_steps: int=Form(20), guidance_scale: float=Form(1.5)) -> Response`
+- `_normalize_inputs(raw_video: Path, raw_audio: Path, video_path: Path, audio_path: Path) -> None` — Match LatentSync's documented preprocessing assumptions: 25 FPS + 16 kHz mono audio.
+
 ### `services/musetalk_compat/sitecustomize.py`
 
 PyTorch 2.6+ changed torch.load's weights_only default from False to True,
@@ -178,6 +188,14 @@ MuseTalk lip-sync HTTP service wrapper.
 - `health() -> JSONResponse`
 - `async lipsync(video: UploadFile=File(...), audio: UploadFile=File(...), shot_id: str=Form(...)) -> Response`
 - `_convert_to_mp4(avi: Path, out: Path) -> Path`
+
+### `services/wan_s2v_server.py`
+
+Wan2.2 Speech-to-Video HTTP service wrapper.
+
+- `async lifespan(app: FastAPI)`
+- `health() -> JSONResponse`
+- `async generate(image: UploadFile=File(...), audio: UploadFile=File(...), prompt: str=Form(...), duration_sec: float=Form(0.0), shot_id: str=Form('shot')) -> Response`
 
 ### `services/wan_server.py`
 

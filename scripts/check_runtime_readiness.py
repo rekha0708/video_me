@@ -186,9 +186,15 @@ def _service_urls(settings: Settings) -> list[tuple[str, str, bool]]:
         comfy_url = settings.comfyui_base_url + "/"
         if not any(url == comfy_url for _, url, _ in urls):
             urls.append(("ComfyUI (LTX video)", comfy_url, True))
+    elif settings.video_adapter == "wan_s2v":
+        urls.append(("Wan2.2 Speech-to-Video", _join_url(settings.wan_s2v_base_url, "health"), True))
     elif settings.video_adapter == "wan":
         urls.append(("Wan image-to-video (fallback)", _join_url(settings.wan_base_url, "health"), True))
-        urls.append(("MuseTalk lip-sync (fallback)", _join_url(settings.lipsync_base_url, "health"), True))
+        if settings.lipsync_adapter == "latentsync":
+            urls.append(("LatentSync lip-sync", _join_url(settings.latentsync_base_url, "health"), True))
+        else:
+            base_url = getattr(settings, "musetalk_base_url", None) or settings.lipsync_base_url
+            urls.append(("MuseTalk lip-sync (fallback)", _join_url(base_url, "health"), True))
 
     # TTS backend
     if settings.tts_adapter == "fish_s2":

@@ -73,6 +73,7 @@ _STAGE_TO_MACRO = {
     "render_overlays": "script_plan",
     "render_character": "render",
     "synthesize_voice": "render",
+    "voice_model_unload": "render",
     "generate_video": "render",
     "lip_sync": "render",
     "video_model_load": "render",
@@ -320,6 +321,7 @@ def create_app(
             {
                 "render_adapter": settings.render_adapter,
                 "video_adapter": settings.video_adapter,
+                "lipsync_adapter": settings.lipsync_adapter,
                 "tts_adapter": settings.tts_adapter,
                 "target_language": settings.target_language,
                 "image_candidates": settings.image_candidates,
@@ -1079,7 +1081,7 @@ def create_app(
         })
 
     _RETRYABLE_OVERRIDE_KEYS = (
-        "video_adapter", "render_adapter", "tts_adapter", "llm_model",
+        "video_adapter", "lipsync_adapter", "render_adapter", "tts_adapter", "llm_model",
         "max_shot_duration_sec",
     )
 
@@ -1109,7 +1111,7 @@ def create_app(
           keeping cached character images.
         - ``render_mode`` — switch between full/source_audio/re_voice for this
           retry. Timed modes require a matching timed plan artifact.
-        - ``video_adapter`` / ``render_adapter`` / ``tts_adapter`` /
+        - ``video_adapter`` / ``lipsync_adapter`` / ``render_adapter`` / ``tts_adapter`` /
           ``llm_model`` — swap an adapter for this re-run without
           touching the job's original overrides.
         """

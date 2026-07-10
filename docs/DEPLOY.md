@@ -38,17 +38,17 @@ cd video_me
 
 export HF_TOKEN=hf_...          # your token; never commit it
 
-bash scripts/setup_gpu.sh       # installs musubi-tuner + ComfyUI/LTX + Fish S2 + Ollama
-bash scripts/start_services.sh  # starts Ollama + ComfyUI + Fish S2
+bash scripts/setup_gpu.sh       # installs musubi-tuner + Wan S2V + Fish S2 + Ollama
+bash scripts/start_services.sh  # starts Ollama + Wan S2V + Fish S2
 
 python -m scripts.check_runtime_readiness
 python -m scripts.check_track_b
 python -m pytest -q
 ```
 
-Legacy fallbacks are opt-in: add `--with-a1111 / --with-chatterbox / --with-wan` to
-`setup_gpu.sh`, set `VIDEO_ME_START_LEGACY=1` for `start_services.sh`, and select with
-`VIDEO_ME_RENDER_ADAPTER` / `VIDEO_ME_VIDEO_ADAPTER` / `VIDEO_ME_TTS_ADAPTER`.
+Legacy fallbacks are opt-in: add `--with-a1111 / --with-chatterbox / --with-wan-i2v / --with-latentsync / --with-ltx` to
+`setup_gpu.sh`, then select with
+`VIDEO_ME_RENDER_ADAPTER` / `VIDEO_ME_VIDEO_ADAPTER` / `VIDEO_ME_LIPSYNC_ADAPTER` / `VIDEO_ME_TTS_ADAPTER`.
 
 ---
 
@@ -58,15 +58,15 @@ Legacy fallbacks are opt-in: add `--with-a1111 / --with-chatterbox / --with-wan`
 |---|---|---|---|
 | qwen3.6:35b (Ollama) | ~20 GB | ~30 GB | LLM/VLM stages |
 | Flux 2.0 (musubi-tuner) | ~60 GB + encoders | ~20 GB | render_character |
-| LTX-2.3 22B distilled (ComfyUI) | ~42 GB | ~44 GB | generate_video |
+| Wan2.2-S2V-14B | model weights | 80 GB class | generate_video |
 | Fish Audio S2 | ~300 MB | ~8 GB | synthesize_voice |
-| ComfyUI + system/python deps | ~1 GB | — | framework |
+| ComfyUI + LTX | optional | ~44 GB | legacy `VIDEO_ADAPTER=ltx` |
 
 Peak VRAM ~74 GB typical (Ollama evicts before GPU-heavy stages; see
 `core/workflow.py:_unload_ollama_model`), ~102 GB worst case. On a 143 GB G200 that
 leaves comfortable headroom. Sizes are estimates — confirm against actual downloads.
 
-Opt-in fallbacks add: A1111 +~4 GB, Wan 2.2 +~30 GB, MuseTalk/Chatterbox small.
+Opt-in fallbacks add: A1111 +~4 GB, Wan 2.2 I2V weights, LatentSync/MuseTalk/Chatterbox.
 
 ---
 
@@ -84,7 +84,7 @@ Opt-in fallbacks add: A1111 +~4 GB, Wan 2.2 +~30 GB, MuseTalk/Chatterbox small.
 |---|---|
 | `ollama` binary wiped on RunPod restart | Reinstall `curl -fsSL https://ollama.ai/install.sh \| sh`, then `start_services.sh`. |
 | ComfyUI takes ~30–60 s to start | `start_services.sh` waits before the health check; re-run readiness if the first probe fails. |
-| LTX audio misalignment on non-standard resolutions | `LtxAdapter` defaults to native 1280×720 — keep native sizes. |
+| Wan S2V needs audio before video | Keep the default workflow order; `WanS2VAdapter` requires `audio_uri`. |
 | Flux 2.0 LoRAs not trained | render_character uses placeholder/missing LoRAs until Track B is done; `check_track_b` blocks real runs. |
 
 ---

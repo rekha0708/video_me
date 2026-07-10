@@ -53,7 +53,9 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `adapters/generate_video/__init__.py` — Video-generation adapters.
 - `adapters/generate_video/ltx_adapter.py` — (no module docstring)
 - `adapters/generate_video/wan_adapter.py` — (no module docstring)
+- `adapters/generate_video/wan_s2v_adapter.py` — (no module docstring)
 - `adapters/lip_sync/__init__.py` — Lip-sync adapters.
+- `adapters/lip_sync/latentsync_adapter.py` — (no module docstring)
 - `adapters/lip_sync/lip_sync_adapter.py` — (no module docstring)
 - `adapters/plan_shots/__init__.py` — Shot-planning adapters.
 - `adapters/plan_shots/llm_adapter.py` — (no module docstring)
@@ -86,8 +88,10 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `services/dashboard_worker.py` — Dashboard worker — claims queued jobs, runs the pipeline, emits events.
 - `services/fish_s2_server.py` — Fish Audio S2 TTS HTTP service wrapper.
 - `services/gpu_status.py` — Runtime GPU/server status collection for the dashboard.
+- `services/latentsync_server.py` — LatentSync lip-sync HTTP service wrapper.
 - `services/musetalk_compat/sitecustomize.py` — PyTorch 2.6+ changed torch.load's weights_only default from False to True,
 - `services/musetalk_server.py` — MuseTalk lip-sync HTTP service wrapper.
+- `services/wan_s2v_server.py` — Wan2.2 Speech-to-Video HTTP service wrapper.
 - `services/wan_server.py` — Wan2.2 image-to-video HTTP service — deferred-loading edition.
 
 ## scripts/
@@ -126,6 +130,7 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `tests/test_generate_video.py` — (no module docstring)
 - `tests/test_gpu_sequencer.py` — (no module docstring)
 - `tests/test_gpu_status.py` — (no module docstring)
+- `tests/test_latentsync_adapter.py` — (no module docstring)
 - `tests/test_lip_sync.py` — (no module docstring)
 - `tests/test_ltx_render.py` — Unit tests for LtxAdapter prompt/workflow building (no ComfyUI calls).
 - `tests/test_musubi_render.py` — Unit tests for MusubiFluxAdapter param-driven behavior (no subprocess).
@@ -142,4 +147,5 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `tests/test_story_ingest.py` — Tests for adapters/story_ingest (structured parser, heuristic, LLM segmenter).
 - `tests/test_synthesize_voice.py` — (no module docstring)
 - `tests/test_transcribe.py` — (no module docstring)
+- `tests/test_wan_s2v_adapter.py` — (no module docstring)
 - `tests/test_workflow.py` — Tests for run_pipeline_job (A1.12) and its private helpers.

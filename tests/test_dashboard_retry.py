@@ -47,6 +47,7 @@ def _seed_job(
     status: str,
     phase: str = "all",
     video_adapter: str | None = None,
+    lipsync_adapter: str | None = None,
     render_mode: str = "full",
 ):
     from core.models.dashboard import (
@@ -58,7 +59,10 @@ def _seed_job(
         rights_cleared=True,
         phase=phase,
         render_mode=render_mode,
-        overrides=DashboardJobOverrides(video_adapter=video_adapter),
+        overrides=DashboardJobOverrides(
+            video_adapter=video_adapter,
+            lipsync_adapter=lipsync_adapter,
+        ),
     )
     job, _queue_item = repo.create_queued_job(req)
     repo.update_job_status(job.job_id, DashboardJobStatus[status.upper()])
@@ -116,6 +120,22 @@ def test_retry_with_body_overrides_video_adapter(tmp_path: Path) -> None:
     queue = repo.list_queue(job_id)
     latest = queue[-1]
     assert latest.payload["overrides"]["video_adapter"] == "wan"
+
+
+def test_retry_with_body_overrides_lipsync_adapter(tmp_path: Path) -> None:
+    client, repo = _make_client_and_repo(tmp_path)
+    job_id = _seed_job(
+        repo,
+        status="completed",
+        video_adapter="wan",
+        lipsync_adapter="musetalk",
+    )
+    resp = client.post(f"/api/jobs/{job_id}/retry", json={"lipsync_adapter": "latentsync"})
+    assert resp.status_code == 200
+    queue = repo.list_queue(job_id)
+    latest = queue[-1]
+    assert latest.payload["overrides"]["video_adapter"] == "wan"
+    assert latest.payload["overrides"]["lipsync_adapter"] == "latentsync"
 
 
 def test_retry_with_body_leaves_other_overrides_untouched(tmp_path: Path) -> None:

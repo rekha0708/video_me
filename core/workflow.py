@@ -202,8 +202,27 @@ def _make_video_adapter(s, work_dir: Path):
     if s.video_adapter == "ltx":
         from adapters.generate_video.ltx_adapter import LtxAdapter
         return LtxAdapter(work_dir=work_dir / "video" / "ltx", base_url=s.ltx_base_url)
+    if s.video_adapter == "wan_s2v":
+        from adapters.generate_video.wan_s2v_adapter import WanS2VAdapter
+        return WanS2VAdapter(work_dir=work_dir / "video" / "wan_s2v", base_url=s.wan_s2v_base_url)
     from adapters.generate_video.wan_adapter import WanAdapter
     return WanAdapter(work_dir=work_dir / "video" / "wan", base_url=s.wan_base_url)
+
+
+def _make_lipsync_adapter(s, work_dir: Path):
+    """Select lip_sync repair adapter for video backends without native sync."""
+    namespace = f"{s.video_adapter}_{s.lipsync_adapter}"
+    if s.lipsync_adapter == "latentsync":
+        from adapters.lip_sync.latentsync_adapter import LatentSyncAdapter
+        return LatentSyncAdapter(
+            work_dir=work_dir / "synced" / namespace,
+            base_url=s.latentsync_base_url,
+            inference_steps=s.latentsync_inference_steps,
+            guidance_scale=s.latentsync_guidance_scale,
+        )
+    from adapters.lip_sync.lip_sync_adapter import LipSyncAdapter
+    base_url = getattr(s, "musetalk_base_url", None) or s.lipsync_base_url
+    return LipSyncAdapter(work_dir=work_dir / "synced" / namespace, base_url=base_url)
 
 
 def _make_tts_adapter(s, work_dir: Path):
@@ -236,7 +255,6 @@ def _make_adapters(
     from adapters.assemble_video.ffmpeg_adapter import FfmpegAssembleAdapter
     from adapters.critique.vlm_adapter import VlmCritiqueAdapter
     from adapters.fetch_media.ytdlp_adapter import YtDlpAdapter
-    from adapters.lip_sync.lip_sync_adapter import LipSyncAdapter
     from adapters.plan_shots.llm_adapter import LlmPlanShotsAdapter
     from adapters.publish.manual_adapter import ManualPublishAdapter
     from adapters.render_overlays.matplotlib_adapter import MatplotlibOverlayAdapter
@@ -309,7 +327,7 @@ def _make_adapters(
         render=_make_render_adapter(s, work_dir),
         voice=_make_tts_adapter(s, work_dir),
         video=_make_video_adapter(s, work_dir),
-        lipsync=LipSyncAdapter(work_dir=work_dir / "synced" / s.video_adapter, base_url=s.lipsync_base_url),
+        lipsync=_make_lipsync_adapter(s, work_dir),
         assemble=FfmpegAssembleAdapter(
             work_dir=work_dir / "assembled",
             ffmpeg_bin=s.ffmpeg_bin,
@@ -854,6 +872,17 @@ async def _generate_shot_video(
                     shot_id=shot.shot_id, label=label, detail="voice timing matched",
                 )
 
+    if getattr(adapters.video, "requires_voice_unloaded", False) is True and is_managed(adapters.voice):
+        _notify_shot(
+            opts.stage_hook, "voice_model_unload", "stage_started",
+            shot_id=shot.shot_id, label=label, detail="freeing voice model before video",
+        )
+        await adapters.voice.unload()
+        _notify_shot(
+            opts.stage_hook, "voice_model_unload", "stage_completed",
+            shot_id=shot.shot_id, label=label, detail="voice model freed",
+        )
+
     # ── 2. generate_video ─────────────────────────────────────────────────────
     video_action = shot.action
     if len(shot.characters_on_screen) >= 2:
@@ -895,6 +924,16 @@ async def _generate_shot_video(
         log_event(logger, "lip_sync_skipped", shot_id=shot.shot_id, reason="native_lipsync")
         synced = clip
     else:
+        if getattr(adapters.lipsync, "requires_voice_unloaded", False) is True and is_managed(adapters.voice):
+            _notify_shot(
+                opts.stage_hook, "voice_model_unload", "stage_started",
+                shot_id=shot.shot_id, label=label, detail="freeing voice model before lip sync",
+            )
+            await adapters.voice.unload()
+            _notify_shot(
+                opts.stage_hook, "voice_model_unload", "stage_completed",
+                shot_id=shot.shot_id, label=label, detail="voice model freed",
+            )
         _notify_shot(
             opts.stage_hook, "lip_sync", "stage_started",
             shot_id=shot.shot_id, label=label, detail="lip-syncing",
@@ -1879,6 +1918,7 @@ async def _run_to_assembled_video(
         synced_clips, audio_tracks = _collect_existing_shot_artifacts(
             storyboard, script, config.cast, ctx.work_dir,
             video_adapter=config.settings.video_adapter,
+            lipsync_adapter=config.settings.lipsync_adapter,
             render_mode=opts.render_mode,
         )
         shots_for_clips = storyboard.shots  # one clip per shot, same order
@@ -2103,7 +2143,8 @@ def _collect_existing_shot_artifacts(
     script: Script,
     cast: Cast,
     work_dir: Path,
-    video_adapter: str = "ltx",
+    video_adapter: str = "wan_s2v",
+    lipsync_adapter: str = "latentsync",
     render_mode: str = "full",
 ) -> tuple[list[VideoClip], list[AudioTrack]]:
     """Reconstruct clip/audio lists from files written by a previous render phase.
@@ -2119,6 +2160,7 @@ def _collect_existing_shot_artifacts(
     audios: list[AudioTrack] = []
     for shot in storyboard.shots:
         candidates = [
+            work_dir / "synced" / f"{video_adapter}_{lipsync_adapter}" / shot.shot_id / "synced.mp4",
             work_dir / "synced" / video_adapter / shot.shot_id / "synced.mp4",
             work_dir / "video" / video_adapter / shot.shot_id / "clip.mp4",
             work_dir / "synced" / shot.shot_id / "synced.mp4",

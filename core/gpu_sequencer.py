@@ -121,7 +121,11 @@ async def free_comfyui(comfyui_base_url: str) -> bool:
     selection. Best-effort: unreachable or already-idle is a no-op, not an
     error — call sites don't need to know or care whether ComfyUI is in use.
     """
-    import httpx
+    try:
+        import httpx
+    except ImportError:
+        logger.info("httpx not installed — skipping best-effort ComfyUI free")
+        return False
     url = f"{comfyui_base_url.rstrip('/')}/free"
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -154,7 +158,11 @@ async def unload_wan(wan_base_url: str) -> bool:
     process kill — is enough here. Best-effort: unreachable or already-idle
     is a no-op, not an error.
     """
-    import httpx
+    try:
+        import httpx
+    except ImportError:
+        logger.info("httpx not installed — skipping best-effort Wan unload")
+        return False
     url = f"{wan_base_url.rstrip('/')}/unload"
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:

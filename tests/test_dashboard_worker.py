@@ -215,11 +215,12 @@ def test_config_for_job_applies_overrides(tmp_path: Path) -> None:
         source=DashboardSource(url="https://example.com/v"),
         rights_cleared=True,
         phase="all",
-        overrides=DashboardJobOverrides(video_adapter="wan"),
+        overrides=DashboardJobOverrides(video_adapter="wan", lipsync_adapter="musetalk"),
     )
     job_config = worker._config_for_job(req)
 
     assert job_config.settings.video_adapter == "wan"
+    assert job_config.settings.lipsync_adapter == "musetalk"
     # The worker's own base config must not be mutated.
     assert worker.config.settings.video_adapter == base_video_adapter
 

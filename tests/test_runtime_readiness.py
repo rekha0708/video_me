@@ -115,20 +115,38 @@ def test_service_health_can_warn_for_missing_services() -> None:
     assert all(r.status == WARN for r in results)
 
 
-def test_default_service_urls_use_ltx_comfyui_without_a1111() -> None:
+def test_default_service_urls_use_wan_s2v_without_comfyui_or_a1111() -> None:
     urls = _service_urls(
         Settings(
             render_adapter="musubi_flux",
-            video_adapter="ltx",
+            video_adapter="wan_s2v",
             tts_adapter="fish_s2",
         )
     )
     names = [name for name, _, _ in urls]
 
     assert "Ollama LLM/VLM API" in names
-    assert "ComfyUI (LTX video)" in names
+    assert "Wan2.2 Speech-to-Video" in names
     assert "Fish Audio S2 TTS" in names
+    assert not any("ComfyUI" in name for name in names)
     assert not any("AUTOMATIC1111" in name for name in names)
+
+
+def test_wan_i2v_adds_selected_latentsync_service_url() -> None:
+    urls = _service_urls(Settings(video_adapter="wan", lipsync_adapter="latentsync"))
+    names = [name for name, _, _ in urls]
+
+    assert "Wan image-to-video (fallback)" in names
+    assert "LatentSync lip-sync" in names
+    assert not any("MuseTalk" in name for name in names)
+
+
+def test_wan_i2v_can_use_musetalk_service_url() -> None:
+    urls = _service_urls(Settings(video_adapter="wan", lipsync_adapter="musetalk"))
+    names = [name for name, _, _ in urls]
+
+    assert "Wan image-to-video (fallback)" in names
+    assert "MuseTalk lip-sync (fallback)" in names
 
 
 def test_a1111_render_adapter_adds_a1111_service_url() -> None:

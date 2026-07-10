@@ -9,13 +9,15 @@ Complete list of all TCP ports used by the video_me pipeline services and web UI
 | Port | Service | Protocol | Required? | Purpose |
 |------|---------|----------|-----------|---------|
 | **11434** | Ollama | HTTP | ✅ **Always** | LLM + VLM (qwen3.6:35b) for all text/image/video stages |
-| **8188** | ComfyUI | HTTP/WebSocket | ✅ **Default** | LTX-2.3 22B video gen (image gen runs via musubi-tuner subprocess, no port) |
+| **8031** | Wan 2.2 S2V | HTTP | ✅ **Default** | Image + audio to singing video (`VIDEO_ADAPTER=wan_s2v`) |
 | **8025** | Fish Audio S2 | HTTP | ✅ **Default** | Voice synthesis (EN + HI + 80 languages) |
 | **8765** | Human Approval UI | HTTP | ✅ **Always** | Web UI for storyboard + image approval (shared port) |
+| **8188** | ComfyUI | HTTP/WebSocket | ⚠️ Legacy/fallback | LTX-2.3 video gen / `comfyui_flux` fallback |
 | **8020** | Chatterbox TTS | HTTP | ⚠️ Fallback | Voice synthesis (EN only, `TTS_ADAPTER=chatterbox`) |
 | **7860** | AUTOMATIC1111 | HTTP | ⚠️ Fallback | SD 1.5 image gen (`RENDER_ADAPTER=a1111`) |
-| **8030** | Wan 2.2 | HTTP | ⚠️ Fallback | Image-to-video (`VIDEO_ADAPTER=wan`) |
-| **8040** | MuseTalk | HTTP | ⚠️ Fallback | Lip-sync for Wan path (`VIDEO_ADAPTER=wan`) |
+| **8030** | Wan 2.2 I2V | HTTP | ⚠️ Fallback | Image-to-video (`VIDEO_ADAPTER=wan`) |
+| **8041** | LatentSync | HTTP | ⚠️ Fallback | Preferred lip-sync repair for Wan I2V (`LIPSYNC_ADAPTER=latentsync`) |
+| **8040** | MuseTalk | HTTP | ⚠️ Fallback | Legacy lip-sync repair for Wan I2V (`LIPSYNC_ADAPTER=musetalk`) |
 
 ---
 
@@ -26,7 +28,7 @@ Complete list of all TCP ports used by the video_me pipeline services and web UI
 ```bash
 # 3 required services + 1 approval UI
 11434   # Ollama (LLM + VLM)
-8188    # ComfyUI (LTX-2.3 video; image gen = musubi-tuner subprocess)
+8031    # Wan2.2 S2V (image + audio singing video)
 8025    # Fish Audio S2 (TTS)
 8765    # Human approval web UI (storyboard + images)
 ```
@@ -35,7 +37,7 @@ Complete list of all TCP ports used by the video_me pipeline services and web UI
 ```bash
 # Allow inbound on required ports
 sudo ufw allow 11434/tcp comment "Ollama LLM+VLM"
-sudo ufw allow 8188/tcp comment "ComfyUI Flux+LTX"
+sudo ufw allow 8031/tcp comment "Wan2.2 S2V"
 sudo ufw allow 8025/tcp comment "Fish Audio S2 TTS"
 sudo ufw allow 8765/tcp comment "Human approval UI"
 ```
@@ -50,14 +52,18 @@ sudo ufw allow 8765/tcp comment "Human approval UI"
 # Fallback services (start only if configured)
 8020    # Chatterbox TTS (if TTS_ADAPTER=chatterbox)
 7860    # AUTOMATIC1111 (if RENDER_ADAPTER=a1111)
+8188    # ComfyUI (if VIDEO_ADAPTER=ltx or RENDER_ADAPTER=comfyui_flux)
 8030    # Wan 2.2 server (if VIDEO_ADAPTER=wan)
-8040    # MuseTalk (if VIDEO_ADAPTER=wan)
+8041    # LatentSync (if VIDEO_ADAPTER=wan and LIPSYNC_ADAPTER=latentsync)
+8040    # MuseTalk (if VIDEO_ADAPTER=wan and LIPSYNC_ADAPTER=musetalk)
 ```
 
 ### **When to Use Fallback Ports:**
 - **8020 (Chatterbox):** English-only TTS, simpler setup than Fish S2
 - **7860 (A1111):** SD 1.5 fallback if Flux 2.0 has issues
-- **8030 + 8040 (Wan + MuseTalk):** Old video generation path (slower, 2-stage)
+- **8188 (ComfyUI):** Legacy LTX video path or `comfyui_flux` fallback
+- **8030 + 8041 (Wan I2V + LatentSync):** Comparison/repair path when S2V is not desired
+- **8040 (MuseTalk):** Faster legacy repair fallback, usually weaker for singing
 
 ---
 
@@ -79,13 +85,24 @@ sudo ufw allow 8765/tcp comment "Human approval UI"
 
 ---
 
-### **Port 8188 — ComfyUI (LTX-2.3 video)**
+### **Port 8031 — Wan 2.2 S2V (Default Singing Video)**
+- **Service:** Wan2.2 Speech-to-Video HTTP wrapper
+- **Model:** Wan2.2-S2V-14B
+- **Used by:** `generate_video` when `VIDEO_ME_VIDEO_ADAPTER=wan_s2v`
+- **Inputs:** rendered still image + synthesized/source audio + prompt
+- **Health check:** `GET http://localhost:8031/health`
+- **Start command:** `uvicorn services.wan_s2v_server:app --host 0.0.0.0 --port 8031`
+- **Note:** Native audio-conditioned mouth motion; the separate `lip_sync` stage is skipped.
+
+---
+
+### **Port 8188 — ComfyUI (Legacy LTX / Flux Fallback)**
 - **Service:** ComfyUI HTTP + WebSocket API
 - **Models:**
   - LTX-2.3 22B distilled — video generation
   - (Flux 2.0 only if `RENDER_ADAPTER=comfyui_flux` fallback — default image gen is musubi-tuner)
 - **Used by:**
-  - `generate_video` — image-to-video with native lip-sync
+  - `generate_video` only if `VIDEO_ME_VIDEO_ADAPTER=ltx`
   - `render_character` only in the `comfyui_flux` fallback (default is the musubi-tuner subprocess)
 - **Health check:** `GET http://localhost:8188/system_stats`
 - **VRAM:** ~20 GB (Flux) + ~44 GB (LTX) = 64 GB (sequential)
@@ -143,24 +160,34 @@ sudo ufw allow 8765/tcp comment "Human approval UI"
 
 ---
 
-### **Port 8030 — Wan 2.2 (Fallback)**
+### **Port 8030 — Wan 2.2 I2V (Fallback)**
 - **Service:** Wan 2.2 image-to-video HTTP API
 - **Model:** Wan 2.2 (12B)
 - **Used by:** `generate_video` (if `VIDEO_ME_VIDEO_ADAPTER=wan`)
 - **Health check:** `GET http://localhost:8030/health`
 - **VRAM:** ~12 GB
 - **Start command:** `uvicorn services.wan_server:app --host 0.0.0.0 --port 8030`
-- **Note:** Requires MuseTalk (port 8040) for lip-sync
+- **Note:** Requires a repair adapter such as LatentSync (port 8041) or MuseTalk (port 8040)
+
+---
+
+### **Port 8041 — LatentSync (Fallback Repair)**
+- **Service:** LatentSync lip-sync HTTP API
+- **Used by:** `lip_sync` if `VIDEO_ME_VIDEO_ADAPTER=wan` and `VIDEO_ME_LIPSYNC_ADAPTER=latentsync`
+- **Health check:** `GET http://localhost:8041/health`
+- **VRAM:** ~18 GB for LatentSync 1.6 inference
+- **Start command:** `uvicorn services.latentsync_server:app --host 0.0.0.0 --port 8041`
+- **Note:** Preferred repair adapter for Wan I2V; not used by Wan S2V.
 
 ---
 
 ### **Port 8040 — MuseTalk (Fallback)**
 - **Service:** MuseTalk lip-sync HTTP API
-- **Used by:** `lip_sync` (if `VIDEO_ADAPTER=wan`)
+- **Used by:** `lip_sync` (if `VIDEO_ADAPTER=wan` and `LIPSYNC_ADAPTER=musetalk`)
 - **Health check:** `GET http://localhost:8040/health`
 - **VRAM:** ~8 GB
 - **Start command:** `uvicorn services.musetalk_server:app --host 0.0.0.0 --port 8040`
-- **Note:** Only needed when using Wan 2.2 video path
+- **Note:** Legacy fallback; keep for fast comparisons.
 
 ---
 
@@ -171,12 +198,15 @@ sudo ufw allow 8765/tcp comment "Human approval UI"
 # .env or shell
 VIDEO_ME_APPROVAL_PORT=8765              # Human approval UI
 VIDEO_ME_LLM_BASE_URL=http://localhost:11434/v1
+VIDEO_ME_WAN_S2V_BASE_URL=http://localhost:8031
 VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188
 VIDEO_ME_FISH_S2_BASE_URL=http://localhost:8025
 VIDEO_ME_TTS_BASE_URL=http://localhost:8020        # Chatterbox fallback
 VIDEO_ME_SD_BASE_URL=http://localhost:7860         # A1111 fallback
-VIDEO_ME_WAN_BASE_URL=http://localhost:8030        # Wan fallback
-VIDEO_ME_LIPSYNC_BASE_URL=http://localhost:8040    # MuseTalk fallback
+VIDEO_ME_WAN_BASE_URL=http://localhost:8030        # Wan I2V fallback
+VIDEO_ME_LATENTSYNC_BASE_URL=http://localhost:8041 # LatentSync repair
+VIDEO_ME_MUSETALK_BASE_URL=http://localhost:8040   # MuseTalk repair fallback
+VIDEO_ME_LIPSYNC_BASE_URL=http://localhost:8040    # legacy alias for MuseTalk
 ```
 
 ### **Remote Services:**
@@ -201,9 +231,9 @@ services:
     ports:
       - "11434:11434"
   
-  comfyui:
+  wan_s2v:
     ports:
-      - "8188:8188"
+      - "8031:8031"
   
   fish_s2:
     ports:
@@ -216,11 +246,11 @@ services:
 
 ```bash
 # Check which ports are listening
-netstat -tlnp | grep -E '(11434|8188|8025|8765|8020|7860|8030|8040)'
+netstat -tlnp | grep -E '(11434|8031|8025|8765|8188|8020|7860|8030|8041|8040)'
 
 # Or with lsof
 lsof -i :11434  # Ollama
-lsof -i :8188   # ComfyUI
+lsof -i :8031   # Wan2.2 S2V
 lsof -i :8025   # Fish S2
 lsof -i :8765   # Approval UI
 ```
@@ -250,7 +280,7 @@ Services have no built-in authentication. Use firewall rules or reverse proxy wi
 ### **Minimal Setup (Default Stack):**
 ```bash
 ✅ 11434  # Ollama
-✅ 8188   # ComfyUI
+✅ 8031   # Wan2.2 S2V
 ✅ 8025   # Fish S2
 ✅ 8765   # Approval UI
 ```
@@ -259,8 +289,10 @@ Services have no built-in authentication. Use firewall rules or reverse proxy wi
 ```bash
 ⚠️ 8020   # Chatterbox (if TTS_ADAPTER=chatterbox)
 ⚠️ 7860   # A1111 (if RENDER_ADAPTER=a1111)
-⚠️ 8030   # Wan (if VIDEO_ADAPTER=wan)
-⚠️ 8040   # MuseTalk (if VIDEO_ADAPTER=wan)
+⚠️ 8188   # ComfyUI (if VIDEO_ADAPTER=ltx or RENDER_ADAPTER=comfyui_flux)
+⚠️ 8030   # Wan I2V (if VIDEO_ADAPTER=wan)
+⚠️ 8041   # LatentSync (if LIPSYNC_ADAPTER=latentsync)
+⚠️ 8040   # MuseTalk (if LIPSYNC_ADAPTER=musetalk)
 ```
 
 **All services run on localhost by default. External access requires firewall rules or SSH tunnels.**
