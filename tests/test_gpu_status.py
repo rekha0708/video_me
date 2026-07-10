@@ -57,7 +57,26 @@ def test_parse_nvidia_compute_apps_csv() -> None:
             "gpu_uuid": "GPU-abc",
             "pid": 1234,
             "process_name": "python",
+            "process_name_resolved": True,
             "used_memory_mb": 24576,
+        }
+    ]
+
+
+def test_parse_nvidia_compute_apps_csv_handles_unresolved_name() -> None:
+    # Seen inside containers without --pid=host: NVML reports a real host PID,
+    # but nvidia-smi can't resolve its name from the container's own /proc.
+    text = "GPU-abc, 709032, [Not Found], 20106\n"
+
+    processes = parse_nvidia_compute_apps_csv(text)
+
+    assert processes == [
+        {
+            "gpu_uuid": "GPU-abc",
+            "pid": 709032,
+            "process_name": None,
+            "process_name_resolved": False,
+            "used_memory_mb": 20106,
         }
     ]
 

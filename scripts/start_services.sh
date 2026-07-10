@@ -154,8 +154,8 @@ if [[ ! -d "$COMFYUI_DIR" ]]; then
 elif curl -sf http://localhost:8188/ >/dev/null 2>&1; then
   ok "ComfyUI already responding"
 else
-  launch_with_self_heal "ComfyUI" "$LOG_DIR/comfyui.log" python3 -m pip -- \
-    nohup python3 "$COMFYUI_DIR/main.py" --listen 0.0.0.0 --port 8188
+  launch_with_self_heal "ComfyUI" "$LOG_DIR/comfyui.log" "$ROOT_DIR/.venv/bin/python3" -m pip -- \
+    nohup "$ROOT_DIR/.venv/bin/python3" "$COMFYUI_DIR/main.py" --listen 0.0.0.0 --port 8188
   ok "ComfyUI starting (log: $LOG_DIR/comfyui.log) — takes ~30s to load"
 fi
 
@@ -281,7 +281,7 @@ printf '\nWaiting for required services to become ready...\n'
 
 FAILED=0
 wait_for "Ollama"         "http://localhost:11434/api/tags"          20 || FAILED=1
-wait_for "ComfyUI"        "http://localhost:8188/"                   20 || FAILED=1
+wait_for "ComfyUI"        "http://localhost:8188/"                   40 || FAILED=1
 wait_for "Fish Audio S2"  "http://localhost:8025/health"             15 '"model_loaded":true' || FAILED=1
 
 printf '\n'

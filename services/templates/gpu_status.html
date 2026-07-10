@@ -73,6 +73,7 @@
 
 <div class="card">
   <div class="card-title">GPU Processes</div>
+  <div id="gpu-processes-note" class="td-muted" style="font-size:12px;margin:-6px 0 10px"></div>
   <div class="table-wrap">
     <table>
       <thead>
@@ -258,6 +259,7 @@ function renderGpuStatus(data) {
   setText("metric-vram-sub", totalVram ? `${fmtMb(usedVram)} / ${fmtMb(totalVram)}` : "--");
 
   renderGpuDevices(gpus);
+  setText("gpu-processes-note", data.process_name_note || "");
   renderGpuProcesses(processes, gpus);
   renderGpuLogs(data.logs || []);
 }
@@ -301,7 +303,7 @@ function renderGpuProcesses(processes, gpus) {
     const gpu = gpuByUuid.get(proc.gpu_uuid);
     addCell(row, gpu ? fmtInt(gpu.index) : "--", "td-mono");
     addCell(row, fmtInt(proc.pid), "td-mono");
-    addCell(row, proc.process_name || "--");
+    addCell(row, proc.process_name || (proc.process_name_resolved === false ? "unknown (PID ns)" : "--"));
     addCell(row, fmtMb(proc.used_memory_mb));
     addCell(row, proc.gpu_uuid || "--", "td-mono td-muted");
     body.appendChild(row);

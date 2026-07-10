@@ -123,6 +123,15 @@ def parse_nvidia_gpu_csv(text: str) -> list[dict[str, Any]]:
     return gpus
 
 
+
+# NVML reports host-level PIDs even from inside a container (GPU access is
+# mediated by the host kernel driver, below the container's PID namespace).
+# nvidia-smi resolves process_name via /proc/<pid>/comm in ITS OWN namespace,
+# so without --pid=host that lookup fails for every process, including the
+# container's own — nvidia-smi prints this literal sentinel, not a blank.
+PROCESS_NAME_UNRESOLVED_SENTINEL = "[Not Found]"
+
+
 def parse_nvidia_compute_apps_csv(text: str) -> list[dict[str, Any]]:
     """Parse `nvidia-smi --query-compute-apps` CSV output."""
     if "No running processes found" in text:
@@ -132,11 +141,14 @@ def parse_nvidia_compute_apps_csv(text: str) -> list[dict[str, Any]]:
         if len(row) < len(COMPUTE_APP_QUERY_FIELDS):
             continue
         data = dict(zip(COMPUTE_APP_QUERY_FIELDS, row, strict=False))
+        raw_name = data["process_name"].strip()
+        name_resolved = raw_name != PROCESS_NAME_UNRESOLVED_SENTINEL
         processes.append(
             {
                 "gpu_uuid": _clean_value(data["gpu_uuid"]),
                 "pid": _to_int(data["pid"]),
-                "process_name": _clean_value(data["process_name"]),
+                "process_name": _clean_value(raw_name) if name_resolved else None,
+                "process_name_resolved": name_resolved,
                 "used_memory_mb": _to_int(data["used_memory"]),
             }
         )
@@ -372,6 +384,15 @@ def collect_gpu_status(
     nvidia_smi_path = shutil.which("nvidia-smi")
     nvidia_available = bool(gpus) or (nvidia_smi_path is not None and gpu_error is None)
 
+    process_name_note = None
+    if processes and any(not proc["process_name_resolved"] for proc in processes):
+        process_name_note = (
+            "Process names are unavailable: nvidia-smi reports host-level PIDs from "
+            "inside this container, but process-name lookup needs the host's /proc "
+            "(container has its own PID namespace, no --pid=host). PIDs and VRAM "
+            "usage above are still accurate."
+        )
+
     return {
         "collected_at": _utc_iso(),
         "workspace": str(workspace),
@@ -382,6 +403,7 @@ def collect_gpu_status(
             "error": gpu_error,
             "process_error": process_error,
         },
+        "process_name_note": process_name_note,
         "gpus": gpus,
         "processes": processes,
         "logs": collect_log_tails(workspace, log_lines=log_lines),
