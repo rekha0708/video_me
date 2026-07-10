@@ -828,7 +828,7 @@ VIDEO_ME_CRITIQUE_MODEL=qwen3.6:35b
 VIDEO_ME_CRITIQUE_BASE_URL=http://localhost:11434/v1
 
 # Render: ComfyUI + Flux 2.0 Dev (default) | a1111 (fallback)
-VIDEO_ME_RENDER_ADAPTER=comfyui_flux
+VIDEO_ME_RENDER_ADAPTER=musubi_flux
 VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188
 
 # Video: LTX-Video 2.3 via ComfyUI (default) | wan (fallback)
