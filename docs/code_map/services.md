@@ -48,6 +48,7 @@ Chatterbox TTS HTTP service wrapper.
   - `get_job(self, job_id: str) -> DashboardJobRecord | None`
   - `list_jobs(self, *, limit: int=50) -> list[DashboardJobRecord]`
   - `get_job_detail(self, job_id: str, *, event_limit: int=100) -> DashboardJobDetail | None`
+  - `delete_job(self, job_id: str) -> bool` — Delete a job and its dashboard-owned rows (queue, events, artifacts, approvals, chat).
   - `update_job_status(self, job_id: str, status: DashboardJobStatus, *, current_stage: str | None=None, current_shot_id: str | None=None, approval_kind: str | None=None, terminal_error: dict[str, Any] | None=None, completed: bool=False) -> DashboardJobRecord`
   - `update_job_phase(self, job_id: str, phase: str) -> DashboardJobRecord` — Advance the job's phase column (used by the /advance endpoint).
   - `append_completed_phase(self, job_id: str, phase: str) -> DashboardJobRecord` — Mark a phase as done in the completed_phases list.
@@ -56,6 +57,7 @@ Chatterbox TTS HTTP service wrapper.
   - `list_queue(self, job_id: str) -> list[DashboardQueueItem]`
   - `claim_next_action(self, worker_id: str) -> DashboardQueueItem | None`
   - `get_queue_item(self, queue_id: str) -> DashboardQueueItem | None`
+  - `reclaim_stale_claims(self, *, stale_after_seconds: int=120) -> list[tuple[str, str]]` — Requeue job_queue rows claimed by a worker that's no longer heartbeating.
   - `record_event(self, job_id: str, event_type: str, message: str, *, level: DashboardEventLevel=DashboardEventLevel.INFO, stage_name: str | None=None, shot_id: str | None=None, payload: dict[str, Any] | None=None) -> DashboardEvent`
   - `list_events(self, job_id: str, *, after_event_id: int=0, limit: int=200) -> list[DashboardEvent]`
   - `get_error_events(self, job_id: str, *, limit: int=20) -> list[DashboardEvent]` — Return only ERROR-level events for a job, most recent first.
@@ -97,6 +99,7 @@ Dashboard worker — claims queued jobs, runs the pipeline, emits events.
   - `__init__(self, repo: DashboardRepository, config: AppConfig, *, worker_id: str | None=None) -> None`
   - `async run(self) -> None` — Main loop: register → poll → claim → execute → repeat.
   - `stop(self) -> None` — Signal the worker to stop after the current job finishes.
+  - `_reclaim_orphaned_jobs(self) -> None` — Requeue jobs left claimed by a worker that died mid-run.
   - `async _run_action(self, action: DashboardQueueItem) -> None`
   - `async _execute_pipeline(self, action: DashboardQueueItem) -> None` — Dispatch to the right workflow function based on job phase.
   - `async _run_noop(self, req: CreateDashboardJobRequest, job_id: str) -> None`

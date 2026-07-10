@@ -1,4 +1,5 @@
 """Unit tests for MusubiFluxAdapter param-driven behavior (no subprocess)."""
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -291,6 +292,54 @@ async def test_run_many_subprocess_failure_raises(tmp_path: Path, monkeypatch) -
 
     with pytest.raises(RuntimeError, match="exit 1"):
         await adapter.run(_req(tmp_path))
+
+
+class _FakeCancellableProc:
+    """A subprocess whose communicate() hangs until cancelled, like a real
+    musubi-tuner render being interrupted mid-model-load/inference."""
+
+    def __init__(self) -> None:
+        self.killed = False
+        self.waited_after_kill = False
+
+    async def communicate(self):
+        try:
+            await asyncio.Event().wait()  # never resolves on its own
+        except asyncio.CancelledError:
+            raise
+
+    def kill(self) -> None:
+        self.killed = True
+
+    async def wait(self) -> None:
+        self.waited_after_kill = self.killed
+
+
+@pytest.mark.asyncio
+async def test_run_kills_subprocess_on_cancellation(tmp_path: Path, monkeypatch) -> None:
+    """A cancelled render (operator hits Cancel mid-render) must kill the child
+    OS process, not just abandon the Python await — otherwise it keeps running
+    and holding its GPU allocation forever, invisible to the dashboard, until
+    it OOMs a later job's render (root cause of a real production incident)."""
+    _real_lora(tmp_path)
+    adapter = _adapter(tmp_path)
+    fake_proc = _FakeCancellableProc()
+
+    async def fake_exec(*cmd, **_kwargs):
+        return fake_proc
+
+    import adapters.render_character.musubi_flux_adapter as mod
+    monkeypatch.setattr(mod.asyncio, "create_subprocess_exec", fake_exec)
+
+    task = asyncio.ensure_future(adapter.run(_req(tmp_path)))
+    await asyncio.sleep(0)  # let it reach the subprocess await point
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert fake_proc.killed is True
+    assert fake_proc.waited_after_kill is True
 
 
 def test_build_prompt_includes_shot_action(tmp_path: Path) -> None:

@@ -202,8 +202,10 @@ async def prepare_voice_model(
     Bring a VRAM-managed voice (TTS) model into memory, e.g. Fish Audio S2.
 
     Same contract as ``prepare_video_model`` but reads ``fish_s2_load_gap_sec``
-    / ``fish_s2_load_timeout_sec`` — Fish S2's load is a weights-from-disk load,
-    not a multi-minute diffusion pipeline build, so both are much shorter.
+    / ``fish_s2_load_timeout_sec`` — a plain weights-from-disk load rather than
+    Wan's multi-minute diffusion pipeline build, so both are shorter, but not
+    as short as "weights load" suggests: LLAMA + DAC decoder + warmup has been
+    observed taking ~120-150s cold, hence the 240s default (not e.g. 60s).
     """
     await _prepare_managed_adapter(
         voice_adapter,

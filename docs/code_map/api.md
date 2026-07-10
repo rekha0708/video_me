@@ -2,7 +2,7 @@
 
 # Dashboard API routes (`services/dashboard_api.py`)
 
-38 routes.
+40 routes.
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
@@ -13,6 +13,8 @@
 | GET | `/api/health/ready` | `ready` |  |
 | GET | `/api/jobs` | `list_jobs` |  |
 | POST | `/api/jobs` | `create_job` |  |
+| POST | `/api/jobs/bulk-cancel` | `bulk_cancel_jobs` |  |
+| POST | `/api/jobs/bulk-delete` | `bulk_delete_jobs` |  |
 | GET | `/api/jobs/{job_id}` | `get_job` |  |
 | POST | `/api/jobs/{job_id}/advance` | `advance_job_phase` | Re-queue the same job for the next phase (e.g. transcribe → script_plan). |
 | GET | `/api/jobs/{job_id}/approval` | `get_job_approval` |  |

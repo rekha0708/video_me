@@ -291,7 +291,18 @@ class MusubiFluxAdapter(RenderCharacter):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        stdout, _ = await proc.communicate()
+        try:
+            stdout, _ = await proc.communicate()
+        except asyncio.CancelledError:
+            # Job cancelled (or the awaiting task cancelled for any other reason)
+            # while musubi-tuner was mid-render. communicate() being cancelled
+            # does NOT kill the child OS process — left alone it keeps running
+            # and holding its ~30GB GPU allocation indefinitely, invisible to
+            # the dashboard, until it OOMs the next job's render. Kill it here
+            # so cancellation actually releases the GPU memory it was using.
+            proc.kill()
+            await proc.wait()
+            raise
         if proc.returncode != 0:
             raise RuntimeError(
                 f"flux_2_generate_image.py failed (exit {proc.returncode}):\n"

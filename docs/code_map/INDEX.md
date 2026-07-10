@@ -115,6 +115,7 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `tests/test_comfyui_flux_adapter.py` — Unit tests for ComfyUIFluxAdapter's VRAM lifecycle (ComfyUIUnloadMixin).
 - `tests/test_critique.py` — (no module docstring)
 - `tests/test_dashboard_api_helpers.py` — Unit tests for the module-level job-page helpers in services/dashboard_api.py.
+- `tests/test_dashboard_bulk_actions.py` — Tests for POST /api/jobs/bulk-cancel and /api/jobs/bulk-delete.
 - `tests/test_dashboard_models.py` — Validation tests for the story/story_images additions to core/models/dashboard.py.
 - `tests/test_dashboard_repository.py` — (no module docstring)
 - `tests/test_dashboard_retry.py` — Tests for POST /api/jobs/{job_id}/retry — retryable statuses + overrides.

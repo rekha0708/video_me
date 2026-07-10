@@ -65,10 +65,12 @@ class Settings(BaseSettings):
     tts_base_url: str = "http://localhost:8020"       # Chatterbox (fallback)
     fish_s2_base_url: str = "http://localhost:8025"   # Fish Audio S2 (default)
     # Fish S2 deferred-loading sequence (core/gpu_sequencer.py), mirroring the Wan
-    # gap/timeout above — Fish S2's load is a weights-from-disk load, not a
-    # multi-minute diffusion pipeline build, so both are much shorter than Wan's.
+    # gap/timeout above. Still far shorter than Wan's 1800s, but a plain weights
+    # load (LLAMA + DAC decoder + warmup generation) has been observed taking
+    # ~120-150s cold on this hardware — 120s left ~0 margin and timed out in
+    # production; 240s gives real headroom without approaching Wan's budget.
     fish_s2_load_gap_sec: int = 5
-    fish_s2_load_timeout_sec: int = 120
+    fish_s2_load_timeout_sec: int = 240
 
     # --- language selection ---
     target_language: str = "en"  # "en" | "hi" | "both"
