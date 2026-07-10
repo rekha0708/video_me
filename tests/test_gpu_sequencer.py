@@ -29,7 +29,7 @@ def _settings(**overrides) -> SimpleNamespace:
         fish_s2_venv_python="/workspace/.venv_fish_s2/bin/uvicorn",
         fish_s2_speech_dir="/workspace/fish-speech",
         fish_s2_log_path="/workspace/logs/fish_s2.log",
-        fish_s2_process_startup_timeout_sec=30,
+        fish_s2_process_startup_timeout_sec=240,
     )
     base.update(overrides)
     return SimpleNamespace(**base)

@@ -80,7 +80,15 @@ class Settings(BaseSettings):
     fish_s2_venv_python: str = "/workspace/.venv_fish_s2/bin/uvicorn"
     fish_s2_speech_dir: str = "/workspace/fish-speech"
     fish_s2_log_path: str = "/workspace/logs/fish_s2.log"
-    fish_s2_process_startup_timeout_sec: int = 30
+    # Fish S2's lifespan() loads the model EAGERLY at startup and that load
+    # blocks the whole ASGI app — /health can't respond until it's done —
+    # unlike Wan's genuinely deferred POST /load. So "process reachable" and
+    # "model loaded" are the same ~120-150s wait here, not two separate
+    # budgets; this needs the same headroom as fish_s2_load_timeout_sec above,
+    # not a short "is the process merely up yet" check. 30s (the original
+    # value) timed out in production twice in one session before a job even
+    # got a chance to synthesize anything.
+    fish_s2_process_startup_timeout_sec: int = 240
 
     # --- language selection ---
     target_language: str = "en"  # "en" | "hi" | "both"
