@@ -2,10 +2,13 @@
 # Restart the dashboard API server + worker — run this after every `git pull`
 # that touches core/workflow.py, services/dashboard_*.py, or adapters/.
 #
-# The API server runs with --reload and picks up code changes automatically,
-# but the worker (services.dashboard_worker) is a plain long-running process
-# with no reload — it keeps executing whatever code was loaded at start until
-# killed and relaunched, so a pull silently has no effect on it otherwise.
+# Neither process auto-reloads: the API server used to run with --reload, but
+# on this pod that reloader repeatedly hung at "Waiting for connections to
+# close" whenever a browser tab held an open SSE stream (/api/jobs/*/stream)
+# — every edit under core/ or services/ silently froze the whole dashboard,
+# broke Cancel/Approve buttons, and made in-progress jobs look stuck with no
+# way to tell they weren't. Both the API and the worker now need this script
+# rerun after every code change that touches them.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -35,11 +38,11 @@ stop_matching() {
   kill -9 $pids 2>/dev/null || true
 }
 
-# Belt-and-suspenders for stop_matching(): --reload's reloader process can
-# leak an orphaned child (e.g. a multiprocessing.spawn tracker) that keeps
-# the listening socket but whose cmdline no longer contains "uvicorn
-# services.dashboard_api" — pgrep -f then never finds it, and it silently
-# keeps serving stale code forever on every future restart. Kill by port too.
+# Belt-and-suspenders for stop_matching(): a stuck/hung process (or a stray
+# leftover from a past run) can keep the listening socket even if its cmdline
+# no longer matches the pgrep pattern above — pgrep -f then never finds it,
+# and it silently keeps serving stale code forever on every future restart.
+# Kill by port too.
 stop_port() {
   local label="$1" port="$2"
   local pids
@@ -61,7 +64,7 @@ cd "$ROOT_DIR"
 
 log "Starting Dashboard API (port $DASHBOARD_PORT)"
 nohup .venv/bin/uvicorn services.dashboard_api:create_app --factory \
-  --port "$DASHBOARD_PORT" --host 0.0.0.0 --reload \
+  --port "$DASHBOARD_PORT" --host 0.0.0.0 \
   >"$LOG_DIR/dashboard_api.log" 2>&1 &
 disown
 ok "Dashboard API starting (log: $LOG_DIR/dashboard_api.log)"

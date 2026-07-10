@@ -371,8 +371,15 @@ VIDEO_ME_ARTIFACT_STORE=s3             # use MinIO/S3 instead of local filesyste
 ### Running the dashboard
 
 ```bash
-.venv/bin/uvicorn services.dashboard_api:create_app --factory --port 8080 --reload
+bash scripts/restart_dashboard.sh
 ```
+
+Starts (or restarts) both the API and the worker. Neither auto-reloads —
+`--reload` was removed after it repeatedly hung at "Waiting for connections
+to close" on this pod whenever a browser tab held an open SSE stream
+(`/api/jobs/*/stream`), silently freezing the whole dashboard (Cancel/Approve
+buttons stopped working, running jobs looked stuck). Rerun this script after
+any change under `core/`, `adapters/`, or `services/dashboard_*.py`.
 
 Navigate to `http://localhost:8080`. Key pages:
 
