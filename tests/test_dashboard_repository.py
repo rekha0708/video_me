@@ -60,6 +60,67 @@ def test_claim_next_action_marks_queue_item_claimed(tmp_path: Path) -> None:
     assert saved.status == DashboardQueueStatus.CLAIMED
 
 
+def test_reclaim_stale_claims_requeues_claim_with_no_heartbeat(tmp_path: Path) -> None:
+    # A worker that claimed a job but never sent a heartbeat (crashed instantly,
+    # or a worker_id that no longer exists) must count as dead, not "unknown".
+    repo = _repo(tmp_path)
+    job, _ = repo.create_queued_job(_request())
+    repo.claim_next_action("worker-dead")
+
+    reclaimed = repo.reclaim_stale_claims(stale_after_seconds=120)
+
+    assert reclaimed == [(job.job_id, "worker-dead")]
+    saved = repo.list_queue(job.job_id)[0]
+    assert saved.status == DashboardQueueStatus.QUEUED
+    assert saved.claimed_by is None
+
+
+def test_reclaim_stale_claims_leaves_live_worker_claim_alone(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    job, _ = repo.create_queued_job(_request())
+    repo.claim_next_action("worker-live")
+    repo.heartbeat_worker("worker-live", current_job_id=job.job_id)
+
+    reclaimed = repo.reclaim_stale_claims(stale_after_seconds=120)
+
+    assert reclaimed == []
+    saved = repo.list_queue(job.job_id)[0]
+    assert saved.status == DashboardQueueStatus.CLAIMED
+    assert saved.claimed_by == "worker-live"
+
+
+def test_reclaim_stale_claims_requeues_past_threshold(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    job, _ = repo.create_queued_job(_request())
+    repo.claim_next_action("worker-slow")
+    repo.heartbeat_worker("worker-slow", current_job_id=job.job_id)
+
+    # Negative threshold: any elapsed time counts as stale, no clock mocking needed.
+    reclaimed = repo.reclaim_stale_claims(stale_after_seconds=-1)
+
+    assert reclaimed == [(job.job_id, "worker-slow")]
+    saved = repo.list_queue(job.job_id)[0]
+    assert saved.status == DashboardQueueStatus.QUEUED
+
+
+def test_delete_job_removes_all_rows(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    job, _ = repo.create_queued_job(_request())
+    repo.record_event(job.job_id, "job_queued", "test")
+
+    deleted = repo.delete_job(job.job_id)
+
+    assert deleted is True
+    assert repo.get_job(job.job_id) is None
+    assert repo.list_events(job.job_id) == []
+    assert repo.list_queue(job.job_id) == []
+
+
+def test_delete_job_returns_false_for_unknown_job(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    assert repo.delete_job("does-not-exist") is False
+
+
 def test_job_detail_includes_queue_events_and_pending_approval(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     job, _ = repo.create_queued_job(_request())

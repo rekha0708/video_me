@@ -306,6 +306,35 @@ class DashboardRepository:
             pending_approval=self.get_pending_approval(job_id),
         )
 
+    def delete_job(self, job_id: str) -> bool:
+        """Delete a job and its dashboard-owned rows (queue, events, artifacts, approvals, chat).
+
+        Purely mechanical — callers decide whether deletion is allowed (e.g. only
+        for terminal-status jobs). Leaves the core job store's `jobs`/`stage_results`
+        rows and on-disk artifacts/work dirs alone — those are the pipeline's raw
+        execution record, not dashboard-list data, and stay as an audit trail even
+        after the job disappears from the dashboard.
+        Returns False if the job didn't exist, True if it was deleted.
+        """
+        with self._connect() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM dashboard_jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if exists is None:
+                return False
+            conn.execute("BEGIN IMMEDIATE")
+            for table in (
+                "dashboard_jobs",
+                "job_queue",
+                "job_events",
+                "artifacts",
+                "approval_requests",
+                "chat_messages",
+            ):
+                conn.execute(f"DELETE FROM {table} WHERE job_id = ?", (job_id,))
+            conn.execute("COMMIT")
+        return True
+
     def update_job_status(
         self,
         job_id: str,
@@ -479,6 +508,49 @@ class DashboardRepository:
                 (queue_id,),
             ).fetchone()
         return self._queue_from_row(row) if row else None
+
+    def reclaim_stale_claims(self, *, stale_after_seconds: int = 120) -> list[tuple[str, str]]:
+        """Requeue job_queue rows claimed by a worker that's no longer heartbeating.
+
+        A worker that dies mid-job (crash, OOM, `restart_dashboard.sh`) leaves its
+        claimed row stuck forever — claim_next_action only ever looks at QUEUED
+        rows, so nothing would otherwise pick the job back up. Call this once on
+        worker startup. Returns (job_id, previous_worker_id) pairs it requeued.
+        """
+        now = utc_now()
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                """
+                SELECT q.queue_id, q.job_id, q.claimed_by, w.last_heartbeat_at
+                FROM job_queue q
+                LEFT JOIN worker_heartbeats w ON w.worker_id = q.claimed_by
+                WHERE q.status = ?
+                """,
+                (DashboardQueueStatus.CLAIMED.value,),
+            ).fetchall()
+
+            stale: list[tuple[str, str, str]] = []
+            for row in rows:
+                last_heartbeat = _dt(row["last_heartbeat_at"])
+                is_stale = (
+                    last_heartbeat is None
+                    or (now - last_heartbeat).total_seconds() > stale_after_seconds
+                )
+                if is_stale:
+                    stale.append((row["queue_id"], row["job_id"], row["claimed_by"]))
+
+            for queue_id, _job_id, _worker_id in stale:
+                conn.execute(
+                    """
+                    UPDATE job_queue
+                    SET status = ?, claimed_at = NULL, claimed_by = NULL
+                    WHERE queue_id = ?
+                    """,
+                    (DashboardQueueStatus.QUEUED.value, queue_id),
+                )
+            conn.execute("COMMIT")
+        return [(job_id, worker_id) for _queue_id, job_id, worker_id in stale]
 
     # ------------------------------------------------------------------
     # Events

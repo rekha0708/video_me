@@ -292,6 +292,96 @@ async function refreshJobsList() {
 }
 
 // ---------------------------------------------------------------------------
+// Jobs-list bulk actions (select, cancel, delete)
+// ---------------------------------------------------------------------------
+
+function _selectedJobIds() {
+  return Array.from(document.querySelectorAll(".job-select-checkbox:checked")).map((cb) => cb.value);
+}
+
+function toggleSelectAllJobs(headerCheckbox) {
+  document.querySelectorAll(".job-select-checkbox").forEach((cb) => {
+    cb.checked = headerCheckbox.checked;
+  });
+  onJobSelectionChange();
+}
+
+function clearJobSelection() {
+  document.querySelectorAll(".job-select-checkbox").forEach((cb) => { cb.checked = false; });
+  const selectAll = document.getElementById("jobs-select-all");
+  if (selectAll) selectAll.checked = false;
+  onJobSelectionChange();
+}
+
+function onJobSelectionChange() {
+  const ids = _selectedJobIds();
+  const toolbar = document.getElementById("jobs-bulk-toolbar");
+  const count = document.getElementById("jobs-bulk-count");
+  if (toolbar) toolbar.style.display = ids.length ? "flex" : "none";
+  if (count) count.textContent = `${ids.length} selected`;
+}
+
+async function _postBulkAction(url, jobIds) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ job_ids: jobIds }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail?.message || `${url} failed (${res.status})`);
+  }
+  return (await res.json()).results || {};
+}
+
+function _summarizeBulkResults(results, resultLabels) {
+  const counts = {};
+  Object.values(results).forEach((r) => { counts[r] = (counts[r] || 0) + 1; });
+  return Object.entries(counts)
+    .map(([r, n]) => `${n} ${resultLabels[r] || r}`)
+    .join(", ");
+}
+
+async function bulkCancelSelected() {
+  const ids = _selectedJobIds();
+  if (!ids.length) return;
+  if (!confirm(`Cancel ${ids.length} selected job(s)?\n\nEach worker stops after its current stage finishes.`)) return;
+  try {
+    const results = await _postBulkAction("/api/jobs/bulk-cancel", ids);
+    alert(_summarizeBulkResults(results, {
+      cancel_requested: "cancellation requested",
+      already_terminal: "already finished (skipped)",
+      not_found: "not found",
+    }));
+    location.reload();
+  } catch (err) {
+    alert("Error: " + err.message);
+  }
+}
+
+async function bulkDeleteSelected() {
+  const ids = _selectedJobIds();
+  if (!ids.length) return;
+  if (!confirm(
+    `Delete ${ids.length} selected job(s) from the list?\n\n` +
+    "Only finished jobs (completed/failed/cancelled/blocked) are removed — " +
+    "active jobs are skipped. This only removes the dashboard record, not " +
+    "rendered files on disk."
+  )) return;
+  try {
+    const results = await _postBulkAction("/api/jobs/bulk-delete", ids);
+    alert(_summarizeBulkResults(results, {
+      deleted: "deleted",
+      skipped_active: "still active (cancel first)",
+      not_found: "not found",
+    }));
+    location.reload();
+  } catch (err) {
+    alert("Error: " + err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Stage timeline live updates
 // ---------------------------------------------------------------------------
 

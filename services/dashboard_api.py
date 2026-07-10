@@ -869,6 +869,46 @@ def create_app(
         repo.record_event(job_id, "cancel_requested", "Cancellation requested from dashboard API.")
         return _base_response({"job_id": job.job_id, "status": job.status.value})
 
+    @app.post("/api/jobs/bulk-cancel")
+    def bulk_cancel_jobs(
+        body: dict[str, Any],
+        _: None = Depends(require_write_auth),
+    ) -> dict[str, Any]:
+        job_ids = body.get("job_ids") or []
+        results: dict[str, str] = {}
+        for job_id in job_ids:
+            job = repo.get_job(job_id)
+            if job is None:
+                results[job_id] = "not_found"
+            elif job.status in _TERMINAL_STATUSES or job.status == DashboardJobStatus.CANCEL_REQUESTED:
+                results[job_id] = "already_terminal"
+            else:
+                repo.update_job_status(job_id, DashboardJobStatus.CANCEL_REQUESTED)
+                repo.record_event(
+                    job_id, "cancel_requested",
+                    "Cancellation requested from dashboard API (bulk action).",
+                )
+                results[job_id] = "cancel_requested"
+        return _base_response({"results": results})
+
+    @app.post("/api/jobs/bulk-delete")
+    def bulk_delete_jobs(
+        body: dict[str, Any],
+        _: None = Depends(require_write_auth),
+    ) -> dict[str, Any]:
+        job_ids = body.get("job_ids") or []
+        results: dict[str, str] = {}
+        for job_id in job_ids:
+            job = repo.get_job(job_id)
+            if job is None:
+                results[job_id] = "not_found"
+            elif job.status not in _TERMINAL_STATUSES:
+                results[job_id] = "skipped_active"
+            else:
+                repo.delete_job(job_id)
+                results[job_id] = "deleted"
+        return _base_response({"results": results})
+
     # ------------------------------------------------------------------
     # D5 — Approval endpoints
     # ------------------------------------------------------------------

@@ -95,6 +95,38 @@ def test_complete_and_fail_queue_actions(tmp_path: Path) -> None:
     assert item2.error["code"] == "ERR"
 
 
+def test_reclaim_orphaned_jobs_requeues_dead_workers_claim_and_logs_event(
+    tmp_path: Path,
+) -> None:
+    worker, repo = _make_worker(tmp_path)
+    job, _ = repo.create_queued_job(_noop_request())
+    repo.claim_next_action("worker-that-died")
+
+    worker._reclaim_orphaned_jobs()
+
+    item = repo.list_queue(job.job_id)[0]
+    assert item.status == DashboardQueueStatus.QUEUED
+    assert item.claimed_by is None
+
+    events = repo.list_events(job.job_id)
+    assert any(e.event_type == "job_reclaimed" for e in events)
+
+
+def test_reclaim_orphaned_jobs_leaves_actively_heartbeating_claim_alone(
+    tmp_path: Path,
+) -> None:
+    worker, repo = _make_worker(tmp_path)
+    job, _ = repo.create_queued_job(_noop_request())
+    repo.claim_next_action("worker-still-alive")
+    repo.heartbeat_worker("worker-still-alive", current_job_id=job.job_id)
+
+    worker._reclaim_orphaned_jobs()
+
+    item = repo.list_queue(job.job_id)[0]
+    assert item.status == DashboardQueueStatus.CLAIMED
+    assert item.claimed_by == "worker-still-alive"
+
+
 # ---------------------------------------------------------------------------
 # _make_stage_hook — shot progress plumbing (current_shot_id + custom message)
 # ---------------------------------------------------------------------------

@@ -14,10 +14,17 @@
   {% if jobs %}
   <div id="jobs-list-root"
        data-has-running="{{ 'true' if jobs | selectattr('status', 'in', ['created','running','queued','cancel_requested','pending_plan_approval','pending_image_approval','pending_final_review','stalled']) | list else 'false' }}">
+  <div id="jobs-bulk-toolbar" class="bulk-toolbar" style="display:none">
+    <span id="jobs-bulk-count" class="text-muted"></span>
+    <button type="button" class="btn btn-outline btn-sm" onclick="bulkCancelSelected()">Cancel selected</button>
+    <button type="button" class="btn btn-danger btn-sm" onclick="bulkDeleteSelected()">Delete selected</button>
+    <button type="button" class="btn btn-outline btn-sm" onclick="clearJobSelection()">Clear</button>
+  </div>
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
+          <th style="width:32px"><input type="checkbox" id="jobs-select-all" onchange="toggleSelectAllJobs(this)"></th>
           <th>Job ID</th>
           <th>Status</th>
           <th>Cast</th>
@@ -33,7 +40,8 @@
         {% for job in jobs %}
         {% set req = job.request or {} %}
         {% set overrides = req.get('overrides', {}) or {} %}
-        <tr data-job-id="{{ job.job_id }}">
+        <tr data-job-id="{{ job.job_id }}" data-status="{{ job.status }}">
+          <td><input type="checkbox" class="job-select-checkbox" value="{{ job.job_id }}" onchange="onJobSelectionChange()"></td>
           <td class="td-mono">
             <a href="/jobs/{{ job.job_id }}" class="row-link">{{ job.job_id }}</a>
           </td>

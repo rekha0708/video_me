@@ -68,6 +68,7 @@ class DashboardWorker:
         """Main loop: register → poll → claim → execute → repeat."""
         logger.info("Worker %s starting", self.worker_id)
         self.repo.heartbeat_worker(self.worker_id)
+        self._reclaim_orphaned_jobs()
 
         idle_heartbeat_task = asyncio.create_task(self._idle_heartbeat())
         try:
@@ -91,6 +92,30 @@ class DashboardWorker:
     def stop(self) -> None:
         """Signal the worker to stop after the current job finishes."""
         self._stop_event.set()
+
+    def _reclaim_orphaned_jobs(self) -> None:
+        """Requeue jobs left claimed by a worker that died mid-run.
+
+        Runs once at startup. Without this, a job whose worker was killed
+        (crash, OOM, `restart_dashboard.sh`) sits at status=running forever —
+        claim_next_action only ever looks at QUEUED rows, so no future worker
+        would otherwise pick it back up. The pipeline's own resume logic
+        (RunOptions.resume, keyed on prior artifacts) picks up where the dead
+        worker left off, so this is a plain requeue, not a restart-from-scratch.
+        """
+        reclaimed = self.repo.reclaim_stale_claims(stale_after_seconds=self.STALL_THRESHOLD)
+        for job_id, previous_worker_id in reclaimed:
+            logger.warning(
+                "Reclaimed job %s — previous worker %s stopped heartbeating",
+                job_id, previous_worker_id,
+            )
+            self.repo.record_event(
+                job_id,
+                "job_reclaimed",
+                f"Requeued after worker {previous_worker_id} stopped responding "
+                "(crashed or was restarted mid-job). Resuming from last completed stage.",
+                level=DashboardEventLevel.WARNING,
+            )
 
     # ------------------------------------------------------------------
     # Job execution
