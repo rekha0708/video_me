@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 import json
 import os
 import secrets
@@ -7,6 +8,7 @@ import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 try:
     from fastapi import File, Form, UploadFile
@@ -18,6 +20,7 @@ from core.storage import create_artifact_store
 from core.models.dashboard import (
     ChatRequest,
     CreateDashboardJobRequest,
+    DashboardEvent,
     DashboardApprovalStatus,
     DashboardJobStatus,
     DashboardQueueAction,
@@ -37,6 +40,9 @@ _TERMINAL_STATUSES = {
     DashboardJobStatus.CANCELLED,
 }
 
+_DASHBOARD_TIME_ZONE = "America/Los_Angeles"
+_DASHBOARD_TZ = ZoneInfo(_DASHBOARD_TIME_ZONE)
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -52,6 +58,260 @@ def _base_response(payload: dict[str, Any]) -> dict[str, Any]:
         "server_time": _utc_now().isoformat(),
         **payload,
     }
+
+
+def _coerce_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        try:
+            dt = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    else:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _format_dashboard_time(value: Any, fmt: str = "%H:%M:%S") -> str:
+    dt = _coerce_datetime(value)
+    if dt is None:
+        return ""
+    return dt.astimezone(_DASHBOARD_TZ).strftime(fmt)
+
+
+def _event_value(event: DashboardEvent | dict[str, Any] | Any, name: str, default: Any = None) -> Any:
+    if isinstance(event, dict):
+        return event.get(name, default)
+    return getattr(event, name, default)
+
+
+_COST_GROUP_ORDER = [
+    "prep",
+    "script",
+    "render",
+    "voice",
+    "video",
+    "assemble",
+    "training",
+    "other",
+]
+
+_COST_GROUP_LABELS = {
+    "prep": "Prep / transcript",
+    "script": "Script / plan",
+    "render": "Image render",
+    "voice": "Voice / source audio",
+    "video": "Video + lip-sync",
+    "assemble": "Assembly",
+    "training": "Training",
+    "other": "Other",
+}
+
+_COST_STAGE_GROUPS = {
+    "fetch_media": "prep",
+    "transcribe": "prep",
+    "whisper_model_unload": "prep",
+    "analyze_content": "prep",
+    "analyze_visuals": "prep",
+    "adapt_script": "script",
+    "plan_shots": "script",
+    "critique_plan": "script",
+    "render_overlays": "script",
+    "render_loop": "render",
+    "render_character": "render",
+    "slice_source_audio": "voice",
+    "synthesize_voice": "voice",
+    "fit_voice_audio": "voice",
+    "voice_model_unload": "voice",
+    "video_model_load": "video",
+    "video_loop": "video",
+    "generate_video": "video",
+    "lip_sync": "video",
+    "lip_sync_qa": "video",
+    "shot_complete": "video",
+    "assemble_video": "assemble",
+    "publish": "assemble",
+    "lora_train": "training",
+}
+
+
+def _request_gpu_price_per_hour(request: Any) -> float:
+    if isinstance(request, dict):
+        raw = request.get("gpu_price_per_hour", 0.0)
+    else:
+        raw = getattr(request, "gpu_price_per_hour", 0.0)
+    try:
+        return max(0.0, float(raw or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _format_duration(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    if seconds < 3600:
+        return f"{seconds / 60.0:.1f}m"
+    return f"{seconds / 3600.0:.2f}h"
+
+
+def _format_cost(cost: float) -> str:
+    return f"${cost:.2f}"
+
+
+def _pop_stage_start(
+    starts: dict[tuple[str, str], list[datetime]],
+    stage_name: str,
+    shot_id: str,
+) -> datetime | None:
+    keys = [(stage_name, shot_id), (stage_name, "")]
+    for key in keys:
+        values = starts.get(key)
+        if values:
+            return values.pop(0)
+
+    candidates = [
+        (key, values[0])
+        for key, values in starts.items()
+        if key[0] == stage_name and values
+    ]
+    if not candidates:
+        return None
+    key, _ = min(candidates, key=lambda item: item[1])
+    return starts[key].pop(0)
+
+
+def _build_cost_summary(
+    events: list[DashboardEvent] | list[dict[str, Any]],
+    request: Any,
+) -> dict[str, Any]:
+    price_per_hour = _request_gpu_price_per_hour(request)
+    summary: dict[str, Any] = {
+        "enabled": price_per_hour > 0,
+        "price_per_hour": price_per_hour,
+        "price_per_hour_display": _format_cost(price_per_hour),
+        "timezone": _DASHBOARD_TIME_ZONE,
+        "groups": [],
+        "messages": [],
+        "total_seconds": 0.0,
+        "total_duration": _format_duration(0.0),
+        "total_cost": 0.0,
+        "total_cost_display": _format_cost(0.0),
+        "shot_count": 0,
+    }
+    if price_per_hour <= 0:
+        return summary
+
+    starts: dict[tuple[str, str], list[datetime]] = defaultdict(list)
+    groups: dict[str, dict[str, Any]] = {
+        key: {
+            "key": key,
+            "label": _COST_GROUP_LABELS[key],
+            "seconds": 0.0,
+            "cost": 0.0,
+            "shots": set(),
+            "stage_count": 0,
+        }
+        for key in _COST_GROUP_ORDER
+    }
+
+    for event in sorted(events, key=lambda ev: int(_event_value(ev, "event_id", 0) or 0)):
+        stage_name = _event_value(event, "stage_name")
+        event_type = _event_value(event, "event_type")
+        if not stage_name or event_type not in {"stage_started", "stage_completed", "stage_failed"}:
+            continue
+        event_dt = _coerce_datetime(_event_value(event, "created_at"))
+        if event_dt is None:
+            continue
+        shot_id = str(_event_value(event, "shot_id") or "")
+        key = (str(stage_name), shot_id)
+        if event_type == "stage_started":
+            starts[key].append(event_dt)
+            continue
+
+        start_dt = _pop_stage_start(starts, str(stage_name), shot_id)
+        if start_dt is None:
+            continue
+        seconds = max((event_dt - start_dt).total_seconds(), 0.0)
+        group_key = _COST_STAGE_GROUPS.get(str(stage_name), "other")
+        group = groups[group_key]
+        group["seconds"] += seconds
+        group["stage_count"] += 1
+        if shot_id:
+            group["shots"].add(shot_id)
+
+    group_list: list[dict[str, Any]] = []
+    all_shots: set[str] = set()
+    total_seconds = 0.0
+    for key in _COST_GROUP_ORDER:
+        group = groups[key]
+        seconds = float(group["seconds"])
+        if seconds <= 0:
+            continue
+        cost = seconds / 3600.0 * price_per_hour
+        shots = set(group["shots"])
+        all_shots.update(shots)
+        shot_count = len(shots)
+        row = {
+            "key": key,
+            "label": group["label"],
+            "seconds": round(seconds, 3),
+            "duration": _format_duration(seconds),
+            "cost": round(cost, 4),
+            "cost_display": _format_cost(cost),
+            "shot_count": shot_count,
+            "stage_count": int(group["stage_count"]),
+            "avg_seconds_per_shot": round(seconds / shot_count, 3) if shot_count else None,
+            "avg_duration_per_shot": _format_duration(seconds / shot_count) if shot_count else None,
+            "avg_cost_per_shot": round(cost / shot_count, 4) if shot_count else None,
+            "avg_cost_per_shot_display": _format_cost(cost / shot_count) if shot_count else None,
+        }
+        group_list.append(row)
+        total_seconds += seconds
+
+    total_cost = total_seconds / 3600.0 * price_per_hour
+    summary.update(
+        {
+            "groups": group_list,
+            "total_seconds": round(total_seconds, 3),
+            "total_duration": _format_duration(total_seconds),
+            "total_cost": round(total_cost, 4),
+            "total_cost_display": _format_cost(total_cost),
+            "shot_count": len(all_shots),
+        }
+    )
+
+    messages: list[str] = []
+    for group in group_list:
+        shot_count = int(group["shot_count"])
+        if shot_count:
+            noun = "shot" if shot_count == 1 else "shots"
+            messages.append(
+                f"{group['label']} took {group['duration']} for {shot_count} {noun}, "
+                f"costing {group['cost_display']} "
+                f"(avg {group['avg_duration_per_shot']} / {group['avg_cost_per_shot_display']} per shot)."
+            )
+        else:
+            messages.append(
+                f"{group['label']} took {group['duration']}, costing {group['cost_display']}."
+            )
+    if total_seconds > 0:
+        messages.append(
+            f"Total measured stage runtime: {summary['total_duration']}, "
+            f"estimated GPU spend {summary['total_cost_display']} at "
+            f"{summary['price_per_hour_display']}/hr."
+        )
+    summary["messages"] = messages
+    return summary
 
 
 def _result_to_dict(result: CheckResult) -> dict[str, str]:
@@ -652,7 +912,13 @@ def create_app(
                     "retryable": False,
                 },
             )
-        return _base_response(detail.model_dump(mode="json"))
+        cost_events = repo.list_events(job_id, limit=5000)
+        payload = detail.model_dump(mode="json")
+        payload["cost_summary"] = _build_cost_summary(
+            cost_events,
+            detail.job.request,
+        )
+        return _base_response(payload)
 
     @app.get("/api/jobs/{job_id}/events")
     def get_job_events(
@@ -1381,6 +1647,7 @@ def create_app(
             return base64.urlsafe_b64encode(str(path).encode()).decode()
 
         _jinja_env.filters["b64path"] = _b64path
+        _jinja_env.filters["dashboard_time"] = _format_dashboard_time
 
         @app.get("/img/{path_b64}", include_in_schema=False)
         def serve_render_image(path_b64: str):
@@ -1433,11 +1700,14 @@ def create_app(
             work_dir = Path(config.settings.data_dir) / "jobs" / job_id
             flags = _artifact_flags(artifact_store, work_dir, job_id)
             worker_hb = repo.latest_worker_heartbeat()
+            cost_events = repo.list_events(job_id, limit=5000)
+            cost_summary = _build_cost_summary(cost_events, detail.job.request)
             return _render(
                 "job_detail.html",
                 detail=detail,
                 artifact_flags=flags,
                 stepper=_stepper_state(detail.job, flags),
+                cost_summary=cost_summary,
                 worker=worker_hb,
                 active="jobs",
             )

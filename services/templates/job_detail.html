@@ -258,6 +258,75 @@
 </div>
 {% endif %}
 
+<!-- ── Cost summary ─────────────────────────────────────────────────── -->
+{% if cost_summary and cost_summary.enabled %}
+<div class="card" id="cost-card">
+  <div class="flex justify-between items-center" style="margin-bottom:10px">
+    <div class="card-title mt-0">GPU Cost Summary</div>
+    <span class="text-muted text-sm">
+      {{ cost_summary.price_per_hour_display }}/hr · Pacific time
+    </span>
+  </div>
+
+  <div class="cost-total">
+    <div>
+      <div class="cost-total-label">Measured stage runtime</div>
+      <div class="cost-total-value">{{ cost_summary.total_duration }}</div>
+    </div>
+    <div>
+      <div class="cost-total-label">Estimated spend</div>
+      <div class="cost-total-value">{{ cost_summary.total_cost_display }}</div>
+    </div>
+    <div>
+      <div class="cost-total-label">Shot-counted work</div>
+      <div class="cost-total-value">{{ cost_summary.shot_count }}</div>
+    </div>
+  </div>
+
+  {% if cost_summary.groups %}
+  <div class="table-wrap mt-16">
+    <table class="cost-table">
+      <thead>
+        <tr>
+          <th>Group</th>
+          <th>Time</th>
+          <th>Cost</th>
+          <th>Shots</th>
+          <th>Avg / shot</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for group in cost_summary.groups %}
+        <tr>
+          <td>{{ group.label }}</td>
+          <td class="td-mono td-muted">{{ group.duration }}</td>
+          <td class="td-mono">{{ group.cost_display }}</td>
+          <td class="td-muted">{{ group.shot_count if group.shot_count else '—' }}</td>
+          <td class="td-muted">
+            {% if group.shot_count %}
+              {{ group.avg_duration_per_shot }} / {{ group.avg_cost_per_shot_display }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <ul class="cost-notes">
+    {% for message in cost_summary.messages %}
+    <li>{{ message }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="text-muted" style="font-size:13px">
+    No completed stage pairs yet. Costs appear after stages finish.
+  </p>
+  {% endif %}
+</div>
+{% endif %}
+
 <!-- ── Transcript ────────────────────────────────────────────────────── -->
 {# Card visibility is artifact-driven (services/dashboard_api.py:_artifact_flags)
    so it works for phased, phase="all", and story-seeded jobs alike. #}
@@ -340,7 +409,7 @@
 <div class="card">
   <div class="flex justify-between items-center" style="margin-bottom:14px">
     <div class="card-title mt-0">Events</div>
-    <span class="text-muted text-sm">Live — SSE with polling fallback</span>
+    <span class="text-muted text-sm">Live — Pacific time</span>
   </div>
   <div id="events-feed" class="events-feed">
     {% for ev in detail.events %}
@@ -348,7 +417,7 @@
     {% set is_error = (ev.level.value if ev.level else 'info') == 'error' %}
     <div class="ev-row{% if has_payload %} ev-has-detail{% endif %}"
          {% if has_payload %}onclick="toggleEvDetail(this)"{% endif %}>
-      <span class="ev-time">{{ ev.created_at.strftime('%H:%M:%S') if ev.created_at else '' }}</span>
+      <span class="ev-time">{{ ev.created_at | dashboard_time }}</span>
       <span class="ev-level ev-level-{{ ev.level.value if ev.level else 'info' }}">
         {{ (ev.level.value if ev.level else 'info') | upper }}
       </span>

@@ -90,6 +90,24 @@ def test_audio_profile_accepts_operator_hint() -> None:
     assert req.audio_profile == "singing"
 
 
+def test_gpu_price_per_hour_defaults_to_zero() -> None:
+    req = CreateDashboardJobRequest(
+        source=DashboardSource(kind="file", url="file:///tmp/source.mp4"),
+        rights_cleared=True,
+    )
+
+    assert req.gpu_price_per_hour == 0.0
+
+
+def test_gpu_price_per_hour_rejects_negative_value() -> None:
+    with pytest.raises(ValidationError):
+        CreateDashboardJobRequest(
+            source=DashboardSource(kind="file", url="file:///tmp/source.mp4"),
+            rights_cleared=True,
+            gpu_price_per_hour=-1,
+        )
+
+
 def test_audio_profile_rejects_unknown_value() -> None:
     with pytest.raises(ValidationError):
         CreateDashboardJobRequest(

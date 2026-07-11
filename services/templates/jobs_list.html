@@ -63,7 +63,7 @@
             <div>llm: {{ overrides.get('llm_model') or '<span class="text-muted">default</span>' | safe }}</div>
           </td>
           <td class="td-muted td-stage">{{ job.current_stage or '—' }}</td>
-          <td class="td-muted">{{ job.created_at.strftime('%m-%d %H:%M') if job.created_at else '—' }}</td>
+          <td class="td-muted">{{ (job.created_at | dashboard_time('%m-%d %H:%M')) or '—' }}</td>
           <td>
             <a href="/jobs/{{ job.job_id }}" class="btn btn-outline btn-sm">View</a>
           </td>

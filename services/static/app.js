@@ -2,6 +2,7 @@
 
 const STALL_THRESHOLD_SEC = 120;
 const POLL_INTERVAL_MS    = 3000;
+const DASHBOARD_TIME_ZONE = "America/Los_Angeles";
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -11,7 +12,13 @@ function formatTime(isoStr) {
   if (!isoStr) return "—";
   const d = new Date(isoStr);
   if (isNaN(d)) return isoStr;
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZone: DASHBOARD_TIME_ZONE,
+  }).format(d);
 }
 
 function elapsedSec(isoStart) {

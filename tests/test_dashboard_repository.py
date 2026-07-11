@@ -45,6 +45,19 @@ def test_create_queued_job_persists_job_queue_and_event(tmp_path: Path) -> None:
     assert events[0].event_type == "job_queued"
 
 
+def test_list_events_supports_long_jobs_above_500_events(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    job, _ = repo.create_queued_job(_request())
+    for index in range(525):
+        repo.record_event(job.job_id, "stage_started", f"event {index}")
+
+    events = repo.list_events(job.job_id, limit=600)
+
+    assert len(events) == 526
+    assert events[0].event_type == "job_queued"
+    assert events[-1].message == "event 524"
+
+
 def test_claim_next_action_marks_queue_item_claimed(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     job, queue_item = repo.create_queued_job(_request())

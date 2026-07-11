@@ -599,7 +599,7 @@ class DashboardRepository:
         after_event_id: int = 0,
         limit: int = 200,
     ) -> list[DashboardEvent]:
-        limit = max(1, min(limit, 500))
+        limit = max(1, min(limit, 5000))
         with self._connect() as conn:
             rows = conn.execute(
                 """

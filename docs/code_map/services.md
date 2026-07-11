@@ -28,6 +28,14 @@ Chatterbox TTS HTTP service wrapper.
 - `_utc_now() -> datetime`
 - `_request_id() -> str`
 - `_base_response(payload: dict[str, Any]) -> dict[str, Any]`
+- `_coerce_datetime(value: Any) -> datetime | None`
+- `_format_dashboard_time(value: Any, fmt: str='%H:%M:%S') -> str`
+- `_event_value(event: DashboardEvent | dict[str, Any] | Any, name: str, default: Any=None) -> Any`
+- `_request_gpu_price_per_hour(request: Any) -> float`
+- `_format_duration(seconds: float) -> str`
+- `_format_cost(cost: float) -> str`
+- `_pop_stage_start(starts: dict[tuple[str, str], list[datetime]], stage_name: str, shot_id: str) -> datetime | None`
+- `_build_cost_summary(events: list[DashboardEvent] | list[dict[str, Any]], request: Any) -> dict[str, Any]`
 - `_result_to_dict(result: CheckResult) -> dict[str, str]`
 - `_workspace_path(path_value: str, *, cwd: Path | None=None) -> Path` — Map training TOML paths from /workspace/video_me to this checkout.
 - `_find_lora_config_path(member_id: str, *, cwd: Path | None=None) -> Path`

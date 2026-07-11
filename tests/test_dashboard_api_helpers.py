@@ -2,12 +2,15 @@
 import importlib
 
 import pytest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 from core.storage import LocalArtifactStore
 from services.dashboard_api import (
     _artifact_flags,
+    _build_cost_summary,
+    _format_dashboard_time,
     _lora_dataset_image_dir,
     _next_training_image_path,
     _stepper_state,
@@ -49,6 +52,26 @@ def _job(phase: str = "all", status: str = "running", current_stage: str | None 
     )
 
 
+_BASE_TIME = datetime(2026, 7, 11, 19, 0, 0, tzinfo=timezone.utc)
+
+
+def _ev(
+    event_id: int,
+    event_type: str,
+    stage_name: str | None,
+    seconds: float,
+    *,
+    shot_id: str | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        event_id=event_id,
+        event_type=event_type,
+        stage_name=stage_name,
+        shot_id=shot_id,
+        created_at=_BASE_TIME + timedelta(seconds=seconds),
+    )
+
+
 _ALL_FLAGS = {"transcript": True, "visuals": True, "script": True, "renders": True, "video": True}
 _NO_FLAGS = {
     "transcript": False,
@@ -58,6 +81,90 @@ _NO_FLAGS = {
     "shot_attempts": False,
     "video": False,
 }
+
+
+# ------------------------------------------------------------------ display time + cost summary
+
+
+def test_dashboard_time_formats_in_pacific_time() -> None:
+    dt = datetime(2026, 7, 11, 19, 5, 6, tzinfo=timezone.utc)
+
+    assert _format_dashboard_time(dt) == "12:05:06"
+    assert _format_dashboard_time(dt, "%m-%d %H:%M") == "07-11 12:05"
+
+
+def test_cost_summary_disabled_without_price() -> None:
+    events = [
+        _ev(1, "stage_started", "transcribe", 0),
+        _ev(2, "stage_completed", "transcribe", 30),
+    ]
+
+    summary = _build_cost_summary(events, {"gpu_price_per_hour": 0})
+
+    assert summary["enabled"] is False
+    assert summary["groups"] == []
+
+
+def test_cost_summary_groups_stage_pairs_and_averages_per_shot() -> None:
+    events = [
+        _ev(1, "stage_started", "transcribe", 0),
+        _ev(2, "stage_completed", "transcribe", 60),
+        _ev(3, "stage_started", "render_character", 60, shot_id="s1"),
+        _ev(4, "stage_completed", "render_character", 180, shot_id="s1"),
+        _ev(5, "stage_started", "render_character", 180, shot_id="s2"),
+        _ev(6, "stage_completed", "render_character", 300, shot_id="s2"),
+        _ev(7, "stage_started", "generate_video", 300, shot_id="s1"),
+        _ev(8, "stage_completed", "generate_video", 480, shot_id="s1"),
+        _ev(9, "stage_started", "lip_sync", 480, shot_id="s1"),
+        _ev(10, "stage_completed", "lip_sync", 540, shot_id="s1"),
+        _ev(11, "stage_started", "generate_video", 540, shot_id="s2"),
+        _ev(12, "stage_completed", "generate_video", 720, shot_id="s2"),
+        _ev(13, "stage_started", "assemble_video", 720),
+        _ev(14, "stage_completed", "assemble_video", 780),
+    ]
+
+    summary = _build_cost_summary(events, {"gpu_price_per_hour": 60})
+
+    assert summary["enabled"] is True
+    assert summary["total_seconds"] == 780
+    assert summary["total_cost_display"] == "$13.00"
+    assert summary["shot_count"] == 2
+    groups = {group["key"]: group for group in summary["groups"]}
+    assert groups["prep"]["cost_display"] == "$1.00"
+    assert groups["render"]["seconds"] == 240
+    assert groups["render"]["avg_cost_per_shot_display"] == "$2.00"
+    assert groups["video"]["seconds"] == 420
+    assert groups["video"]["avg_cost_per_shot_display"] == "$3.50"
+    assert groups["assemble"]["cost_display"] == "$1.00"
+
+
+def test_cost_summary_does_not_bill_approval_wait_gaps() -> None:
+    events = [
+        _ev(1, "stage_started", "transcribe", 0),
+        _ev(2, "stage_completed", "transcribe", 10),
+        _ev(3, "approval_requested", None, 10),
+        _ev(4, "approval_granted", None, 1000),
+        _ev(5, "stage_started", "plan_shots", 1000),
+        _ev(6, "stage_completed", "plan_shots", 1010),
+    ]
+
+    summary = _build_cost_summary(events, {"gpu_price_per_hour": 360})
+
+    assert summary["total_seconds"] == 20
+    assert summary["total_cost_display"] == "$2.00"
+
+
+def test_cost_summary_counts_failed_stage_time() -> None:
+    events = [
+        _ev(1, "stage_started", "generate_video", 0, shot_id="s1"),
+        _ev(2, "stage_failed", "generate_video", 30, shot_id="s1"),
+    ]
+
+    summary = _build_cost_summary(events, {"gpu_price_per_hour": 120})
+
+    assert summary["total_seconds"] == 30
+    assert summary["total_cost_display"] == "$1.00"
+    assert summary["groups"][0]["key"] == "video"
 
 
 # ------------------------------------------------------------------ LocalArtifactStore.has
