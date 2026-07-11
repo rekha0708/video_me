@@ -22,6 +22,8 @@ members:
       She is attractive but sophisticated, playful but composed, expressive but never aggressive.
       Her actions should stay calm, graceful, controlled, and safe: no running, lunging, shoving,
       sharp pointing, slamming, fighting, scolding, intimidating, or threatening gestures.
+      When singing or lip-syncing, her mouth movement should stay soft, relaxed, and elegant:
+      no shouting, no yelling expression, no aggressive rap delivery, and no wide-open mouth shapes.
       She expresses confidence through subtle smiles, relaxed posture, slow head turns,
       gentle hand gestures, and smooth high-fashion movement.
     signature_expressions:
@@ -32,6 +34,7 @@ members:
       - Raised eyebrow when amused
       - Calm composed face with expressive eyes
       - Warm elegant smile
+      - Soft singing mouth shape with relaxed lips
       - Chin slightly lifted with self-assurance
       - Slow eye movement toward the camera
       - Playful but classy expression
@@ -43,17 +46,18 @@ members:
       - Poses with one hand on waist
       - Looks over her shoulder with a confident gaze
       - Gives a subtle smirk before looking away
+      - Sings softly with relaxed lips and minimal mouth opening
       - Stands tall with relaxed shoulders and lifted chin
       - Moves with smooth, controlled, high-fashion body language
       - Enters the frame with calm confidence and polished presence
     video_motion_style: >
-      Smooth cinematic movement, graceful body language, slow confident walking, subtle facial expressions, controlled head turns, elegant hand gestures, natural hair movement, polished fashion-model energy. Motion should be calm and composed, with no aggressive, frantic, threatening, or sudden forceful gestures.
+      Smooth cinematic movement, graceful body language, slow confident walking, subtle facial expressions, controlled head turns, elegant hand gestures, natural hair movement, polished fashion-model energy. Motion should be calm and composed, with no aggressive, frantic, threatening, or sudden forceful gestures. If singing or lip-syncing, keep mouth opening soft and controlled, never shouting, screaming, or aggressive rapping.
 
     camera_style: >
       Cinematic close-up and medium shots, soft natural lighting, shallow depth of field, smooth camera tracking, high-fashion editorial framing, elegant Indian glamour aesthetic.
 
     negative_prompt: >
-      child, teenager, underage, overly exaggerated body, vulgar pose, explicit nudity, cheap styling, messy hair, distorted face, bad hands, extra fingers, awkward pose, low-quality image, blurry face, unnatural expression, oversexualized, cartoonish, plastic skin, aggressive pose, threatening gesture, violent motion, frantic movement
+      child, teenager, underage, overly exaggerated body, vulgar pose, explicit nudity, cheap styling, messy hair, distorted face, bad hands, extra fingers, awkward pose, low-quality image, blurry face, unnatural expression, oversexualized, cartoonish, plastic skin, aggressive pose, threatening gesture, violent motion, frantic movement, wide open mouth, shouting mouth, screaming expression, aggressive rapping expression
 
 design_constraints:
 - Adult woman, age 25 to 32
@@ -69,6 +73,8 @@ design_constraints:
 - Avoid cheap, overly revealing, vulgar, or costume-like clothing
 - Body language should be graceful, controlled, confident, calm, and safe
 - Facial expressions should be subtle, magnetic, and cinematic
+- Singing or lip-sync mouth shapes should be soft, relaxed, and elegant, with minimal mouth opening
+- Avoid shouting expressions, aggressive rap delivery, screaming faces, or wide-open mouth shapes
 - Avoid aggressive, frantic, threatening, combative, or sudden forceful actions
 - Avoid running, lunging, shoving, sharp pointing, slamming, fighting, scolding, intimidation, or threatening gestures
 - Keep the same face, hairstyle, skin tone, and personality across generations
@@ -77,6 +83,6 @@ design_constraints:
 - No underage appearance, no teen look
 
 #Animate this adult Indian female model with confident, elegant, composed high-fashion energy.
-#She has intense glamorous eyes, a subtle mysterious smile, graceful posture, and smooth controlled body movement. She slowly walks toward the camera, makes direct eye contact, gently turns her head, brushes her hair back, and gives a soft confident smirk.
+#She has intense glamorous eyes, a subtle mysterious smile, graceful posture, and smooth controlled body movement. She slowly walks toward the camera, makes direct eye contact, gently turns her head, brushes her hair back, and gives a soft confident smirk. If singing or lip-syncing, her lips move softly with minimal mouth opening.
 #Keep the motion natural, cinematic, elegant, calm, and sophisticated.
-#Avoid exaggerated, vulgar, aggressive, frantic, or threatening movement.
+#Avoid exaggerated, vulgar, aggressive, frantic, or threatening movement. Avoid shouting, screaming, aggressive rapping, or wide-open mouth shapes.
