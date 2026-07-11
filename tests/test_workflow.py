@@ -124,6 +124,9 @@ def test_make_adapters_uses_runtime_settings(tmp_path) -> None:
         whisper_model_size="small",
         whisper_device="cuda",
         whisper_compute_type="float16",
+        whisper_download_root="/models/whisper",
+        whisper_local_files_only=True,
+        whisper_model_revision="abc123",
         whisper_vad_filter=False,
         ffmpeg_bin="/opt/bin/ffmpeg",
         ffprobe_bin="/opt/bin/ffprobe",
@@ -135,6 +138,9 @@ def test_make_adapters_uses_runtime_settings(tmp_path) -> None:
     assert adapters.transcribe._model_size == "small"
     assert adapters.transcribe._device == "cuda"
     assert adapters.transcribe._compute_type == "float16"
+    assert adapters.transcribe._download_root == "/models/whisper"
+    assert adapters.transcribe._local_files_only is True
+    assert adapters.transcribe._revision == "abc123"
     assert adapters.transcribe._vad_filter is False
     assert adapters.analyze._model == "llm-model"
     assert adapters.analyze._base_url == "http://llm.test/v1"
@@ -389,6 +395,25 @@ async def test_run_pipeline_job_completes(tmp_path) -> None:
             job = await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
 
     assert job.status == JobStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_job_unloads_whisper_after_transcribe(tmp_path) -> None:
+    config = _make_config(tmp_path)
+    adapters = MagicMock(ffmpeg_bin="ffmpeg")
+    adapters.transcribe.unload = AsyncMock(return_value=True)
+
+    with (
+        patch("core.workflow._make_adapters", return_value=adapters),
+        patch("core.workflow.run_stage", new=_make_run_stage(_stage_results())),
+        patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
+        patch("core.workflow.create_job_store", return_value=MagicMock()),
+        patch("core.workflow.create_artifact_store", return_value=MagicMock()),
+    ):
+        with _mock_shot_patches():
+            await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
+
+    adapters.transcribe.unload.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -507,11 +507,12 @@ Transcription adapters.
 ### `adapters/transcribe/whisper_adapter.py`
 
 - **class `WhisperAdapter(Transcribe)`** — Transcription adapter using faster-whisper (CTranslate2 backend).
-  - `__init__(self, model_size: str='medium', device: str='cpu', compute_type: str='int8', beam_size: int=5, vad_filter: bool=False, language: str='') -> None`
+  - `__init__(self, model_size: str='medium', device: str='cpu', compute_type: str='int8', beam_size: int=5, vad_filter: bool=False, language: str='', download_root: str='', local_files_only: bool=True, revision: str='') -> None`
   - `async health(self) -> HealthStatus`
   - `async estimate_cost(self, req: TranscribeRequest) -> CostEstimate`
   - `async run(self, req: TranscribeRequest) -> TranscribeResult`
   - `_ensure_model(self) -> '_WhisperModel'`
+  - `async unload(self) -> bool` — Drop the local Whisper model and ask CUDA to release cached memory.
   - `_transcribe(self, audio_uri: str) -> TranscribeResult`
 
 ### `adapters/transcript_refine/llm_adapter.py`

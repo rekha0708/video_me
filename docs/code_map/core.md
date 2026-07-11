@@ -292,6 +292,7 @@ Shared Pydantic models for orchestration.
 - `_atempo_filter_chain(tempo: float) -> str` — Build an ffmpeg atempo chain whose product equals tempo.
 - `async _fit_audio_to_duration(track: AudioTrack, target_duration_sec: float, out_path: Path, ffmpeg_bin: str='ffmpeg', ffprobe_bin: str='ffprobe') -> AudioTrack` — Time-stretch, pad, and trim an audio track to a shot duration.
 - `_load_artifact(job_id: str, stage: str, model_cls: type, artifact_store: ArtifactStore) -> object | None` — Load a persisted stage artifact and deserialize it to model_cls. Returns None if absent.
+- `async _unload_transcribe_model(transcribe_adapter: object, stage_hook: Callable[..., None] | None=None) -> None`
 - `async _critique_loop(storyboard: Storyboard, script: Script, ctx: '_JobContext', max_iterations: int, visual_context: 'VisualContext | None'=None, storyboard_transform: Callable[[Storyboard], Storyboard] | None=None) -> tuple[Storyboard, list[str]]` — Run the plan critique loop: up to max_iterations re-plan attempts.
 - `async _render_plan_overlays(storyboard: Storyboard, ctx: '_JobContext', opts: 'RunOptions') -> Storyboard` — Render each shot.overlay to a PNG panel and set overlay.png_uri.
 - `async _run_plan_critique_and_approval(storyboard: Storyboard, script: Script, ctx: '_JobContext', opts: 'RunOptions', visual_context: 'VisualContext | None'=None, storyboard_transform: Callable[[Storyboard], Storyboard] | None=None) -> tuple[Storyboard, Script]` — Run the critique loop then the human approval gate.

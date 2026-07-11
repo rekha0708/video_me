@@ -14,6 +14,9 @@ def test_config_loads_default_profiles() -> None:
     assert config.channel_profile.made_for_kids is True
     assert config.cast.is_original_synthetic is True
     assert len(config.cast.members) == 2
+    assert config.settings.whisper_model_size == "large-v3"
+    assert config.settings.whisper_compute_type == "float16"
+    assert config.settings.whisper_local_files_only is True
     assert config.settings.whisper_language == "en"
 
 

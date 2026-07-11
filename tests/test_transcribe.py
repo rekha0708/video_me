@@ -216,9 +216,55 @@ def test_ensure_model_lazy_loads() -> None:
     with patch.dict("sys.modules", {"faster_whisper": MagicMock(WhisperModel=mock_cls)}):
         model = adapter._ensure_model()
 
-    mock_cls.assert_called_once_with("tiny", device="cpu", compute_type="int8")
+    mock_cls.assert_called_once_with(
+        "tiny",
+        device="cpu",
+        compute_type="int8",
+        download_root=None,
+        local_files_only=True,
+        revision=None,
+    )
     assert model is mock_instance
     assert adapter._model is mock_instance
+
+
+def test_ensure_model_uses_configured_download_root_and_revision() -> None:
+    adapter = _adapter(
+        model_size="large-v3",
+        download_root="/workspace/.cache/huggingface/hub",
+        revision="abc123",
+    )
+
+    mock_cls = MagicMock()
+    mock_instance = MagicMock()
+    mock_cls.return_value = mock_instance
+
+    with patch.dict("sys.modules", {"faster_whisper": MagicMock(WhisperModel=mock_cls)}):
+        model = adapter._ensure_model()
+
+    mock_cls.assert_called_once_with(
+        "large-v3",
+        device="cpu",
+        compute_type="int8",
+        download_root="/workspace/.cache/huggingface/hub",
+        local_files_only=True,
+        revision="abc123",
+    )
+    assert model is mock_instance
+
+
+def test_ensure_model_can_allow_runtime_downloads_when_configured() -> None:
+    adapter = _adapter(local_files_only=False)
+
+    mock_cls = MagicMock()
+    mock_instance = MagicMock()
+    mock_cls.return_value = mock_instance
+
+    with patch.dict("sys.modules", {"faster_whisper": MagicMock(WhisperModel=mock_cls)}):
+        adapter._ensure_model()
+
+    kwargs = mock_cls.call_args.kwargs
+    assert kwargs["local_files_only"] is False
 
 
 def test_ensure_model_does_not_reload() -> None:
@@ -229,3 +275,22 @@ def test_ensure_model_does_not_reload() -> None:
     result = adapter._ensure_model()
 
     assert result is existing
+
+
+async def test_unload_drops_loaded_model() -> None:
+    adapter = _adapter()
+    adapter._model = MagicMock()
+
+    result = await adapter.unload()
+
+    assert result is True
+    assert adapter._model is None
+
+
+async def test_unload_is_noop_when_model_is_not_loaded() -> None:
+    adapter = _adapter()
+
+    result = await adapter.unload()
+
+    assert result is True
+    assert adapter._model is None

@@ -6,6 +6,7 @@ import re
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace as _dc_replace
+from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Literal
 
@@ -291,6 +292,9 @@ def _make_adapters(
             model_size=s.whisper_model_size,
             device=s.whisper_device,
             compute_type=s.whisper_compute_type,
+            download_root=s.whisper_download_root,
+            local_files_only=s.whisper_local_files_only,
+            revision=s.whisper_model_revision,
             vad_filter=s.whisper_vad_filter,
             language=s.whisper_language,
         ),
@@ -1849,6 +1853,25 @@ def _load_artifact(
         return None
 
 
+async def _unload_transcribe_model(transcribe_adapter: object, stage_hook: Callable[..., None] | None = None) -> None:
+    unload = getattr(transcribe_adapter, "unload", None)
+    if not callable(unload):
+        return
+
+    if stage_hook:
+        stage_hook("whisper_model_unload", "stage_started")
+    try:
+        result = unload()
+        if isawaitable(result):
+            await result
+        if stage_hook:
+            stage_hook("whisper_model_unload", "stage_completed")
+    except Exception as exc:
+        logger.warning("Whisper model unload failed: %s", exc)
+        if stage_hook:
+            stage_hook("whisper_model_unload", "stage_failed")
+
+
 async def _critique_loop(
     storyboard: Storyboard,
     script: Script,
@@ -2111,11 +2134,14 @@ async def _run_to_assembled_video(
             )
 
             # 2. transcribe
-            transcribe_result = await _stage(
-                "transcribe", adapters.transcribe,
-                TranscribeRequest(audio_uri=fetch_result.audio_uri),
-                TranscribeResult,
-            )
+            try:
+                transcribe_result = await _stage(
+                    "transcribe", adapters.transcribe,
+                    TranscribeRequest(audio_uri=fetch_result.audio_uri),
+                    TranscribeResult,
+                )
+            finally:
+                await _unload_transcribe_model(adapters.transcribe, opts.stage_hook)
 
             # 3. analyze_content
             metadata = await _stage(

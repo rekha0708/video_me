@@ -60,9 +60,12 @@
 | `VIDEO_ME_LATENTSYNC_BASE_URL` | `str` | `'http://localhost:8041'` |
 | `VIDEO_ME_LATENTSYNC_INFERENCE_STEPS` | `int` | `20` |
 | `VIDEO_ME_LATENTSYNC_GUIDANCE_SCALE` | `float` | `1.5` |
-| `VIDEO_ME_WHISPER_MODEL_SIZE` | `str` | `'medium'` |
+| `VIDEO_ME_WHISPER_MODEL_SIZE` | `str` | `'large-v3'` |
 | `VIDEO_ME_WHISPER_DEVICE` | `str` | `'cuda'` |
-| `VIDEO_ME_WHISPER_COMPUTE_TYPE` | `str` | `'int8'` |
+| `VIDEO_ME_WHISPER_COMPUTE_TYPE` | `str` | `'float16'` |
+| `VIDEO_ME_WHISPER_DOWNLOAD_ROOT` | `str` | `''` |
+| `VIDEO_ME_WHISPER_LOCAL_FILES_ONLY` | `bool` | `True` |
+| `VIDEO_ME_WHISPER_MODEL_REVISION` | `str` | `''` |
 | `VIDEO_ME_WHISPER_LANGUAGE` | `str` | `'en'` |
 | `VIDEO_ME_WHISPER_VAD_FILTER` | `bool` | `False` |
 | `VIDEO_ME_FFMPEG_BIN` | `str` | `'ffmpeg'` |

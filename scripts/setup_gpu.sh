@@ -32,6 +32,16 @@ TIMEOUT="${VIDEO_ME_READINESS_TIMEOUT:-3.0}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 WORKSPACE="${WORKSPACE:-/workspace}"
 HF_TOKEN="${HF_TOKEN:-}"
+HF_HOME="${HF_HOME:-}"
+WHISPER_MODEL_SIZE="${VIDEO_ME_WHISPER_MODEL_SIZE:-large-v3}"
+WHISPER_PREFETCH_MODELS="${VIDEO_ME_WHISPER_PREFETCH_MODELS:-$WHISPER_MODEL_SIZE}"
+WHISPER_PREFETCH_MODELS_SET=0
+if [[ -n "${VIDEO_ME_WHISPER_PREFETCH_MODELS:-}" ]]; then
+  WHISPER_PREFETCH_MODELS_SET=1
+fi
+WHISPER_DOWNLOAD_ROOT="${VIDEO_ME_WHISPER_DOWNLOAD_ROOT:-}"
+WHISPER_MODEL_REVISION="${VIDEO_ME_WHISPER_MODEL_REVISION:-}"
+SKIP_WHISPER_MODEL=0
 
 usage() {
   cat <<'EOF'
@@ -41,12 +51,13 @@ Full GPU-machine setup for video_me on RunPod (or any Ubuntu+CUDA box):
   1. Verify CUDA / GPU
   2. Install system packages  (ffmpeg, yt-dlp, curl, git)
   3. Create Python venv + install runtime extras
-  4. Install Ollama + pull qwen3.6:35b (LLM + VLM for all stages)
-  5. Clone + set up ComfyUI model dirs (Flux 2.0 Dev image weights)
-  6. Clone + set up Fish Audio S2 TTS (EN + HI, port 8025)
-  7. Clone + set up Wan2.2 S2V (singing video, port 8031)
-  8. Write .env with GPU-correct settings
-  9. Run runtime readiness check
+  4. Prefetch faster-whisper large-v3 into the persistent HF cache
+  5. Install Ollama + pull qwen3.6:35b (LLM + VLM for all stages)
+  6. Clone + set up ComfyUI model dirs (Flux 2.0 Dev image weights)
+  7. Clone + set up Fish Audio S2 TTS (EN + HI, port 8025)
+  8. Clone + set up Wan2.2 S2V (singing video, port 8031)
+  9. Write .env with GPU-correct settings
+  10. Run runtime readiness check
 
   Fallback services (opt-in only, not installed by default):
     --with-a1111        AUTOMATIC1111 + SD 1.5  (RENDER_ADAPTER=a1111)
@@ -66,6 +77,12 @@ Options:
   --dry-run                 Print commands without executing them
   --skip-system-deps        Skip apt-get installs
   --skip-python-deps        Skip pip install
+  --skip-whisper-model      Skip faster-whisper model prefetch
+  --whisper-model MODEL     Whisper model used by jobs [default: large-v3]
+  --whisper-model-revision REV
+                            Optional HF commit/tag to pin faster-whisper downloads
+  --prefetch-whisper-models CSV
+                            Download comma-separated Whisper models, e.g. large-v3,large-v2
   --skip-ollama             Skip Ollama install + model pull
   --skip-comfyui            Skip ComfyUI/model-dir install (Flux weights + legacy fallbacks)
   --skip-ltx                Skip legacy LTX weights/custom nodes [default]
@@ -130,6 +147,10 @@ while [[ $# -gt 0 ]]; do
     --dry-run)            DRY_RUN=1; shift ;;
     --skip-system-deps)   SKIP_SYSTEM_DEPS=1; shift ;;
     --skip-python-deps)   SKIP_PYTHON_DEPS=1; shift ;;
+    --skip-whisper-model) SKIP_WHISPER_MODEL=1; shift ;;
+    --whisper-model)      [[ $# -ge 2 ]] || die "--whisper-model requires a model name"; WHISPER_MODEL_SIZE="$2"; if [[ "$WHISPER_PREFETCH_MODELS_SET" == "0" ]]; then WHISPER_PREFETCH_MODELS="$2"; fi; shift 2 ;;
+    --whisper-model-revision) [[ $# -ge 2 ]] || die "--whisper-model-revision requires a revision"; WHISPER_MODEL_REVISION="$2"; shift 2 ;;
+    --prefetch-whisper-models) [[ $# -ge 2 ]] || die "--prefetch-whisper-models requires a comma-separated list"; WHISPER_PREFETCH_MODELS="$2"; WHISPER_PREFETCH_MODELS_SET=1; shift 2 ;;
     --skip-ollama)        SKIP_OLLAMA=1; shift ;;
     --skip-comfyui)       SKIP_COMFYUI=1; shift ;;
     --skip-ltx)           SKIP_LTX=1; shift ;;
@@ -160,6 +181,11 @@ while [[ $# -gt 0 ]]; do
     *)                    die "Unknown option: $1" ;;
   esac
 done
+
+HF_HOME="${HF_HOME:-$WORKSPACE/.cache/huggingface}"
+WHISPER_DOWNLOAD_ROOT="${WHISPER_DOWNLOAD_ROOT:-$HF_HOME/hub}"
+export HF_HOME
+export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
 
 # ── Step 1: GPU / CUDA check ─────────────────────────────────────────────────
 check_cuda() {
@@ -259,6 +285,66 @@ install_python_deps() {
   # Must be installed in the same Python that runs hf CLI and training scripts.
   # HF_HUB_ENABLE_HF_TRANSFER=1 (set in .env) will error if this is missing.
   run pip3 install hf_transfer || warn "hf_transfer install failed — set HF_HUB_ENABLE_HF_TRANSFER=0 to skip"
+}
+
+setup_whisper_model() {
+  if [[ "$SKIP_WHISPER_MODEL" == "1" || "$CODE_TEST" == "1" ]]; then
+    ok "Skipping faster-whisper model prefetch"
+    return
+  fi
+
+  local normalized_models="${WHISPER_PREFETCH_MODELS//,/ }"
+  if [[ -z "${normalized_models// /}" || "$normalized_models" == "none" ]]; then
+    ok "No faster-whisper models requested for prefetch"
+    return
+  fi
+
+  log "Prefetching faster-whisper model(s)"
+  if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$WHISPER_DOWNLOAD_ROOT"; fi
+  ok "Whisper model cache: $WHISPER_DOWNLOAD_ROOT"
+
+  local -a env_args=("env" "HF_HOME=$HF_HOME" "HF_HUB_DISABLE_XET=1" "HF_HUB_ENABLE_HF_TRANSFER=0")
+  if [[ -n "$HF_TOKEN" ]]; then
+    env_args+=("HF_TOKEN=$HF_TOKEN")
+  fi
+
+  local model
+  for model in $normalized_models; do
+    if [[ -d "$model" ]]; then
+      ok "Whisper model is a local directory; no download needed: $model"
+      continue
+    fi
+    ok "Checking faster-whisper model cache: $model"
+    run "${env_args[@]}" "$PYTHON_BIN" -c '
+import os
+import sys
+from faster_whisper.utils import download_model
+
+model = sys.argv[1]
+cache_dir = sys.argv[2]
+revision = sys.argv[3] or None
+token = os.environ.get("HF_TOKEN") or None
+
+try:
+    path = download_model(
+        model,
+        cache_dir=cache_dir,
+        local_files_only=True,
+        revision=revision,
+        use_auth_token=token,
+    )
+    print(f"{model} already cached -> {path}", flush=True)
+except Exception:
+    print(f"{model} missing from cache; downloading once...", flush=True)
+    path = download_model(
+        model,
+        cache_dir=cache_dir,
+        revision=revision,
+        use_auth_token=token,
+    )
+    print(f"{model} downloaded -> {path}", flush=True)
+' "$model" "$WHISPER_DOWNLOAD_ROOT" "$WHISPER_MODEL_REVISION"
+  done
 }
 
 # ── Step 4: Ollama ───────────────────────────────────────────────────────────
@@ -927,7 +1013,11 @@ write_env_file() {
 
 VIDEO_ME_WHISPER_DEVICE=cuda
 VIDEO_ME_WHISPER_COMPUTE_TYPE=float16
-VIDEO_ME_WHISPER_MODEL_SIZE=medium
+HF_HOME=$HF_HOME
+VIDEO_ME_WHISPER_MODEL_SIZE=$WHISPER_MODEL_SIZE
+VIDEO_ME_WHISPER_DOWNLOAD_ROOT=$WHISPER_DOWNLOAD_ROOT
+VIDEO_ME_WHISPER_LOCAL_FILES_ONLY=true
+VIDEO_ME_WHISPER_MODEL_REVISION=$WHISPER_MODEL_REVISION
 VIDEO_ME_WHISPER_LANGUAGE=en
 VIDEO_ME_WHISPER_VAD_FILTER=false
 VIDEO_ME_TRANSCRIPT_MIN_COVERAGE_RATIO=0.2
@@ -1036,6 +1126,8 @@ setup_python_env
 if [[ "$SKIP_PYTHON_DEPS" == "0" ]]; then
   install_python_deps
 fi
+
+setup_whisper_model
 
 if [[ "$SKIP_OLLAMA" == "0" ]]; then
   setup_ollama

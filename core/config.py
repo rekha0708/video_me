@@ -105,9 +105,12 @@ class Settings(BaseSettings):
     latentsync_base_url: str = "http://localhost:8041"
     latentsync_inference_steps: int = 20
     latentsync_guidance_scale: float = 1.5
-    whisper_model_size: str = "medium"
+    whisper_model_size: str = "large-v3"
     whisper_device: str = "cuda"
-    whisper_compute_type: str = "int8"
+    whisper_compute_type: str = "float16"
+    whisper_download_root: str = ""  # faster-whisper cache dir; setup_gpu writes /workspace/.cache/huggingface/hub
+    whisper_local_files_only: bool = True
+    whisper_model_revision: str = ""  # optional HF commit/tag to pin the cached faster-whisper snapshot
     whisper_language: str = "en"  # "en"/"hi" force source language; "auto" lets Whisper guess
     whisper_vad_filter: bool = False  # keep sung vocals/lyrics; VAD can be over-aggressive on music
     ffmpeg_bin: str = "ffmpeg"

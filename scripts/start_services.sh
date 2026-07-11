@@ -139,10 +139,18 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
   set +a
 fi
 
+HF_HOME="${HF_HOME:-$WORKSPACE/.cache/huggingface}"
+VIDEO_ME_WHISPER_DOWNLOAD_ROOT="${VIDEO_ME_WHISPER_DOWNLOAD_ROOT:-$HF_HOME/hub}"
+export HF_HOME VIDEO_ME_WHISPER_DOWNLOAD_ROOT
+export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
+mkdir -p "$VIDEO_ME_WHISPER_DOWNLOAD_ROOT"
+
 RENDER_ADAPTER="${VIDEO_ME_RENDER_ADAPTER:-musubi_flux}"
 VIDEO_ADAPTER="${VIDEO_ME_VIDEO_ADAPTER:-wan_s2v}"
 TTS_ADAPTER="${VIDEO_ME_TTS_ADAPTER:-fish_s2}"
 LIPSYNC_ADAPTER="${VIDEO_ME_LIPSYNC_ADAPTER:-latentsync}"
+WHISPER_MODEL_SIZE="${VIDEO_ME_WHISPER_MODEL_SIZE:-large-v3}"
+WHISPER_MODEL_REVISION="${VIDEO_ME_WHISPER_MODEL_REVISION:-}"
 
 NEED_COMFYUI=0
 NEED_A1111=0
@@ -177,6 +185,32 @@ case "$TTS_ADAPTER" in
 esac
 
 log "Configured adapters: render=$RENDER_ADAPTER video=$VIDEO_ADAPTER tts=$TTS_ADAPTER lipsync=$LIPSYNC_ADAPTER"
+
+# ── faster-whisper model cache ────────────────────────────────────────────────
+# Whisper is loaded inside dashboard worker jobs, not as a long-running service.
+# Check only the local cache here: setup_gpu.sh should prefetch the configured
+# model so a later transcribe job does not block on a surprise HF download.
+log "faster-whisper model cache"
+if [[ -d "$WHISPER_MODEL_SIZE" ]]; then
+  ok "Whisper model uses local directory: $WHISPER_MODEL_SIZE"
+elif [[ ! -x "$ROOT_DIR/.venv/bin/python" ]]; then
+  warn ".venv missing — run setup_gpu.sh before transcribing"
+elif "$ROOT_DIR/.venv/bin/python" -c '
+import sys
+from faster_whisper.utils import download_model
+
+download_model(
+    sys.argv[1],
+    cache_dir=sys.argv[2],
+    local_files_only=True,
+    revision=sys.argv[3] or None,
+)
+' "$WHISPER_MODEL_SIZE" "$VIDEO_ME_WHISPER_DOWNLOAD_ROOT" "$WHISPER_MODEL_REVISION" >/dev/null 2>&1; then
+  ok "Whisper model cached: $WHISPER_MODEL_SIZE ($VIDEO_ME_WHISPER_DOWNLOAD_ROOT)"
+else
+  warn "Whisper model '$WHISPER_MODEL_SIZE' is not cached at $VIDEO_ME_WHISPER_DOWNLOAD_ROOT"
+  warn "Run: bash scripts/setup_gpu.sh --whisper-model $WHISPER_MODEL_SIZE"
+fi
 
 # ── Ollama ────────────────────────────────────────────────────────────────────
 # Ollama is installed into base Linux which is WIPED on RunPod pod restart.

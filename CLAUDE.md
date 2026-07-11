@@ -17,7 +17,7 @@ content are blocked, not silently passed.
 
 **Default adapter stack is code-enforced in `core/config.py`: `musubi_flux` (image) / `wan_s2v` (video) / `fish_s2` (TTS).** The image stage runs **musubi-tuner** as a subprocess — ComfyUI cannot load Flux 2.0 locally (no Mistral 3 encoder node; the `Flux2*` ComfyUI nodes are paid BFL cloud API), so `comfyui_flux` is a fallback. Wan S2V runs behind a thin local HTTP wrapper on port 8031 and receives the per-shot image + audio directly; the separate lip-sync repair stage is skipped on this default path.
 
-**Test status:** full local suite verified 2026-07-10: **667 passed / 30 skipped**. Exact current count: `python -m pytest --collect-only -q`.
+**Test status:** full local suite verified 2026-07-11: **683 passed / 33 skipped**. Exact current count: `python -m pytest --collect-only -q`.
 
 - **LLM**: qwen3.6:35b (MoE 35B). Thinking mode disabled via `extra_body={"think": False}` + no `response_format`. `max_tokens=16384`. `json_repair` fallback. Used for all LLM stages including plan critique.
 - **Image generation**: Flux 2.0 Dev (32B, Nov 2025) + Flux LoRA, run **locally via musubi-tuner** (replaces A1111 + SD 1.5). Default adapter: `MusubiFluxAdapter` (subprocess, no server). `ComfyUIFluxAdapter` (port 8188) is a fallback but ComfyUI can't load Flux 2.0 locally — it needs the paid BFL cloud API / a custom Mistral 3 node.
@@ -29,6 +29,7 @@ content are blocked, not silently passed.
 - **Single VLM for everything**: qwen3.6:35b handles text LLM + image critique + video frame critique. Drops qwen2.5-vl:32b entirely. The workflow unloads Ollama before GPU-heavy render/video/voice phases that opt into managed VRAM.
 - **TTS**: Fish Audio S2 (`FishS2TtsAdapter`, port 8025). Supports English and Hindi (80+ languages, voice cloning from reference WAV). Replaces Chatterbox TTS. Fallback: `VIDEO_ME_TTS_ADAPTER=chatterbox`.
 - **Language selection**: `VIDEO_ME_TARGET_LANGUAGE=en|hi|both`. "both" runs the full pipeline twice (shared images, separate dialogue/audio). Script dialogue is translated by the LLM when language ≠ "en".
+- **Whisper transcription**: faster-whisper defaults to `large-v3` on CUDA/float16 for better source-audio and lyric capture. `setup_gpu.sh` first checks the local `/workspace/.cache/huggingface/hub` cache and downloads only missing models; pass `--whisper-model large-v2` or `--prefetch-whisper-models large-v3,large-v2` for A/B testing. Generated GPU env uses `VIDEO_ME_WHISPER_LOCAL_FILES_ONLY=true` so runtime jobs never fetch surprise model snapshots. Pin a specific HF snapshot with `--whisper-model-revision <commit-or-tag>` / `VIDEO_ME_WHISPER_MODEL_REVISION`. The workflow unloads Whisper immediately after the transcribe stage so later Flux/Wan/Fish stages do not inherit its VRAM.
 - **Source-audio chunking**: when a real source audio track is present, the workflow uses faster-whisper word timestamps and deterministic sentence/lyric boundary splitting to make many small shots instead of forcing every shot toward 8 seconds. No LLM is used for the boundary choice. `VIDEO_ME_WHISPER_VAD_FILTER=false` is the default so sung lyrics are not clipped by over-aggressive VAD; `VIDEO_ME_TRANSCRIPT_MIN_COVERAGE_RATIO` fails only catastrophic short transcripts.
 - **Shot duration**: max planned shot duration defaults to 8s (`VIDEO_ME_MAX_SHOT_DURATION_SEC`), but source-audio jobs may split more finely at sentence/lyric boundaries.
 - **AV/lip-sync QA**: non-native video paths (`VIDEO_ME_VIDEO_ADAPTER=wan`) keep raw video, every LatentSync/MuseTalk attempt, retry metadata, duration deltas, and selected/fallback reason in the dashboard's shot video card. Default failure policy is `fallback_raw`; set `VIDEO_ME_LIPSYNC_FAILURE_POLICY=fail` or `VIDEO_ME_AV_SYNC_FAILURE_POLICY=fail` to hard-fail.
@@ -382,8 +383,12 @@ VIDEO_ME_FISH_S2_BASE_URL=http://localhost:8025
 # VIDEO_ME_TTS_BASE_URL=http://localhost:8020      # chatterbox
 # VIDEO_ME_WAN_BASE_URL=http://localhost:8030      # wan
 # VIDEO_ME_LIPSYNC_BASE_URL=http://localhost:8040  # musetalk
-VIDEO_ME_WHISPER_DEVICE=cpu            # use cuda on GPU
-VIDEO_ME_WHISPER_COMPUTE_TYPE=int8     # use float16 on CUDA
+VIDEO_ME_WHISPER_DEVICE=cuda
+VIDEO_ME_WHISPER_COMPUTE_TYPE=float16
+VIDEO_ME_WHISPER_MODEL_SIZE=large-v3   # large-v2 also supported
+VIDEO_ME_WHISPER_DOWNLOAD_ROOT=/workspace/.cache/huggingface/hub
+VIDEO_ME_WHISPER_LOCAL_FILES_ONLY=true
+# VIDEO_ME_WHISPER_MODEL_REVISION=<hf commit sha or tag>
 VIDEO_ME_JOB_STORE=postgres            # use PostgreSQL instead of SQLite
 VIDEO_ME_ARTIFACT_STORE=s3             # use MinIO/S3 instead of local filesystem
 ```

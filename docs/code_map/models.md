@@ -79,9 +79,12 @@
 - `latentsync_base_url: str` = `'http://localhost:8041'`
 - `latentsync_inference_steps: int` = `20`
 - `latentsync_guidance_scale: float` = `1.5`
-- `whisper_model_size: str` = `'medium'`
+- `whisper_model_size: str` = `'large-v3'`
 - `whisper_device: str` = `'cuda'`
-- `whisper_compute_type: str` = `'int8'`
+- `whisper_compute_type: str` = `'float16'`
+- `whisper_download_root: str` = `''`
+- `whisper_local_files_only: bool` = `True`
+- `whisper_model_revision: str` = `''`
 - `whisper_language: str` = `'en'`
 - `whisper_vad_filter: bool` = `False`
 - `ffmpeg_bin: str` = `'ffmpeg'`

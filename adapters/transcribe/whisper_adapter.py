@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import logging
 from typing import TYPE_CHECKING
 
@@ -43,12 +44,18 @@ class WhisperAdapter(Transcribe):
         beam_size: int = 5,
         vad_filter: bool = False,
         language: str = "",
+        download_root: str = "",
+        local_files_only: bool = True,
+        revision: str = "",
     ) -> None:
         self._model_size = model_size
         self._device = device
         self._compute_type = compute_type
         self._beam_size = beam_size
         self._vad_filter = vad_filter
+        self._download_root = download_root.strip() or None
+        self._local_files_only = local_files_only
+        self._revision = revision.strip() or None
         normalized_language = language.strip().lower()
         self._language = None if normalized_language in ("", "auto") else normalized_language
         self._model: "_WhisperModel | None" = None
@@ -97,8 +104,32 @@ class WhisperAdapter(Transcribe):
                 self._model_size,
                 device=self._device,
                 compute_type=self._compute_type,
+                download_root=self._download_root,
+                local_files_only=self._local_files_only,
+                revision=self._revision,
             )
         return self._model
+
+    async def unload(self) -> bool:
+        """Drop the local Whisper model and ask CUDA to release cached memory."""
+        if self._model is None:
+            return True
+
+        model = self._model
+        self._model = None
+        del model
+        gc.collect()
+
+        try:
+            import torch
+        except ImportError:
+            torch = None  # type: ignore[assignment]
+
+        if torch is not None and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        log_event(logger, "whisper_model_unloaded", model_size=self._model_size)
+        return True
 
     def _transcribe(self, audio_uri: str) -> TranscribeResult:
         model = self._ensure_model()
