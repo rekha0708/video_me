@@ -25,9 +25,9 @@ Environment variables:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-import subprocess
 import sys
 import tempfile
 from contextlib import asynccontextmanager
@@ -50,6 +50,41 @@ def _infer_frames_for_duration(duration_sec: float, fps: int) -> int:
     if duration_sec <= 0 or fps <= 0:
         return WAN_S2V_INFER_FRAMES
     return 4 * max(1, round(duration_sec * fps / 4)) + 1
+
+
+async def _run_subprocess(
+    cmd: list[str],
+    *,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+    timeout_sec: float,
+) -> tuple[int, str, str]:
+    """Run a command without blocking the event loop; kill it on timeout.
+
+    A blocking subprocess.run here froze the whole uvicorn loop for the length
+    of a generation (up to WAN_S2V_TIMEOUT_SEC), so /health stopped answering
+    mid-clip and the dashboard showed the service as down.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        cwd=cwd,
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_sec)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        raise HTTPException(
+            504, detail=f"Wan S2V subprocess timed out after {timeout_sec:.0f}s"
+        )
+    return (
+        proc.returncode or 0,
+        stdout.decode(errors="replace"),
+        stderr.decode(errors="replace"),
+    )
 
 
 @asynccontextmanager
@@ -144,19 +179,17 @@ async def generate(
             effective_infer_frames,
             WAN_S2V_SIZE,
         )
-        result = subprocess.run(
+        returncode, stdout, stderr = await _run_subprocess(
             cmd,
-            capture_output=True,
-            text=True,
             cwd=str(WAN_DIR),
             env=env,
-            timeout=WAN_S2V_TIMEOUT_SEC,
+            timeout_sec=WAN_S2V_TIMEOUT_SEC,
         )
-        if result.returncode != 0:
-            logger.error("Wan S2V stderr: %s", result.stderr[-2000:])
-            raise HTTPException(500, detail=f"Wan S2V failed: {result.stderr[-500:]}")
+        if returncode != 0:
+            logger.error("Wan S2V stderr: %s", stderr[-2000:])
+            raise HTTPException(500, detail=f"Wan S2V failed: {stderr[-500:]}")
         if not output_path.exists():
-            logger.error("Wan S2V stdout: %s", result.stdout[-2000:])
+            logger.error("Wan S2V stdout: %s", stdout[-2000:])
             raise HTTPException(500, detail="Wan S2V produced no output video")
 
         return Response(content=output_path.read_bytes(), media_type="video/mp4")

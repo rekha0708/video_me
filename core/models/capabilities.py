@@ -158,6 +158,9 @@ class VoiceRequest(BaseModel):
     speaker_id: str
     expression: str | None = None
     language: str = "en"  # BCP-47 code: "en" | "hi"
+    # Keys the output filename per shot so resume can only ever match this
+    # shot's own audio — see core/audio_naming.py. "" = legacy hash-only name.
+    shot_id: str = ""
 
 
 class AudioTrack(BaseModel):

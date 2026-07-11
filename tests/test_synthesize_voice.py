@@ -218,6 +218,20 @@ def test_save_audio_returns_correct_duration(tmp_path: Path) -> None:
     assert abs(duration - 3.0) < 0.05
 
 
+def test_save_audio_shot_id_keys_filename(tmp_path: Path) -> None:
+    """With a shot_id the filename is '<shot>_<hash>.wav' — same speaker+text
+    in two different shots must not collide, so resume can match per shot."""
+    adapter = _adapter(tmp_path)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    wav = _make_wav(1.0)
+    path1, _ = adapter._save_audio(wav, out_dir, "same text", "s01")
+    path2, _ = adapter._save_audio(wav, out_dir, "same text", "s02")
+    assert path1.name.startswith("s01_")
+    assert path2.name.startswith("s02_")
+    assert path1 != path2
+
+
 # ------------------------------------------------------------------ health
 
 async def test_health_ok_when_service_reachable(tmp_path: Path) -> None:

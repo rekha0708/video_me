@@ -366,6 +366,10 @@ def _mock_shot_patches():
             new=AsyncMock(return_value=["/tmp/render_00.png"]),
         ))
         stack.enter_context(patch(
+            "core.workflow._prepare_shot_audio_tracks",
+            new=AsyncMock(return_value={}),
+        ))
+        stack.enter_context(patch(
             "core.workflow._generate_shot_video",
             new=AsyncMock(return_value=(_synced_clip(), _audio_track())),
         ))
@@ -607,6 +611,10 @@ async def test_vram_managed_video_adapter_sequencing(tmp_path) -> None:
             ),
         ),
         patch(
+            "core.workflow._prepare_shot_audio_tracks",
+            new=AsyncMock(return_value={}),
+        ),
+        patch(
             "core.workflow._generate_shot_video",
             new=AsyncMock(
                 side_effect=lambda *a, **k: call_order.append("video")
@@ -660,6 +668,10 @@ async def test_free_comfyui_called_before_render_loop_even_when_unused(
             new=AsyncMock(return_value=["/tmp/render_00.png"]),
         ),
         patch(
+            "core.workflow._prepare_shot_audio_tracks",
+            new=AsyncMock(return_value={}),
+        ),
+        patch(
             "core.workflow._generate_shot_video",
             new=AsyncMock(return_value=(_synced_clip(), _audio_track())),
         ),
@@ -675,8 +687,11 @@ async def test_free_comfyui_called_before_render_loop_even_when_unused(
 @pytest.mark.asyncio
 async def test_vram_managed_voice_and_render_adapters_sequencing(tmp_path) -> None:
     """Fish S2 (voice) and a managed render adapter (comfyui_flux fallback) get
-    the same unload-before-Phase-A / unload-render-then-load-before-Phase-B
-    treatment as Wan, alongside it."""
+    the same unload-before-Phase-A treatment as Wan. After image approval the
+    voice model runs one complete load → synthesize-all-shots → unload cycle
+    BEFORE the video model loads (_prepare_shot_audio_tracks): one Fish load
+    per job instead of one reload per shot, and the two managed models are
+    never resident together."""
     config = _make_config(tmp_path)
     config.settings.wan_load_gap_sec = 0
     config.settings.fish_s2_load_gap_sec = 0
@@ -694,6 +709,9 @@ async def test_vram_managed_voice_and_render_adapters_sequencing(tmp_path) -> No
     adapters.voice.load = AsyncMock(side_effect=lambda: call_order.append("voice_load"))
     adapters.voice.wait_until_loaded = AsyncMock(
         side_effect=lambda *a, **k: call_order.append("voice_wait")
+    )
+    adapters.voice.run = AsyncMock(
+        side_effect=lambda *a, **k: call_order.append("tts") or _audio_track()
     )
     adapters.render.managed_vram = True
     adapters.render.unload = AsyncMock(side_effect=lambda: call_order.append("render_unload") or True)
@@ -735,7 +753,9 @@ async def test_vram_managed_voice_and_render_adapters_sequencing(tmp_path) -> No
     assert call_order == [
         "video_unload", "voice_unload",
         "render", "approve",
-        "render_unload", "video_load", "video_wait", "voice_load", "voice_wait",
+        "render_unload",
+        "voice_load", "voice_wait", "tts", "voice_unload",
+        "video_load", "video_wait",
         "video",
     ]
 
@@ -782,6 +802,10 @@ async def test_per_shot_loop_runs_for_each_shot(tmp_path) -> None:
         patch(
             "core.workflow._run_image_approval_gate",
             new=AsyncMock(return_value=["/tmp/r0.png", "/tmp/r1.png"]),
+        ),
+        patch(
+            "core.workflow._prepare_shot_audio_tracks",
+            new=AsyncMock(return_value={}),
         ),
         patch("core.workflow._generate_shot_video", new=mock_generate),
         patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
@@ -1038,6 +1062,10 @@ async def test_assemble_receives_all_synced_clips(tmp_path) -> None:
             new=AsyncMock(return_value=["/tmp/r0.png", "/tmp/r1.png"]),
         ),
         patch(
+            "core.workflow._prepare_shot_audio_tracks",
+            new=AsyncMock(return_value={}),
+        ),
+        patch(
             "core.workflow._generate_shot_video",
             new=AsyncMock(return_value=(_synced_clip(), _audio_track())),
         ),
@@ -1092,6 +1120,10 @@ async def test_source_audio_assemble_request_preserves_timing(tmp_path) -> None:
         patch(
             "core.workflow._run_image_approval_gate",
             new=AsyncMock(return_value=["/tmp/r0.png", "/tmp/r1.png"]),
+        ),
+        patch(
+            "core.workflow._prepare_shot_audio_tracks",
+            new=AsyncMock(return_value={}),
         ),
         patch(
             "core.workflow._generate_shot_video",
@@ -2584,3 +2616,138 @@ async def test_generate_shot_video_re_voice_fits_tts_and_uses_all_dialogue_refs(
     assert video_req.audio_uri == "/timed.wav"
     assert synced.uri == "/c.mp4"
     assert audio.uri == "/timed.wav"
+
+
+# ------------------------------------------------------------------ per-shot audio naming + batch TTS
+
+
+def test_existing_audio_for_shot_matches_only_this_shots_text(tmp_path):
+    """A cached wav for one shot must never be served to a different shot —
+    the old first-wav-for-speaker glob fed s01's audio to every later shot of
+    the same speaker on resume (wrong dialogue baked into S2V lip motion)."""
+    from core.audio_naming import shot_audio_filename
+    from core.workflow import _existing_audio_for_shot
+
+    audio_dir = tmp_path / "audio" / "max"
+    audio_dir.mkdir(parents=True)
+    (audio_dir / shot_audio_filename("s01", "Hello there!")).write_bytes(b"wav")
+
+    s01 = _storyboard().shots[0]
+    s02 = s01.model_copy(update={"shot_id": "s02"})
+
+    hit = _existing_audio_for_shot(tmp_path, s01, "max", "full", line_text="Hello there!")
+    assert hit is not None and "s01_" in hit
+
+    # Same speaker, different shot id → no match, caller re-synthesizes.
+    assert _existing_audio_for_shot(tmp_path, s02, "max", "full", line_text="Hello there!") is None
+    # Same shot, changed dialogue → hash differs → no match (self-invalidating).
+    assert _existing_audio_for_shot(tmp_path, s01, "max", "full", line_text="Changed line.") is None
+
+
+def test_existing_audio_for_shot_accepts_legacy_hash_only_name(tmp_path):
+    """Jobs that synthesized before shot-keyed names still resume without
+    re-synthesizing — the hash-only filename is text-exact, so it is safe."""
+    from core.audio_naming import shot_audio_filename
+    from core.workflow import _existing_audio_for_shot
+
+    audio_dir = tmp_path / "audio" / "max"
+    audio_dir.mkdir(parents=True)
+    (audio_dir / shot_audio_filename("", "Hello there!")).write_bytes(b"wav")
+
+    shot = _storyboard().shots[0]
+    hit = _existing_audio_for_shot(tmp_path, shot, "max", "full", line_text="Hello there!")
+    assert hit is not None
+
+
+@pytest.mark.asyncio
+async def test_prepare_shot_audio_tracks_one_voice_cycle_for_all_shots(tmp_path):
+    """Full mode: one prepare_voice_model + one unload around ALL shots' TTS,
+    instead of a voice-model reload per shot."""
+    from core.workflow import RunOptions, _prepare_shot_audio_tracks
+
+    adapters = MagicMock(ffmpeg_bin="ffmpeg", ffprobe_bin="ffprobe")
+    adapters.video.native_lipsync = True
+    adapters.video.work_dir = tmp_path / "video" / "wan_s2v"
+    adapters.voice.managed_vram = True
+    adapters.voice.unload = AsyncMock(return_value=True)
+    adapters.voice.run = AsyncMock(
+        return_value=AudioTrack(uri="/tts.wav", duration_sec=2.0, speaker_id="max")
+    )
+    config = _make_config(tmp_path)
+
+    with patch("core.workflow.prepare_voice_model", new_callable=AsyncMock) as mock_prepare:
+        tracks = await _prepare_shot_audio_tracks(
+            _two_shot_storyboard().shots, _script(), config.cast, adapters,
+            tmp_path, RunOptions(), settings=config.settings,
+        )
+
+    mock_prepare.assert_awaited_once()
+    assert adapters.voice.run.call_count == 2
+    adapters.voice.unload.assert_awaited_once()
+    assert set(tracks) == {"s01", "s02"}
+    # The per-shot key travels into the TTS request for output naming.
+    assert adapters.voice.run.call_args_list[0].args[0].shot_id == "s01"
+    assert adapters.voice.run.call_args_list[1].args[0].shot_id == "s02"
+
+
+@pytest.mark.asyncio
+async def test_prepare_shot_audio_tracks_source_audio_never_loads_voice(tmp_path):
+    """source_audio mode slices with ffmpeg only — the TTS model must not be
+    loaded (previously Fish S2 was loaded for ~1-2 min and immediately evicted)."""
+    from core.workflow import RunOptions, _prepare_shot_audio_tracks
+
+    adapters = MagicMock(ffmpeg_bin="ffmpeg", ffprobe_bin="ffprobe")
+    adapters.video.native_lipsync = True
+    adapters.video.work_dir = tmp_path / "video" / "wan_s2v"
+    adapters.voice.managed_vram = True
+    adapters.voice.run = AsyncMock()
+
+    shots = []
+    for shot in _two_shot_storyboard().shots:
+        shots.append(shot.model_copy(update={"source_start_sec": 0.0, "source_end_sec": 3.0}))
+    config = _make_config(tmp_path)
+
+    with (
+        patch("core.workflow.prepare_voice_model", new_callable=AsyncMock) as mock_prepare,
+        patch("core.workflow._slice_source_audio", new_callable=AsyncMock) as mock_slice,
+    ):
+        mock_slice.return_value = AudioTrack(uri="/slice.wav", duration_sec=3.0)
+        tracks = await _prepare_shot_audio_tracks(
+            shots, _script(), config.cast, adapters, tmp_path,
+            RunOptions(render_mode="source_audio"),
+            settings=config.settings, source_audio_uri="/source.wav",
+        )
+
+    mock_prepare.assert_not_awaited()
+    adapters.voice.run.assert_not_called()
+    assert mock_slice.await_count == 2
+    assert set(tracks) == {"s01", "s02"}
+
+
+@pytest.mark.asyncio
+async def test_prepare_shot_audio_tracks_skips_shots_with_finished_video(tmp_path):
+    """Resume: shots whose completion marker exists get no audio synthesis at
+    all (matching _generate_shot_video's early return for them)."""
+    from core.workflow import RunOptions, _prepare_shot_audio_tracks
+
+    adapters = MagicMock(ffmpeg_bin="ffmpeg", ffprobe_bin="ffprobe")
+    adapters.video.native_lipsync = True
+    adapters.video.work_dir = tmp_path / "video" / "wan_s2v"
+    adapters.voice.managed_vram = True
+    adapters.voice.unload = AsyncMock(return_value=True)
+    adapters.voice.run = AsyncMock(
+        return_value=AudioTrack(uri="/tts.wav", duration_sec=2.0, speaker_id="max")
+    )
+    done_dir = adapters.video.work_dir / "s01"
+    done_dir.mkdir(parents=True)
+    (done_dir / "clip.mp4").write_bytes(b"done")
+    config = _make_config(tmp_path)
+
+    with patch("core.workflow.prepare_voice_model", new_callable=AsyncMock):
+        tracks = await _prepare_shot_audio_tracks(
+            _two_shot_storyboard().shots, _script(), config.cast, adapters,
+            tmp_path, RunOptions(resume=True), settings=config.settings,
+        )
+
+    assert set(tracks) == {"s02"}
+    assert adapters.voice.run.call_count == 1

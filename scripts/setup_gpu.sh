@@ -45,14 +45,16 @@ Full GPU-machine setup for video_me on RunPod (or any Ubuntu+CUDA box):
   5. Clone + set up ComfyUI model dirs (Flux 2.0 Dev image weights)
   6. Clone + set up Fish Audio S2 TTS (EN + HI, port 8025)
   7. Clone + set up Wan2.2 S2V (singing video, port 8031)
-  8. Write .env with GPU-correct settings
-  9. Run runtime readiness check
+  8. Clone + set up LatentSync repair (installed by default so it is ready
+     the moment a job switches to VIDEO_ADAPTER=wan; start_services.sh only
+     starts its service when that adapter stack selects it)
+  9. Write .env with GPU-correct settings
+ 10. Run runtime readiness check
 
   Fallback services (opt-in only, not installed by default):
     --with-a1111        AUTOMATIC1111 + SD 1.5  (RENDER_ADAPTER=a1111)
     --with-chatterbox   Chatterbox TTS           (TTS_ADAPTER=chatterbox)
     --with-wan-i2v      Wan 2.2 I2V model        (VIDEO_ADAPTER=wan)
-    --with-latentsync   LatentSync repair        (LIPSYNC_ADAPTER=latentsync)
     --with-musetalk     MuseTalk repair fallback (LIPSYNC_ADAPTER=musetalk)
     --with-ltx          Legacy LTX/ComfyUI video (VIDEO_ADAPTER=ltx)
     --with-wan          Back-compat: Wan I2V + LatentSync + MuseTalk
@@ -72,7 +74,7 @@ Options:
   --skip-fish-s2            Skip Fish Audio S2 install (default TTS, port 8025)
   --skip-wan                Skip Wan2.2 S2V install (default video, port 8031)
   --skip-wan-i2v            Skip Wan2.2 I2V fallback weights
-  --skip-latentsync         Skip LatentSync fallback setup
+  --skip-latentsync         Skip LatentSync setup (installed by default)
   --with-a1111              Also install AUTOMATIC1111 (SD 1.5 render fallback, port 7860)
   --with-chatterbox         Also install Chatterbox TTS (EN-only fallback, port 8020)
   --with-wan-i2v            Also install Wan2.2 I2V weights (VIDEO_ADAPTER=wan)
@@ -122,6 +124,22 @@ run() {
 }
 
 need_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+# Resolve a HuggingFace download CLI that is guaranteed to exist.
+# install_python_deps installs huggingface_hub[cli] into the project venv, so
+# the binary next to $PYTHON_BIN is the primary choice; bare `hf` on PATH was
+# never installed by this script and only worked when the base image happened
+# to ship huggingface_hub — on a fresh box every `hf download` died under
+# set -e before any weights landed.
+hf_cli() {
+  if [[ "$DRY_RUN" == "1" ]]; then printf 'huggingface-cli\n'; return; fi
+  local candidate
+  candidate="$(dirname "$PYTHON_BIN")/huggingface-cli"
+  if [[ -x "$candidate" ]]; then printf '%s\n' "$candidate"; return; fi
+  if command -v huggingface-cli >/dev/null 2>&1; then command -v huggingface-cli; return; fi
+  if command -v hf >/dev/null 2>&1; then command -v hf; return; fi
+  die "huggingface-cli not found — rerun without --skip-python-deps, or: $PYTHON_BIN -m pip install 'huggingface_hub[cli]'"
+}
 
 # ── Argument parsing ─────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -255,10 +273,12 @@ install_python_deps() {
 
   run "$PYTHON_BIN" -m pip install -e ".[$extras]"
 
-  # hf_transfer enables fast multi-part HF downloads.
-  # Must be installed in the same Python that runs hf CLI and training scripts.
-  # HF_HUB_ENABLE_HF_TRANSFER=1 (set in .env) will error if this is missing.
-  run pip3 install hf_transfer || warn "hf_transfer install failed — set HF_HUB_ENABLE_HF_TRANSFER=0 to skip"
+  # huggingface_hub[cli] provides the huggingface-cli binary every model
+  # download below uses (resolved via hf_cli()); hf_transfer enables fast
+  # multi-part HF downloads and must live in the same Python that runs the CLI.
+  # HF_HUB_ENABLE_HF_TRANSFER=1 (set in .env) will error if hf_transfer is missing.
+  run "$PYTHON_BIN" -m pip install "huggingface_hub[cli]" hf_transfer || \
+      warn "huggingface_hub[cli]/hf_transfer install failed — model downloads will need a manual huggingface-cli"
 }
 
 # ── Step 4: Ollama ───────────────────────────────────────────────────────────
@@ -355,7 +375,7 @@ setup_comfyui() {
   if [[ ! -f "$flux_model" ]]; then
     if [[ -n "$HF_TOKEN" ]]; then
       log "Downloading Flux 2.0 Dev DiT (~61 GB) — this will take a while"
-      run hf download black-forest-labs/FLUX.2-dev \
+      run env HF_TOKEN="$HF_TOKEN" "$(hf_cli)" download black-forest-labs/FLUX.2-dev \
           flux2-dev.safetensors \
           --local-dir "$models_dir/diffusion_models"
       ok "Flux 2.0 Dev DiT downloaded to $flux_model"
@@ -363,7 +383,7 @@ setup_comfyui() {
       warn "Flux 2.0 Dev not downloaded — HF_TOKEN required."
       warn "  1. Accept license at https://huggingface.co/black-forest-labs/FLUX.2-dev"
       warn "  2. Set HF_TOKEN and re-run, or:"
-      warn "     HF_TOKEN=hf_... hf download black-forest-labs/FLUX.2-dev flux2-dev.safetensors \\"
+      warn "     HF_TOKEN=hf_... huggingface-cli download black-forest-labs/FLUX.2-dev flux2-dev.safetensors \\"
       warn "       --local-dir $models_dir/diffusion_models"
     fi
   else
@@ -377,7 +397,7 @@ setup_comfyui() {
   if [[ ! -f "$ae_model" ]]; then
     if [[ -n "$HF_TOKEN" ]]; then
       log "Downloading Flux 2.0 VAE/AE (~335 MB)"
-      run hf download black-forest-labs/FLUX.2-dev \
+      run env HF_TOKEN="$HF_TOKEN" "$(hf_cli)" download black-forest-labs/FLUX.2-dev \
           ae.safetensors \
           --local-dir "$models_dir/diffusion_models"
       ok "Flux 2.0 AE downloaded to $ae_model"
@@ -417,7 +437,7 @@ setup_comfyui() {
     local ltx_model="$models_dir/checkpoints/ltx-2.3-22b-distilled-1.1.safetensors"
     if [[ ! -f "$ltx_model" ]]; then
       log "Downloading LTX-2.3 22B distilled v1.1 (~42 GB) — this will take a while"
-      run hf download Lightricks/LTX-2.3 \
+      run "$(hf_cli)" download Lightricks/LTX-2.3 \
           ltx-2.3-22b-distilled-1.1.safetensors \
           --local-dir "$models_dir/checkpoints" \
           ${HF_TOKEN:+--token "$HF_TOKEN"}
@@ -433,7 +453,7 @@ setup_comfyui() {
     local ltx_text_encoder="$models_dir/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors"
     if [[ ! -f "$ltx_text_encoder" ]]; then
       log "Downloading LTX-AV Gemma-3 text encoder (~8.8 GB)"
-      run hf download Comfy-Org/ltx-2 \
+      run "$(hf_cli)" download Comfy-Org/ltx-2 \
           split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors \
           --local-dir "$models_dir/text_encoders" \
           ${HF_TOKEN:+--token "$HF_TOKEN"}
@@ -516,13 +536,13 @@ setup_musubi_tuner() {
       log "Downloading Mistral 3 text encoder for Flux 2.0 training (~45 GB, 10 shards)"
       if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$text_enc_dir"; fi
       run env HF_HUB_ENABLE_HF_TRANSFER=0 HF_TOKEN="$HF_TOKEN" \
-          hf download black-forest-labs/FLUX.2-dev \
+          "$(hf_cli)" download black-forest-labs/FLUX.2-dev \
           --include "text_encoder/*" "tokenizer/*" \
           --local-dir "$text_enc_dir"
       ok "Mistral 3 text encoder downloaded to $text_enc_dir"
     else
       warn "Mistral 3 text encoder not downloaded — HF_TOKEN required."
-      warn "  Run: HF_TOKEN=hf_... hf download black-forest-labs/FLUX.2-dev \\"
+      warn "  Run: HF_TOKEN=hf_... huggingface-cli download black-forest-labs/FLUX.2-dev \\"
       warn "         --include 'text_encoder/*' 'tokenizer/*' --local-dir $text_enc_dir"
     fi
   else
@@ -633,11 +653,11 @@ setup_fish_s2() {
       log "Downloading Fish S2 Pro weights (~20 GB)"
       if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$fish_dir/checkpoints"; fi
       run env HF_HUB_ENABLE_HF_TRANSFER=0 HF_TOKEN="$HF_TOKEN" \
-          hf download fishaudio/s2-pro --local-dir "$ckpt_dir"
+          "$(hf_cli)" download fishaudio/s2-pro --local-dir "$ckpt_dir"
       ok "Fish S2 Pro downloaded to $ckpt_dir"
     else
       warn "Fish S2 Pro not downloaded — HF_TOKEN required."
-      warn "  Run: HF_TOKEN=hf_... hf download fishaudio/s2-pro --local-dir $ckpt_dir"
+      warn "  Run: HF_TOKEN=hf_... huggingface-cli download fishaudio/s2-pro --local-dir $ckpt_dir"
     fi
   else
     ok "Fish S2 Pro already at $ckpt_dir"
@@ -713,7 +733,7 @@ setup_wan() {
     log "Downloading Wan2.2-S2V-14B model — this will take a while"
     if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$wan_s2v_model_dir"; fi
     run env HF_HUB_ENABLE_HF_TRANSFER=0 ${HF_TOKEN:+HF_TOKEN="$HF_TOKEN"} \
-        hf download Wan-AI/Wan2.2-S2V-14B --local-dir "$wan_s2v_model_dir"
+        "$(hf_cli)" download Wan-AI/Wan2.2-S2V-14B --local-dir "$wan_s2v_model_dir"
     ok "Wan2.2-S2V-14B downloaded to $wan_s2v_model_dir"
   else
     ok "Wan2.2-S2V model already at $wan_s2v_model_dir"
@@ -724,7 +744,7 @@ setup_wan() {
       log "Downloading Wan2.2-I2V-A14B model (~30 GB) — this will take a while"
       if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$wan_i2v_model_dir"; fi
       run env HF_HUB_ENABLE_HF_TRANSFER=0 ${HF_TOKEN:+HF_TOKEN="$HF_TOKEN"} \
-          hf download Wan-AI/Wan2.2-I2V-A14B --local-dir "$wan_i2v_model_dir"
+          "$(hf_cli)" download Wan-AI/Wan2.2-I2V-A14B --local-dir "$wan_i2v_model_dir"
       ok "Wan2.2-I2V-A14B downloaded to $wan_i2v_model_dir"
     else
       ok "Wan2.2-I2V model already at $wan_i2v_model_dir"
@@ -737,6 +757,10 @@ setup_latentsync() {
   log "Setting up LatentSync lip-sync repair (port 8041)"
   # LatentSync is the preferred repair stage for VIDEO_ADAPTER=wan. It is not
   # used by the default S2V path because Wan S2V receives the audio directly.
+  # Installed by default anyway (operator policy 2026-07-10): every model is
+  # pre-provisioned in its own venv so switching a job to the I2V+repair stack
+  # only needs the service started — start_services.sh starts it only when the
+  # .env adapter stack actually selects it, and nothing loads until invoked.
 
   local latentsync_dir="$WORKSPACE/LatentSync"
   local venv_dir="$WORKSPACE/.venv_latentsync"

@@ -19,7 +19,6 @@ in), mirroring the existing Wan video-adapter pattern.
 ``voice_dir/<name>.(wav|mp3|flac)``.  Missing file → RuntimeError with Track B prompt.
 """
 
-import hashlib
 import logging
 import wave
 from pathlib import Path
@@ -166,7 +165,7 @@ class FishS2TtsAdapter(SynthesizeVoice):
         )
 
         wav_bytes = await self._call_tts(req.text, voice_path, language_code)
-        audio_path, duration = self._save_audio(wav_bytes, out_dir, req.text)
+        audio_path, duration = self._save_audio(wav_bytes, out_dir, req.text, req.shot_id)
 
         log_event(
             logger,
@@ -223,9 +222,12 @@ class FishS2TtsAdapter(SynthesizeVoice):
             resp.raise_for_status()
         return resp.content
 
-    def _save_audio(self, wav_bytes: bytes, out_dir: Path, text: str) -> tuple[Path, float]:
-        stem = hashlib.sha1(text.encode()).hexdigest()[:12]
-        path = out_dir / f"{stem}.wav"
+    def _save_audio(
+        self, wav_bytes: bytes, out_dir: Path, text: str, shot_id: str = ""
+    ) -> tuple[Path, float]:
+        from core.audio_naming import shot_audio_filename
+
+        path = out_dir / shot_audio_filename(shot_id, text)
         path.write_bytes(wav_bytes)
         return path, self._wav_duration(path, text)
 

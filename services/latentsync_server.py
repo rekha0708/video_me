@@ -23,9 +23,9 @@ Environment variables:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-import subprocess
 import sys
 import tempfile
 from contextlib import asynccontextmanager
@@ -58,6 +58,41 @@ app = FastAPI(title="LatentSync lip-sync", lifespan=lifespan)
 def _resolve_repo_path(value: str) -> Path:
     path = Path(value)
     return path if path.is_absolute() else LATENTSYNC_DIR / path
+
+
+async def _run_subprocess(
+    cmd: list[str],
+    *,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+    timeout_sec: float | None = None,
+) -> tuple[int, str, str]:
+    """Run a command without blocking the event loop; kill it on timeout.
+
+    A blocking subprocess.run here froze the whole uvicorn loop for the length
+    of a repair (up to LATENTSYNC_TIMEOUT_SEC), so /health stopped answering
+    mid-run — same fix as services/wan_s2v_server.py.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        cwd=cwd,
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_sec)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        raise HTTPException(
+            504, detail=f"LatentSync subprocess timed out after {timeout_sec:.0f}s"
+        )
+    return (
+        proc.returncode or 0,
+        stdout.decode(errors="replace"),
+        stderr.decode(errors="replace"),
+    )
 
 
 @app.get("/health")
@@ -101,7 +136,7 @@ async def lipsync(
         raw_video.write_bytes(await video.read())
         raw_audio.write_bytes(await audio.read())
 
-        _normalize_inputs(raw_video, raw_audio, video_path, audio_path)
+        await _normalize_inputs(raw_video, raw_audio, video_path, audio_path)
 
         cmd = [
             sys.executable,
@@ -134,56 +169,46 @@ async def lipsync(
             inference_steps,
             guidance_scale,
         )
-        result = subprocess.run(
+        returncode, stdout, stderr = await _run_subprocess(
             cmd,
-            capture_output=True,
-            text=True,
             cwd=str(LATENTSYNC_DIR),
             env=env,
-            timeout=LATENTSYNC_TIMEOUT_SEC,
+            timeout_sec=LATENTSYNC_TIMEOUT_SEC,
         )
-        if result.returncode != 0:
-            logger.error("LatentSync stderr: %s", result.stderr[-2000:])
-            raise HTTPException(500, detail=f"LatentSync failed: {result.stderr[-500:]}")
+        if returncode != 0:
+            logger.error("LatentSync stderr: %s", stderr[-2000:])
+            raise HTTPException(500, detail=f"LatentSync failed: {stderr[-500:]}")
         if not output_path.exists():
-            logger.error("LatentSync stdout: %s", result.stdout[-2000:])
+            logger.error("LatentSync stdout: %s", stdout[-2000:])
             raise HTTPException(500, detail="LatentSync produced no output video")
 
         return Response(content=output_path.read_bytes(), media_type="video/mp4")
 
 
-def _normalize_inputs(raw_video: Path, raw_audio: Path, video_path: Path, audio_path: Path) -> None:
+async def _normalize_inputs(
+    raw_video: Path, raw_audio: Path, video_path: Path, audio_path: Path
+) -> None:
     """Match LatentSync's documented preprocessing assumptions: 25 FPS + 16 kHz mono audio."""
-    subprocess.run(
+    for cmd in (
         [
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(raw_video),
-            "-vf",
-            "fps=25",
+            "ffmpeg", "-y",
+            "-i", str(raw_video),
+            "-vf", "fps=25",
             "-an",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
             str(video_path),
         ],
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
         [
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(raw_audio),
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
+            "ffmpeg", "-y",
+            "-i", str(raw_audio),
+            "-ac", "1",
+            "-ar", "16000",
             str(audio_path),
         ],
-        check=True,
-        capture_output=True,
-    )
+    ):
+        returncode, _, stderr = await _run_subprocess(cmd, timeout_sec=300)
+        if returncode != 0:
+            raise HTTPException(
+                500, detail=f"ffmpeg input normalization failed: {stderr[-500:]}"
+            )

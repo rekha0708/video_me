@@ -338,6 +338,9 @@ async def test_pipeline_passes_cast_to_all_stages(tmp_path: Path) -> None:
         ))
         stack.enter_context(patch("core.workflow._render_shot_candidates", new=spy_render))
         stack.enter_context(patch("core.workflow._run_image_approval_gate", new=spy_approval))
+        stack.enter_context(patch(
+            "core.workflow._prepare_shot_audio_tracks", new=AsyncMock(return_value={}),
+        ))
         stack.enter_context(patch("core.workflow._generate_shot_video", new=spy_video))
         stack.enter_context(patch("core.workflow.prepare_video_model", new=AsyncMock()))
 

@@ -29,7 +29,7 @@ content are blocked, not silently passed.
 - **Single VLM for everything**: qwen3.6:35b handles text LLM + image critique + video frame critique. Drops qwen2.5-vl:32b entirely. The workflow unloads Ollama before GPU-heavy render/video/voice phases that opt into managed VRAM.
 - **TTS**: Fish Audio S2 (`FishS2TtsAdapter`, port 8025). Supports English and Hindi (80+ languages, voice cloning from reference WAV). Replaces Chatterbox TTS. Fallback: `VIDEO_ME_TTS_ADAPTER=chatterbox`.
 - **Language selection**: `VIDEO_ME_TARGET_LANGUAGE=en|hi|both`. "both" runs the full pipeline twice (shared images, separate dialogue/audio). Script dialogue is translated by the LLM when language ≠ "en".
-- **Source-audio chunking**: when a real source audio track is present, the workflow uses faster-whisper word timestamps and deterministic sentence/lyric boundary splitting to make many small shots instead of forcing every shot toward 8 seconds. No LLM is used for the boundary choice. `VIDEO_ME_WHISPER_VAD_FILTER=false` is the default so sung lyrics are not clipped by over-aggressive VAD; `VIDEO_ME_TRANSCRIPT_MIN_COVERAGE_RATIO` fails only catastrophic short transcripts.
+- **Source-audio chunking**: when a real source audio track is present, the workflow uses faster-whisper word timestamps and deterministic sentence/lyric boundary splitting to make many small shots instead of forcing every shot toward 8 seconds. No LLM is used for the boundary choice. `VIDEO_ME_WHISPER_VAD_FILTER=false` is the default so sung lyrics are not clipped by over-aggressive VAD; `VIDEO_ME_TRANSCRIPT_MIN_COVERAGE_RATIO` fails only catastrophic short transcripts. **By design, source_audio jobs skip the plan critique loop AND the human storyboard approval gate** (operator decision 2026-07-10): shot boundaries/durations are deterministic and dialogue is verbatim, so there is nothing for the critique dimensions or a reviewer to fix at plan time — the image approval gate remains the human check. The TTS model is never loaded for source_audio jobs.
 - **Shot duration**: max planned shot duration defaults to 8s (`VIDEO_ME_MAX_SHOT_DURATION_SEC`), but source-audio jobs may split more finely at sentence/lyric boundaries.
 - **AV/lip-sync QA**: non-native video paths (`VIDEO_ME_VIDEO_ADAPTER=wan`) keep raw video, every LatentSync/MuseTalk attempt, retry metadata, duration deltas, and selected/fallback reason in the dashboard's shot video card. Default failure policy is `fallback_raw`; set `VIDEO_ME_LIPSYNC_FAILURE_POLICY=fail` or `VIDEO_ME_AV_SYNC_FAILURE_POLICY=fail` to hard-fail.
 - **Resume**: `--resume-job JOB_ID` skips completed stages/shots. Default Wan S2V completion marker: `clip.mp4`; Wan I2V + repair marker: `synced.mp4`.
@@ -39,6 +39,7 @@ content are blocked, not silently passed.
 - **Dashboard UI**: web UI at `http://localhost:8080` (uvicorn). Job list, detail, health, chat. Dedicated `/jobs/new` page with cast selector + 4 input modes (Video URL / Local file / Story / Story + Images). Per-job "Approval gates" checkboxes set `overrides.auto_approve_plan` / `auto_approve_images` / `auto_approve_transcript` so long unattended runs skip the human gates (dashboard approval adapters and the transcript review gate short-circuit and record an `approval_granted` event). Source kinds: `url`, `upload`, `file`, `story`, `story_images`. Story-kind jobs restricted to `transcribe` or `all` phases. Character image upload via `POST /api/uploads/character-image`.
 - **Story ingest**: `adapters/story_ingest/` — structured parser (`start-end: text`) + LLM segmenter fallback. `_seed_story_job` in worker creates fake TranscribeResult from story text. Story+images mode skips Phase A render; user images go through approval with `origin="user"` label.
 - **GPU/model lifecycle**: `core/gpu_sequencer.py` coordinates only adapters that declare `managed_vram=True`. Wan I2V uses deferred `/load`/`/unload`; Fish S2 is loaded on demand and the dashboard worker kills the process after every job because its allocator retained VRAM across calls. Wan S2V and LatentSync are subprocess-per-request wrappers, so they release their model process after each clip/repair instead of using resident `/load` endpoints. The workflow unloads Fish before Wan S2V or lip-sync repair when the adapter marks `requires_voice_unloaded=True`.
+- **Per-job TTS batching**: Phase B synthesizes ALL shot audio first (`_prepare_shot_audio_tracks`) in one Fish S2 load → synth-all → unload cycle, then loads the video model — previously voice/video interleaved per shot and every shot paid a full Fish reload (~60-120s) because `requires_voice_unloaded` evicted it before each clip. Fish is never loaded when render_mode=source_audio or when every pending shot's audio is cached. TTS files are named `audio/<speaker>/<shot_id>_<text-hash>.wav` (`core/audio_naming.py`) so resume matches only that shot's own dialogue — the old first-wav-for-speaker lookup fed wrong audio into S2V lip motion on resumed jobs.
 
 | Track / Phase | Status | Blocker |
 |---|---|---|
@@ -276,9 +277,15 @@ bash scripts/setup_gpu.sh
 ```
 
 Default `setup_gpu.sh` installs the default stack: musubi-tuner, Fish S2, Wan2.2 S2V, Ollama,
-and the lightweight project venv. Wan I2V, LatentSync, MuseTalk, Chatterbox, and A1111 are opt-in
-via `--with-wan-i2v`, `--with-latentsync`, `--with-musetalk`, `--with-chatterbox`, and
-`--with-a1111` (or the back-compat `--with-wan` bundle).
+**LatentSync**, and the lightweight project venv. LatentSync is installed by default even though
+the S2V path never invokes it (operator policy 2026-07-10: pre-provision every model in its own
+venv so switching a job to the Wan I2V + repair stack only needs the service started, never a
+mid-project install — `start_services.sh` starts it only when `VIDEO_ME_VIDEO_ADAPTER=wan`
+selects it, and nothing loads into VRAM until a repair call arrives). Wan I2V, MuseTalk,
+Chatterbox, and A1111 remain opt-in via `--with-wan-i2v`, `--with-musetalk`, `--with-chatterbox`,
+and `--with-a1111` (or the back-compat `--with-wan` bundle); `--skip-latentsync` opts out.
+All HF model downloads go through the project venv's `huggingface-cli` (installed by
+`install_python_deps`) — never a bare `hf` on PATH.
 
 Lifecycle policy:
 - Managed resident adapters load only at their phase boundary: Wan I2V (`/load`/`/unload`) and Fish S2.

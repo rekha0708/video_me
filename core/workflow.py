@@ -755,11 +755,27 @@ def _notify_shot(
         stage_hook(stage_name, event_type, shot_id=shot_id, message=f"{label}: {detail}")
 
 
+def _shot_line_text(shot: Shot, script: Script) -> str:
+    """Join a shot's dialogue lines into the exact text the TTS synthesizes."""
+    lines = [_resolve_line(ref, script) for ref in shot.dialogue_line_refs]
+    return " ".join(line.text.strip() for line in lines if line.text.strip())
+
+
+def _shot_video_done_path(shot: Shot, adapters: _Adapters) -> Path:
+    """Completion marker for a shot's video: clip.mp4 for native-lipsync
+    adapters (Wan S2V), synced.mp4 for adapters that need the repair stage."""
+    if getattr(adapters.video, "native_lipsync", False):
+        return adapters.video.work_dir / shot.shot_id / "clip.mp4"
+    return adapters.lipsync.work_dir / shot.shot_id / "synced.mp4"
+
+
 def _existing_audio_for_shot(
     work_dir: Path,
     shot: Shot,
     speaker_id: str,
     render_mode: str,
+    *,
+    line_text: str = "",
 ) -> str | None:
     if render_mode == "source_audio":
         path = work_dir / "audio" / "source_slices" / f"{shot.shot_id}.wav"
@@ -767,7 +783,28 @@ def _existing_audio_for_shot(
     if render_mode == "re_voice":
         path = work_dir / "audio" / "timed" / f"{shot.shot_id}.wav"
         return str(path) if path.exists() else None
-    audio_files = sorted((work_dir / "audio" / speaker_id).glob("*.wav"))
+
+    audio_dir = work_dir / "audio" / speaker_id
+    if line_text:
+        from core.audio_naming import shot_audio_filename
+
+        # Per-shot name first, then the pre-shot-keyed hash-only name — both
+        # embed the exact line text's hash, so a match is always THIS shot's
+        # dialogue. No match → caller re-synthesizes. Never fall back to
+        # "any wav for this speaker": that used to serve shot s01's audio to
+        # every later shot of the same speaker on resume, and with a
+        # native-lipsync video adapter the wrong dialogue got baked into the
+        # generated lip motion.
+        for name in (
+            shot_audio_filename(shot.shot_id, line_text),
+            shot_audio_filename("", line_text),
+        ):
+            path = audio_dir / name
+            if path.exists():
+                return str(path)
+        return None
+
+    audio_files = sorted(audio_dir.glob("*.wav"))
     return str(audio_files[0]) if audio_files else None
 
 
@@ -855,25 +892,25 @@ async def _write_shot_attempt_audit(
     return run
 
 
-async def _generate_shot_video(
+async def _synthesize_shot_audio(
     shot: Shot,
     script: Script,
     cast: Cast,
     adapters: _Adapters,
     work_dir: Path,
-    image_uri: str,
     options: RunOptions | None = None,
     *,
     shot_index: int = 1,
     total_shots: int = 1,
     render_mode: str = "full",
     source_audio_uri: str | None = None,
-) -> tuple[VideoClip, AudioTrack]:
-    """Phase B: synthesize voice + generate video for one shot using the approved image.
+) -> AudioTrack:
+    """Produce one shot's audio track: slice the source, reuse a cached wav,
+    or synthesize via TTS (+ re_voice duration fit).
 
-    Skips stages whose output files already exist when opts.resume is True.
-    ``shot_index``/``total_shots`` (1-based) are used only to label the
-    stage_hook progress events emitted around each sub-stage below.
+    Extracted from _generate_shot_video so _prepare_shot_audio_tracks can run
+    every shot's audio in a single pass while the voice model is resident,
+    instead of reloading it once per shot.
     """
     opts = options or RunOptions()
     member_map = {m.id: m for m in cast.members}
@@ -887,20 +924,180 @@ async def _generate_shot_video(
         else None
     )
     expression = first_line.expression if first_line else None
-    lines = [_resolve_line(ref, script) for ref in shot.dialogue_line_refs]
-    line_text = " ".join(line.text.strip() for line in lines if line.text.strip())
+    line_text = _shot_line_text(shot, script)
+    vparams = load_cast_params(cast.id).get(speaker_id)
 
+    if render_mode == "source_audio" and source_audio_uri and shot.source_start_sec is not None and shot.source_end_sec is not None:
+        audio_slice_path = work_dir / "audio" / "source_slices" / f"{shot.shot_id}.wav"
+        if opts.resume and audio_slice_path.exists():
+            logger.info("Skipping source audio slice for %s (exists)", shot.shot_id)
+            return AudioTrack(uri=str(audio_slice_path), duration_sec=shot.duration_sec)
+        _notify_shot(
+            opts.stage_hook, "slice_source_audio", "stage_started",
+            shot_id=shot.shot_id, label=label, detail="slicing source audio",
+        )
+        audio_track = await _slice_source_audio(
+            source_audio_uri, shot.source_start_sec, shot.source_end_sec,
+            audio_slice_path, adapters.ffmpeg_bin,
+        )
+        _notify_shot(
+            opts.stage_hook, "slice_source_audio", "stage_completed",
+            shot_id=shot.shot_id, label=label, detail="audio slice done",
+        )
+        return audio_track
+
+    existing_audio = _existing_audio_for_shot(
+        work_dir, shot, speaker_id, render_mode, line_text=line_text
+    )
+    if opts.resume and existing_audio:
+        logger.info("Skipping synthesize_voice for %s (audio exists)", shot.shot_id)
+        return AudioTrack(uri=existing_audio, duration_sec=shot.duration_sec)
+
+    _notify_shot(
+        opts.stage_hook, "synthesize_voice", "stage_started",
+        shot_id=shot.shot_id, label=label, detail="synthesizing voice",
+    )
+    voice_ref = (vparams.voice_file if vparams and vparams.voice_file
+                 else speaker.voice_profile_ref)
+    audio_track = await adapters.voice.run(
+        VoiceRequest(
+            text=line_text,
+            voice_profile_ref=voice_ref,
+            speaker_id=speaker_id,
+            expression=expression,
+            language=opts.language if opts else "en",
+            shot_id=shot.shot_id,
+        )
+    )
+    _notify_shot(
+        opts.stage_hook, "synthesize_voice", "stage_completed",
+        shot_id=shot.shot_id, label=label, detail="voice done",
+    )
+    if render_mode == "re_voice":
+        ffprobe_bin = getattr(adapters, "ffprobe_bin", None)
+        if not isinstance(ffprobe_bin, str):
+            ffprobe_bin = "ffprobe"
+        _notify_shot(
+            opts.stage_hook, "fit_voice_audio", "stage_started",
+            shot_id=shot.shot_id, label=label, detail="matching source pacing",
+        )
+        audio_track = await _fit_audio_to_duration(
+            audio_track,
+            shot.duration_sec,
+            work_dir / "audio" / "timed" / f"{shot.shot_id}.wav",
+            adapters.ffmpeg_bin,
+            ffprobe_bin,
+        )
+        _notify_shot(
+            opts.stage_hook, "fit_voice_audio", "stage_completed",
+            shot_id=shot.shot_id, label=label, detail="voice timing matched",
+        )
+    return audio_track
+
+
+async def _prepare_shot_audio_tracks(
+    shots: list[Shot],
+    script: Script,
+    cast: Cast,
+    adapters: _Adapters,
+    work_dir: Path,
+    options: RunOptions | None = None,
+    *,
+    settings: Any,
+    source_audio_uri: str | None = None,
+) -> dict[str, AudioTrack]:
+    """Phase B prologue: produce every shot's audio before any video runs.
+
+    TTS-mode shots are synthesized in one pass around a single voice-model
+    load/unload. Previously voice synthesis was interleaved with video
+    generation, and because the video adapter's requires_voice_unloaded evicts
+    the voice model before every clip, each subsequent shot paid a full Fish
+    S2 reload (~60-120s) inside its /synthesize call. source_audio jobs never
+    need the voice model at all (slices are plain ffmpeg), so it is not even
+    loaded for them; same when every pending shot's audio is already cached.
+    """
+    opts = options or RunOptions()
+    total = len(shots)
+
+    pending: list[tuple[int, Shot]] = []
+    for index, shot in enumerate(shots, start=1):
+        if opts.resume and _shot_video_done_path(shot, adapters).exists():
+            continue  # _generate_shot_video early-returns for finished shots
+        pending.append((index, shot))
+    if not pending:
+        return {}
+
+    needs_voice_model = False
+    if opts.render_mode != "source_audio":
+        for _, shot in pending:
+            speaker_id = shot.characters_on_screen[0]
+            existing = _existing_audio_for_shot(
+                work_dir, shot, speaker_id, opts.render_mode,
+                line_text=_shot_line_text(shot, script),
+            )
+            if not (opts.resume and existing):
+                needs_voice_model = True
+                break
+
+    if needs_voice_model:
+        await prepare_voice_model(adapters.voice, settings, notify=opts.stage_hook)
+
+    tracks: dict[str, AudioTrack] = {}
+    try:
+        for index, shot in pending:
+            tracks[shot.shot_id] = await _synthesize_shot_audio(
+                shot, script, cast, adapters, work_dir, opts,
+                shot_index=index, total_shots=total,
+                render_mode=opts.render_mode,
+                source_audio_uri=source_audio_uri,
+            )
+    finally:
+        # Voice phase over — free the model once before the video models load.
+        if needs_voice_model and is_managed(adapters.voice):
+            await adapters.voice.unload()
+    return tracks
+
+
+async def _generate_shot_video(
+    shot: Shot,
+    script: Script,
+    cast: Cast,
+    adapters: _Adapters,
+    work_dir: Path,
+    image_uri: str,
+    options: RunOptions | None = None,
+    *,
+    shot_index: int = 1,
+    total_shots: int = 1,
+    render_mode: str = "full",
+    source_audio_uri: str | None = None,
+    audio_track: AudioTrack | None = None,
+) -> tuple[VideoClip, AudioTrack]:
+    """Phase B: generate video for one shot using the approved image.
+
+    ``audio_track`` normally arrives pre-computed from
+    _prepare_shot_audio_tracks (one voice-model load for the whole job); when
+    None (direct calls, tests) this function synthesizes/slices it inline.
+    Skips stages whose output files already exist when opts.resume is True.
+    ``shot_index``/``total_shots`` (1-based) are used only to label the
+    stage_hook progress events emitted around each sub-stage below.
+    """
+    opts = options or RunOptions()
+    member_map = {m.id: m for m in cast.members}
+    speaker_id = shot.characters_on_screen[0]
+    speaker = member_map[speaker_id]
+    label = f"Shot {shot.shot_id} ({shot_index}/{total_shots})"
+
+    line_text = _shot_line_text(shot, script)
     native_lipsync = getattr(adapters.video, "native_lipsync", False)
-
-    if native_lipsync:
-        done_path = adapters.video.work_dir / shot.shot_id / "clip.mp4"
-    else:
-        done_path = adapters.lipsync.work_dir / shot.shot_id / "synced.mp4"
+    done_path = _shot_video_done_path(shot, adapters)
 
     if opts.resume and done_path.exists():
         logger.info("Skipping video generation for %s (%s exists)", shot.shot_id, done_path.name)
         audio_uri = (
-            _existing_audio_for_shot(work_dir, shot, speaker_id, render_mode)
+            _existing_audio_for_shot(
+                work_dir, shot, speaker_id, render_mode, line_text=line_text
+            )
             or str(done_path)
         )
         return (
@@ -912,68 +1109,12 @@ async def _generate_shot_video(
 
     # ── 1. synthesize_voice (or slice source audio) ────────────────────────────
     vparams = load_cast_params(cast.id).get(speaker_id)
-    if render_mode == "source_audio" and source_audio_uri and shot.source_start_sec is not None and shot.source_end_sec is not None:
-        audio_slice_path = work_dir / "audio" / "source_slices" / f"{shot.shot_id}.wav"
-        if opts.resume and audio_slice_path.exists():
-            logger.info("Skipping source audio slice for %s (exists)", shot.shot_id)
-            audio_track = AudioTrack(uri=str(audio_slice_path), duration_sec=shot.duration_sec)
-        else:
-            _notify_shot(
-                opts.stage_hook, "slice_source_audio", "stage_started",
-                shot_id=shot.shot_id, label=label, detail="slicing source audio",
-            )
-            audio_track = await _slice_source_audio(
-                source_audio_uri, shot.source_start_sec, shot.source_end_sec,
-                audio_slice_path, adapters.ffmpeg_bin,
-            )
-            _notify_shot(
-                opts.stage_hook, "slice_source_audio", "stage_completed",
-                shot_id=shot.shot_id, label=label, detail="audio slice done",
-            )
-    else:
-        existing_audio = _existing_audio_for_shot(work_dir, shot, speaker_id, render_mode)
-        if opts.resume and existing_audio:
-            logger.info("Skipping synthesize_voice for %s (audio exists)", shot.shot_id)
-            audio_track = AudioTrack(uri=existing_audio, duration_sec=shot.duration_sec)
-        else:
-            _notify_shot(
-                opts.stage_hook, "synthesize_voice", "stage_started",
-                shot_id=shot.shot_id, label=label, detail="synthesizing voice",
-            )
-            voice_ref = (vparams.voice_file if vparams and vparams.voice_file
-                         else speaker.voice_profile_ref)
-            audio_track = await adapters.voice.run(
-                VoiceRequest(
-                    text=line_text,
-                    voice_profile_ref=voice_ref,
-                    speaker_id=speaker_id,
-                    expression=expression,
-                    language=opts.language if opts else "en",
-                )
-            )
-            _notify_shot(
-                opts.stage_hook, "synthesize_voice", "stage_completed",
-                shot_id=shot.shot_id, label=label, detail="voice done",
-            )
-            if render_mode == "re_voice":
-                ffprobe_bin = getattr(adapters, "ffprobe_bin", None)
-                if not isinstance(ffprobe_bin, str):
-                    ffprobe_bin = "ffprobe"
-                _notify_shot(
-                    opts.stage_hook, "fit_voice_audio", "stage_started",
-                    shot_id=shot.shot_id, label=label, detail="matching source pacing",
-                )
-                audio_track = await _fit_audio_to_duration(
-                    audio_track,
-                    shot.duration_sec,
-                    work_dir / "audio" / "timed" / f"{shot.shot_id}.wav",
-                    adapters.ffmpeg_bin,
-                    ffprobe_bin,
-                )
-                _notify_shot(
-                    opts.stage_hook, "fit_voice_audio", "stage_completed",
-                    shot_id=shot.shot_id, label=label, detail="voice timing matched",
-                )
+    if audio_track is None:
+        audio_track = await _synthesize_shot_audio(
+            shot, script, cast, adapters, work_dir, opts,
+            shot_index=shot_index, total_shots=total_shots,
+            render_mode=render_mode, source_audio_uri=source_audio_uri,
+        )
 
     if getattr(adapters.video, "requires_voice_unloaded", False) is True and is_managed(adapters.voice):
         _notify_shot(
@@ -2380,19 +2521,27 @@ async def _run_to_assembled_video(
 
         # Render phase is done — free the render adapter's VRAM if it's a
         # managed one (comfyui_flux fallback; musubi-tuner already self-released
-        # as a one-shot subprocess), then bring up the VRAM-managed video (Wan)
-        # and voice (Fish S2) models: unload Ollama, wait for VRAM to settle,
-        # load, poll until ready.
+        # as a one-shot subprocess).
         if is_managed(adapters.render):
             await adapters.render.unload()
+
+        # ── Phase B prologue: all shot audio first, one voice-model cycle ─────
+        # Runs before prepare_video_model so a managed voice model (Fish S2)
+        # and a managed video model (Wan I2V) are never resident together, and
+        # so per-shot generate_video never triggers a voice-model reload.
+        audio_by_shot = await _prepare_shot_audio_tracks(
+            shots_to_run, script, config.cast, adapters, ctx.work_dir, opts,
+            settings=config.settings, source_audio_uri=source_audio_uri,
+        )
+
+        # Bring up the VRAM-managed video model (Wan I2V; no-op for the
+        # subprocess-per-clip Wan S2V default): unload Ollama, wait for VRAM
+        # to settle, load, poll until ready.
         await prepare_video_model(
             adapters.video, config.settings, notify=opts.stage_hook
         )
-        await prepare_voice_model(
-            adapters.voice, config.settings, notify=opts.stage_hook
-        )
 
-        # ── Phase B: synthesize voice + generate video with approved image ─────
+        # ── Phase B: generate video for each shot with its approved image ─────
         if opts.stage_hook:
             opts.stage_hook(
                 "video_loop", "stage_started",
@@ -2405,6 +2554,7 @@ async def _run_to_assembled_video(
                 shot, script, config.cast, adapters, ctx.work_dir, image_uri, opts,
                 shot_index=i, total_shots=total_shots,
                 render_mode=opts.render_mode, source_audio_uri=source_audio_uri,
+                audio_track=audio_by_shot.get(shot.shot_id),
             )
             synced_clips.append(synced)
             audio_tracks.append(audio)
@@ -2570,8 +2720,16 @@ def _collect_existing_shot_artifacts(
                 f"Run --phase render first."
             )
         speaker_id = shot.characters_on_screen[0]
+        try:
+            line_text = _shot_line_text(shot, script)
+        except (IndexError, ValueError):
+            # Stale artifacts can carry refs the script no longer resolves —
+            # this reconstruction path tolerated that before, keep doing so.
+            line_text = ""
         audio_uri = (
-            _existing_audio_for_shot(work_dir, shot, speaker_id, render_mode)
+            _existing_audio_for_shot(
+                work_dir, shot, speaker_id, render_mode, line_text=line_text
+            )
             or str(video_path)
         )
         clips.append(VideoClip(uri=str(video_path), duration_sec=shot.duration_sec))
