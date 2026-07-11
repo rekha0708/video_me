@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from core.config import load_app_config
+from core.config import Settings, load_app_config
 from core.models.content import LearningObjective, Line, Scene, Script, Shot
 from core.models.guardrails import SourceRights
 from core.models.profile import Cast
@@ -14,6 +14,15 @@ def test_config_loads_default_profiles() -> None:
     assert config.channel_profile.made_for_kids is True
     assert config.cast.is_original_synthetic is True
     assert len(config.cast.members) == 2
+    assert config.settings.whisper_language == "en"
+
+
+def test_blank_whisper_language_defaults_to_english() -> None:
+    assert Settings(whisper_language="").whisper_language == "en"
+
+
+def test_auto_whisper_language_is_explicit() -> None:
+    assert Settings(whisper_language="auto").whisper_language == "auto"
 
 
 def test_cast_must_be_original_synthetic() -> None:
@@ -55,4 +64,3 @@ def test_storyboard_limits_phase1_shots_to_two_characters() -> None:
             action="count blocks",
             duration_sec=3.0,
         )
-

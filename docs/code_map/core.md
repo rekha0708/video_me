@@ -50,6 +50,7 @@ Per-cast asset + render params, loaded from config/casts/<cast>/params.py.
 ### `core/config.py`
 
 - **class `Settings(BaseSettings)`**
+  - `_default_blank_whisper_language_to_english(cls, value)`
 - **class `AppConfig(BaseModel)`**
 - `load_yaml_model(path: Path, model: type[ModelT]) -> ModelT`
 - `load_app_config(channel_path: Path | None=None, cast_path: Path | None=None) -> AppConfig`

@@ -82,7 +82,7 @@
 - `whisper_model_size: str` = `'medium'`
 - `whisper_device: str` = `'cuda'`
 - `whisper_compute_type: str` = `'int8'`
-- `whisper_language: str` = `''`
+- `whisper_language: str` = `'en'`
 - `whisper_vad_filter: bool` = `False`
 - `ffmpeg_bin: str` = `'ffmpeg'`
 - `ffprobe_bin: str` = `'ffprobe'`

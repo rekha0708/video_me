@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Literal, TypeVar
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from core.models.profile import Cast, ChannelProfile
@@ -108,7 +108,7 @@ class Settings(BaseSettings):
     whisper_model_size: str = "medium"
     whisper_device: str = "cuda"
     whisper_compute_type: str = "int8"
-    whisper_language: str = ""  # empty = auto-detect; set e.g. "en" to prevent music-driven misdetects
+    whisper_language: str = "en"  # "en"/"hi" force source language; "auto" lets Whisper guess
     whisper_vad_filter: bool = False  # keep sung vocals/lyrics; VAD can be over-aggressive on music
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"
@@ -148,6 +148,16 @@ class Settings(BaseSettings):
     # --- human approval web UI (image grid) ---
     # Reuses approval_port — the two gates run sequentially so no conflict.
     auto_approve_images: bool = False    # set True in CI / smoke tests
+
+    @field_validator("whisper_language", mode="before")
+    @classmethod
+    def _default_blank_whisper_language_to_english(cls, value):
+        if value is None:
+            return "en"
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or "en"
+        return value
 
 
 class AppConfig(BaseModel):

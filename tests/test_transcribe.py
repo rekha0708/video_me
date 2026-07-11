@@ -107,6 +107,16 @@ def test_transcribe_auto_detects_language_by_default() -> None:
     assert "language" not in kwargs
 
 
+def test_transcribe_auto_language_value_auto_detects() -> None:
+    adapter = _adapter(language="auto")
+    adapter._model = _make_model_mock([])
+
+    adapter._transcribe("song.wav")
+
+    kwargs = adapter._model.transcribe.call_args.kwargs
+    assert "language" not in kwargs
+
+
 def test_transcribe_passes_configured_language() -> None:
     adapter = _adapter(language="en")
     adapter._model = _make_model_mock([])

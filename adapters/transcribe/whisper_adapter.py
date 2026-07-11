@@ -49,7 +49,8 @@ class WhisperAdapter(Transcribe):
         self._compute_type = compute_type
         self._beam_size = beam_size
         self._vad_filter = vad_filter
-        self._language = language.strip() or None
+        normalized_language = language.strip().lower()
+        self._language = None if normalized_language in ("", "auto") else normalized_language
         self._model: "_WhisperModel | None" = None
 
     async def health(self) -> HealthStatus:
