@@ -343,8 +343,8 @@ if [[ "$NEED_WAN_I2V" == "1" ]]; then
     ok "Wan2.2 already responding"
   else
     cd "$ROOT_DIR"
-    # wan package is installed as an editable package in .venv_wan so WAN_DIR is
-    # also used as an existence guard for the repo root.
+    # WAN_DIR points at the source checkout; setup_gpu.sh either installs it
+    # editable when possible or exposes it to .venv_wan via a .pth file.
     WAN_DIR="$WORKSPACE/Wan2.2" WAN_MODEL_DIR="$WORKSPACE/Wan2.2-I2V-A14B" \
     launch_with_self_heal "Wan2.2" "$LOG_DIR/wan.log" "$WORKSPACE/.venv_wan/bin/pip" -- \
       nohup "$WORKSPACE/.venv_wan/bin/uvicorn" services.wan_server:app \

@@ -659,9 +659,10 @@ setup_wan() {
   # Wan2.2 S2V is the default singing video adapter (VIDEO_ADAPTER=wan_s2v).
   # The I2V model is optional for fallback comparison runs (VIDEO_ADAPTER=wan).
   #
-  # Clone layout: git clone → $WORKSPACE/Wan2.2/ (repo root with generate.py + wan/ pkg)
-  # The wan Python package is installed as editable so `import wan` works without
-  # sys.path tricks. WAN_DIR in start_services.sh points to this repo root.
+  # Clone layout: git clone → $WORKSPACE/Wan2.2/ (repo root with generate.py + wan/ pkg).
+  # Wan2.2 is a source checkout, not always a pip-installable package, so setup
+  # exposes the repo to .venv_wan via a .pth file when setup.py/pyproject.toml
+  # is absent. WAN_DIR in start_services.sh points to this repo root too.
 
   local wan_dir="$WORKSPACE/Wan2.2"   # repo root containing generate.py + wan/ package
   local wan_s2v_model_dir="$WORKSPACE/Wan2.2-S2V-14B"
@@ -697,8 +698,22 @@ setup_wan() {
       fastapi uvicorn python-multipart \
       "huggingface_hub>=0.30.0,<1.0" hf_transfer || warn "Some Wan deps may have failed"
 
-  # Install wan as an editable package (avoids WAN_DIR sys.path manipulation)
-  run "$pip" install -e "$wan_dir" --no-deps
+  # Some Wan2.2 checkouts do not ship setup.py/pyproject.toml, so `pip install
+  # -e` fails with "does not appear to be a Python project". Prefer editable
+  # install when available; otherwise add the source checkout to this venv via
+  # a .pth file so `import wan` works for the optional I2V server.
+  if [[ -f "$wan_dir/setup.py" || -f "$wan_dir/pyproject.toml" ]]; then
+    run "$pip" install -e "$wan_dir" --no-deps
+  else
+    if [[ "$DRY_RUN" == "0" ]]; then
+      local site_packages
+      site_packages="$("$venv_dir/bin/python" -c 'import site; print(site.getsitepackages()[0])')"
+      printf '%s\n' "$wan_dir" > "$site_packages/wan2_2_repo.pth"
+      ok "Wan2.2 source checkout exposed via $site_packages/wan2_2_repo.pth"
+    else
+      ok "[dry run] Wan2.2 source checkout would be exposed via .venv_wan .pth file"
+    fi
+  fi
 
   # flash_attn — compile from source using system CUDA headers
   if ! "$venv_dir/bin/python" -c "import flash_attn" 2>/dev/null; then
