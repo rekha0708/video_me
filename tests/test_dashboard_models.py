@@ -78,6 +78,25 @@ def test_legacy_url_payload_still_parses() -> None:
     )
     assert req.story_text is None
     assert req.character_images == {}
+    assert req.audio_profile == "auto"
+
+
+def test_audio_profile_accepts_operator_hint() -> None:
+    req = CreateDashboardJobRequest(
+        source=DashboardSource(kind="file", url="file:///tmp/source.mp4"),
+        rights_cleared=True,
+        audio_profile="singing",
+    )
+    assert req.audio_profile == "singing"
+
+
+def test_audio_profile_rejects_unknown_value() -> None:
+    with pytest.raises(ValidationError):
+        CreateDashboardJobRequest(
+            source=DashboardSource(kind="file", url="file:///tmp/source.mp4"),
+            rights_cleared=True,
+            audio_profile="podcast",
+        )
 
 
 def test_url_request_ignores_story_validators() -> None:

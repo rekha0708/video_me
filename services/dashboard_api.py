@@ -1128,6 +1128,7 @@ def create_app(
 
     _RERUN_PHASES = ("transcribe", "script_plan", "render", "assemble", "all")
     _RERUN_RENDER_MODES = ("full", "source_audio", "re_voice")
+    _RERUN_AUDIO_PROFILES = ("auto", "single_speaker", "singing", "multi_speaker")
 
     @app.post("/api/jobs/{job_id}/retry")
     def retry_job(
@@ -1152,6 +1153,8 @@ def create_app(
           keeping cached character images.
         - ``render_mode`` — switch between full/source_audio/re_voice for this
           retry. Timed modes require a matching timed plan artifact.
+        - ``audio_profile`` — retry transcript/planning with a different
+          source-audio validation profile.
         - ``video_adapter`` / ``lipsync_adapter`` / ``render_adapter`` / ``tts_adapter`` /
           ``llm_model`` — swap an adapter for this re-run without
           touching the job's original overrides.
@@ -1208,8 +1211,23 @@ def create_app(
                             ),
                             "retryable": False,
                         },
-                    )
+                )
                 retry_request["render_mode"] = requested_mode
+            if body.get("audio_profile"):
+                requested_profile = body["audio_profile"]
+                if requested_profile not in _RERUN_AUDIO_PROFILES:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "code": "INVALID_AUDIO_PROFILE",
+                            "message": (
+                                f"Invalid audio_profile '{requested_profile}'. "
+                                f"Must be one of: {', '.join(_RERUN_AUDIO_PROFILES)}."
+                            ),
+                            "retryable": False,
+                        },
+                    )
+                retry_request["audio_profile"] = requested_profile
             overrides = dict(retry_request.get("overrides") or {})
             for key in _RETRYABLE_OVERRIDE_KEYS:
                 value = body.get(key)

@@ -85,12 +85,16 @@ class RunOptions:
     render_mode: "full" (default) — normal pipeline.
                  "source_audio" — skip adapt_script + TTS; use source audio sliced per segment.
                  "re_voice" — TTS + adapt_script, but shot durations match source segment timing.
+    audio_profile: operator hint for transcript coverage validation. "auto" keeps
+                 the global threshold; speaking profiles are stricter; "singing"
+                 keeps a sparse-lyrics-friendly threshold.
     """
     phase: Phase = "all"
     resume: bool = False
     only_shot: str | None = None
     language: str = "en"
     render_mode: str = "full"
+    audio_profile: Literal["auto", "single_speaker", "singing", "multi_speaker"] = "auto"
     stage_hook: Callable[..., None] | None = None
     error_hook: Callable[[str, Exception], Any] | None = None
     user_images: dict[str, str] | None = None
@@ -1480,26 +1484,59 @@ def _validate_transcript_coverage(
     source_duration_sec: float,
     *,
     min_ratio: float = 0.2,
+    audio_profile: str = "auto",
 ) -> None:
     """Catch catastrophic partial transcripts before source-timed planning.
 
     Songs often have instrumental intros/outros, so this deliberately does not
-    require near-100% coverage. It only fails when a real media source is much
-    longer than the transcript span, which is the "only first 1-2 seconds were
-    captured" failure mode.
+    require near-100% coverage by default. Operator-provided audio profiles
+    tighten the end-of-transcript coverage threshold for speech-heavy sources,
+    while keeping singing permissive enough for sparse lyrics.
     """
     segments = list(getattr(transcribe_result, "segments", []) or [])
-    if source_duration_sec <= 10.0 or not segments:
+    if source_duration_sec <= 3.0:
         return
+
+    text_segments = [
+        seg for seg in segments
+        if str(getattr(seg, "text", "") or "").strip()
+    ]
+    if not text_segments:
+        if str(getattr(transcribe_result, "full_text", "") or "").strip():
+            # Legacy/test artifacts can carry full_text without segment timing.
+            # They are usable for the normal adapted-script path, but there is
+            # no reliable end timestamp to validate here.
+            return
+        raise ValueError(
+            "Transcription produced no usable text for a "
+            f"{source_duration_sec:.2f}s source. Check the source audio, "
+            "Whisper model size, and VAD settings before planning."
+        )
+
+    if source_duration_sec <= 10.0:
+        return
+
+    profile_thresholds = {
+        "singing": min(min_ratio, 0.2),
+        "single_speaker": max(min_ratio, 0.65),
+        "multi_speaker": max(min_ratio, 0.75),
+    }
+    required_ratio = profile_thresholds.get(audio_profile, min_ratio)
     transcript_end = max(float(seg.end) for seg in segments)
     ratio = transcript_end / source_duration_sec if source_duration_sec else 1.0
-    if ratio < min_ratio:
+    if ratio < required_ratio:
+        profile_note = (
+            f" audio_profile={audio_profile};"
+            if audio_profile and audio_profile != "auto"
+            else ""
+        )
         raise ValueError(
             "Transcription appears truncated: transcript ends at "
             f"{transcript_end:.2f}s for a {source_duration_sec:.2f}s source "
-            f"({ratio:.0%} coverage; minimum {min_ratio:.0%}). "
-            "For singing/source_audio jobs, rerun transcription with VAD disabled "
-            "or a larger Whisper model before planning."
+            f"({ratio:.0%} coverage; minimum {required_ratio:.0%};{profile_note} "
+            f"{len(text_segments)} text segment(s)). "
+            "For singing/source_audio jobs, keep VAD disabled; for speech-heavy "
+            "jobs, use a larger Whisper model or cleaner source audio before planning."
         )
 
 
@@ -2105,6 +2142,7 @@ async def _run_to_assembled_video(
             transcribe_result,
             fetch_result.duration_sec,
             min_ratio=config.settings.transcript_min_coverage_ratio,
+            audio_profile=opts.audio_profile,
         )
 
         # Stop here for "transcribe" phase — artifacts are saved, human can review.

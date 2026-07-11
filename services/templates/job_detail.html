@@ -30,6 +30,10 @@
       {% if rm != 'full' %}
         <span class="badge badge-warning" style="font-size:10px;padding:1px 5px">{{ rm | replace('_', ' ') }}</span>
       {% endif %}
+      {% set ap = job.request.get('audio_profile', 'auto') %}
+      {% if ap != 'auto' %}
+        <span class="badge badge-info" style="font-size:10px;padding:1px 5px">{{ ap | replace('_', ' ') }}</span>
+      {% endif %}
       &nbsp;{{ job.source_url | truncate(72) }} &nbsp;·&nbsp; phase: {{ job.phase }}
       &nbsp;·&nbsp; lang: {{ job.target_language }}
       {% set cast_ref = job.request.get('cast_ref') %}

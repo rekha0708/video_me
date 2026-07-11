@@ -195,12 +195,30 @@ def test_retry_with_body_overrides_render_mode(tmp_path: Path) -> None:
     assert latest.payload["render_mode"] == "source_audio"
 
 
+def test_retry_with_body_overrides_audio_profile(tmp_path: Path) -> None:
+    client, repo = _make_client_and_repo(tmp_path)
+    job_id = _seed_job(repo, status="failed")
+    resp = client.post(f"/api/jobs/{job_id}/retry", json={"audio_profile": "singing"})
+    assert resp.status_code == 200
+    queue = repo.list_queue(job_id)
+    latest = queue[-1]
+    assert latest.payload["audio_profile"] == "singing"
+
+
 def test_retry_rejects_invalid_render_mode(tmp_path: Path) -> None:
     client, repo = _make_client_and_repo(tmp_path)
     job_id = _seed_job(repo, status="completed")
     resp = client.post(f"/api/jobs/{job_id}/retry", json={"render_mode": "bad"})
     assert resp.status_code == 422
     assert resp.json()["detail"]["code"] == "INVALID_RENDER_MODE"
+
+
+def test_retry_rejects_invalid_audio_profile(tmp_path: Path) -> None:
+    client, repo = _make_client_and_repo(tmp_path)
+    job_id = _seed_job(repo, status="completed")
+    resp = client.post(f"/api/jobs/{job_id}/retry", json={"audio_profile": "podcast"})
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["code"] == "INVALID_AUDIO_PROFILE"
 
 
 def test_retry_rejects_invalid_phase(tmp_path: Path) -> None:

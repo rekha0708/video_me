@@ -498,6 +498,7 @@ LLM-authored chart/diagram panel composited over the upper third of the shot.
 - `target_language: Literal['en', 'hi', 'both']` = `'en'`
 - `mode: Literal['standard', 'critique']` = `'standard'`
 - `render_mode: Literal['full', 'source_audio', 're_voice']` = `'full'`
+- `audio_profile: Literal['auto', 'single_speaker', 'singing', 'multi_speaker']` = `'auto'`
 - `phase: Literal['transcribe', 'script_plan', 'plan', 'render', 'assemble', 'all', 'noop', 'lora_train']` = `'all'`
 - `run_critique: bool` = `False`
 - `overrides: DashboardJobOverrides` = `Field(default_factory=DashboardJobOverrides)`

@@ -155,6 +155,20 @@
       </div>
     </div>
 
+    {# ── Source audio profile ── #}
+    <div class="form-row" id="nj-audio-profile-row">
+      <label>Audio Type</label>
+      <select name="audio_profile" id="nj-audio-profile">
+        <option value="auto" selected>Auto / unknown</option>
+        <option value="single_speaker">Single person talking</option>
+        <option value="singing">Singing / lyrics</option>
+        <option value="multi_speaker">Multiple people talking</option>
+      </select>
+      <div class="form-hint">
+        Tunes transcript pass/fail checks before planning.
+      </div>
+    </div>
+
     {# ── Video model ── #}
     <div class="form-row">
       <label>Video Model</label>
@@ -395,6 +409,11 @@ function toggleSourceMode(mode) {
     opt.disabled = noSourceAudio && opt.value !== "full";
   });
   if (noSourceAudio && rmSel.value !== "full") rmSel.value = "full";
+  const audioProfileSel = document.getElementById("nj-audio-profile");
+  if (audioProfileSel) {
+    audioProfileSel.disabled = noSourceAudio;
+    if (noSourceAudio) audioProfileSel.value = "auto";
+  }
 
   // Update rights checkbox label.
   const label = document.getElementById("nj-rights-label");
@@ -544,12 +563,14 @@ async function submitNewJob(e) {
     if (document.getElementById("nj-auto-approve-images").checked) overrides.auto_approve_images = true;
     if (document.getElementById("nj-auto-approve-transcript").checked) overrides.auto_approve_transcript = true;
     const renderMode = document.getElementById("nj-render-mode").value;
+    const audioProfile = document.getElementById("nj-audio-profile").value;
     const body = {
       source: { kind: sourceKind, url: sourceUrl },
       rights_cleared: document.getElementById("nj-rights").checked,
       target_language: document.getElementById("nj-lang").value,
       phase: document.getElementById("nj-phase").value,
       render_mode: renderMode,
+      audio_profile: audioProfile,
       overrides,
     };
     if (castSel && castSel.value) body.cast_ref = castSel.value;

@@ -282,7 +282,7 @@ Shared Pydantic models for orchestration.
 - `_apply_segment_timing_to_storyboard(storyboard: Storyboard, script: Script) -> Storyboard` — Override shot durations with source segment timing (source_audio/re_voice).
 - `_validate_timed_storyboard(storyboard: Storyboard, render_mode: str) -> None` — Fail fast when a timed mode is asked to render an untimed plan.
 - `_storyboard_has_source_timing(storyboard: Storyboard) -> bool`
-- `_validate_transcript_coverage(transcribe_result, source_duration_sec: float, *, min_ratio: float=0.2) -> None` — Catch catastrophic partial transcripts before source-timed planning.
+- `_validate_transcript_coverage(transcribe_result, source_duration_sec: float, *, min_ratio: float=0.2, audio_profile: str='auto') -> None` — Catch catastrophic partial transcripts before source-timed planning.
 - `_chunk_shot_durations(total_duration: float, max_shot_duration_sec: float) -> list[tuple[float, float]]` — Greedy-fill the source video's total duration into ≤max_shot_duration_sec
 - `_chunk_shot_durations_by_lines(total_duration: float, max_shot_duration_sec: float, timed_lines: list[tuple[str, Any]]) -> list[tuple[float, float]]` — Prefer transcript/script line ends over fixed-size duration cuts.
 - `_rebuild_storyboard_by_duration(storyboard: Storyboard, script: Script, total_duration: float, max_shot_duration_sec: float) -> Storyboard` — Replace the LLM-planned shot count/boundaries with deterministic

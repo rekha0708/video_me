@@ -2139,6 +2139,55 @@ def test_validate_transcript_coverage_allows_instrumental_tail():
     _validate_transcript_coverage(transcript, 30.0, min_ratio=0.2)
 
 
+def test_validate_transcript_coverage_rejects_empty_real_media():
+    transcript = TranscribeResult(segments=[], language="en", full_text="")
+
+    with pytest.raises(ValueError, match="no usable text"):
+        _validate_transcript_coverage(transcript, 30.0, min_ratio=0.2)
+
+
+def test_validate_transcript_coverage_single_speaker_is_stricter_than_auto():
+    transcript = TranscribeResult(
+        segments=[TranscriptSegment(text="Half captured.", start=0.0, end=30.0)],
+        language="en",
+        full_text="Half captured.",
+    )
+
+    _validate_transcript_coverage(transcript, 60.0, min_ratio=0.2, audio_profile="auto")
+    with pytest.raises(ValueError, match="audio_profile=single_speaker"):
+        _validate_transcript_coverage(
+            transcript, 60.0, min_ratio=0.2, audio_profile="single_speaker"
+        )
+
+
+def test_validate_transcript_coverage_multi_speaker_is_stricter_than_single():
+    transcript = TranscribeResult(
+        segments=[TranscriptSegment(text="Mostly captured.", start=0.0, end=42.0)],
+        language="en",
+        full_text="Mostly captured.",
+    )
+
+    _validate_transcript_coverage(
+        transcript, 60.0, min_ratio=0.2, audio_profile="single_speaker"
+    )
+    with pytest.raises(ValueError, match="audio_profile=multi_speaker"):
+        _validate_transcript_coverage(
+            transcript, 60.0, min_ratio=0.2, audio_profile="multi_speaker"
+        )
+
+
+def test_validate_transcript_coverage_singing_keeps_sparse_lyrics_threshold():
+    transcript = TranscribeResult(
+        segments=[TranscriptSegment(text="Hook.", start=0.0, end=10.0)],
+        language="en",
+        full_text="Hook.",
+    )
+
+    _validate_transcript_coverage(
+        transcript, 50.0, min_ratio=0.2, audio_profile="singing"
+    )
+
+
 # ------------------------------------------------------------------ _chunk_shot_durations
 
 def test_chunk_shot_durations_even_split():
