@@ -1,3 +1,5 @@
+import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -180,6 +182,107 @@ def test_transcribe_preserves_non_english_language() -> None:
     result = adapter._transcribe("audio.wav")
 
     assert result.language == "es"
+
+
+# ------------------------------------------------------------------ vocal isolation
+
+def test_transcribe_skips_isolation_by_default() -> None:
+    adapter = _adapter()
+    adapter._model = _make_model_mock([])
+
+    with patch.object(adapter, "_isolate_vocals") as mock_iso:
+        adapter._transcribe("audio.wav")
+
+    mock_iso.assert_not_called()
+    assert adapter._model.transcribe.call_args.args[0] == "audio.wav"
+
+
+def test_transcribe_uses_isolated_path_when_requested() -> None:
+    adapter = _adapter()
+    adapter._model = _make_model_mock([])
+
+    with patch.object(adapter, "_isolate_vocals", return_value="/tmp/vocals.wav") as mock_iso:
+        adapter._transcribe("song.wav", isolate_vocals=True)
+
+    mock_iso.assert_called_once_with("song.wav")
+    assert adapter._model.transcribe.call_args.args[0] == "/tmp/vocals.wav"
+
+
+async def test_run_forwards_isolate_vocals_flag_to_transcribe() -> None:
+    adapter = _adapter()
+    adapter._model = _make_model_mock([])
+
+    with patch.object(adapter, "_transcribe", wraps=adapter._transcribe) as spy:
+        await adapter.run(TranscribeRequest(audio_uri="audio.wav", isolate_vocals=True))
+
+    spy.assert_called_once_with("audio.wav", True)
+
+
+def test_isolate_vocals_returns_original_when_demucs_venv_missing(tmp_path) -> None:
+    adapter = _adapter()
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"fake")
+
+    with patch("adapters.transcribe.whisper_adapter._DEMUCS_PYTHON") as mock_python:
+        mock_python.exists.return_value = False
+        result = adapter._isolate_vocals(str(audio_path))
+
+    assert result == str(audio_path)
+
+
+def test_isolate_vocals_runs_demucs_and_returns_vocals_path(tmp_path) -> None:
+    adapter = _adapter()
+    audio_path = tmp_path / "song.wav"
+    audio_path.write_bytes(b"fake")
+
+    def fake_run(cmd, **kwargs):
+        out_dir = Path(cmd[cmd.index("-o") + 1])
+        vocals = out_dir / "htdemucs" / "song" / "vocals.wav"
+        vocals.parent.mkdir(parents=True, exist_ok=True)
+        vocals.write_bytes(b"vox")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    with patch("adapters.transcribe.whisper_adapter._DEMUCS_PYTHON") as mock_python, \
+         patch("adapters.transcribe.whisper_adapter.subprocess.run", side_effect=fake_run) as mock_run:
+        mock_python.exists.return_value = True
+        mock_python.__str__.return_value = "/workspace/.venv_demucs/bin/python"
+        result = adapter._isolate_vocals(str(audio_path))
+
+    assert result.endswith("vocals.wav")
+    assert Path(result).exists()
+    mock_run.assert_called_once()
+
+
+def test_isolate_vocals_falls_back_on_nonzero_exit(tmp_path) -> None:
+    adapter = _adapter()
+    audio_path = tmp_path / "song.wav"
+    audio_path.write_bytes(b"fake")
+
+    with patch("adapters.transcribe.whisper_adapter._DEMUCS_PYTHON") as mock_python, \
+         patch(
+             "adapters.transcribe.whisper_adapter.subprocess.run",
+             return_value=SimpleNamespace(returncode=1, stdout="", stderr="boom"),
+         ):
+        mock_python.exists.return_value = True
+        result = adapter._isolate_vocals(str(audio_path))
+
+    assert result == str(audio_path)
+
+
+def test_isolate_vocals_falls_back_on_timeout(tmp_path) -> None:
+    adapter = _adapter()
+    audio_path = tmp_path / "song.wav"
+    audio_path.write_bytes(b"fake")
+
+    with patch("adapters.transcribe.whisper_adapter._DEMUCS_PYTHON") as mock_python, \
+         patch(
+             "adapters.transcribe.whisper_adapter.subprocess.run",
+             side_effect=subprocess.TimeoutExpired(cmd="demucs", timeout=600),
+         ):
+        mock_python.exists.return_value = True
+        result = adapter._isolate_vocals(str(audio_path))
+
+    assert result == str(audio_path)
 
 
 # ------------------------------------------------------------------ run (async dispatch)

@@ -47,6 +47,7 @@ class TranscriptSegment(BaseModel):
 
 class TranscribeRequest(BaseModel):
     audio_uri: str
+    isolate_vocals: bool = False  # run Demucs vocal separation before transcription
 
 
 class TranscribeResult(BaseModel):

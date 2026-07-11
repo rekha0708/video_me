@@ -1,6 +1,9 @@
 import asyncio
 import gc
 import logging
+import subprocess
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from core.capabilities.base import Transcribe
@@ -17,6 +20,13 @@ if TYPE_CHECKING:
     from faster_whisper import WhisperModel as _WhisperModel
 
 logger = logging.getLogger(__name__)
+
+# Dedicated venv (python3 -m venv --system-site-packages) with demucs installed —
+# see CLAUDE.md "Venv strategy". Optional: vocal isolation degrades gracefully to
+# the raw mix if this venv or the subprocess call is unavailable.
+_DEMUCS_PYTHON = Path("/workspace/.venv_demucs/bin/python")
+_DEMUCS_MODEL = "htdemucs"
+_DEMUCS_TIMEOUT_SEC = 600
 
 
 class WhisperAdapter(Transcribe):
@@ -74,9 +84,17 @@ class WhisperAdapter(Transcribe):
         return CostEstimate(amount=0.0, notes="Local Whisper model; no per-call API cost.")
 
     async def run(self, req: TranscribeRequest) -> TranscribeResult:
-        log_event(logger, "transcribe_started", audio_uri=req.audio_uri, model=self._model_size)
+        log_event(
+            logger,
+            "transcribe_started",
+            audio_uri=req.audio_uri,
+            model=self._model_size,
+            isolate_vocals=req.isolate_vocals,
+        )
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, self._transcribe, req.audio_uri)
+        result = await loop.run_in_executor(
+            None, self._transcribe, req.audio_uri, req.isolate_vocals
+        )
         log_event(
             logger,
             "transcribe_completed",
@@ -131,7 +149,11 @@ class WhisperAdapter(Transcribe):
         log_event(logger, "whisper_model_unloaded", model_size=self._model_size)
         return True
 
-    def _transcribe(self, audio_uri: str) -> TranscribeResult:
+    def _transcribe(self, audio_uri: str, isolate_vocals: bool = False) -> TranscribeResult:
+        transcribe_uri = audio_uri
+        if isolate_vocals:
+            transcribe_uri = self._isolate_vocals(audio_uri)
+
         model = self._ensure_model()
 
         kwargs = {
@@ -142,7 +164,7 @@ class WhisperAdapter(Transcribe):
         if self._language:
             kwargs["language"] = self._language
 
-        segments_iter, info = model.transcribe(audio_uri, **kwargs)
+        segments_iter, info = model.transcribe(transcribe_uri, **kwargs)
 
         segments: list[TranscriptSegment] = []
         full_text_parts: list[str] = []
@@ -168,3 +190,53 @@ class WhisperAdapter(Transcribe):
             language=info.language,
             full_text=" ".join(full_text_parts),
         )
+
+    def _isolate_vocals(self, audio_uri: str) -> str:
+        """Run Demucs source separation and return the vocals-stem path.
+
+        Best-effort: falls back to the original mix (with a warning) if the
+        demucs venv is missing, the subprocess fails, or times out — a bad
+        separation should never block the whole transcribe stage.
+        """
+        if not _DEMUCS_PYTHON.exists():
+            log_event(
+                logger,
+                "vocal_isolation_skipped",
+                reason="demucs venv not found",
+                expected_path=str(_DEMUCS_PYTHON),
+            )
+            return audio_uri
+
+        audio_path = Path(audio_uri)
+        out_dir = Path(tempfile.mkdtemp(prefix="_demucs_", dir=str(audio_path.parent)))
+        track_stem = audio_path.stem
+        vocals_path = out_dir / _DEMUCS_MODEL / track_stem / "vocals.wav"
+
+        log_event(logger, "vocal_isolation_started", audio_uri=audio_uri)
+        try:
+            proc = subprocess.run(
+                [
+                    str(_DEMUCS_PYTHON), "-m", "demucs.separate",
+                    "--two-stems=vocals", "-n", _DEMUCS_MODEL,
+                    "-o", str(out_dir), str(audio_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=_DEMUCS_TIMEOUT_SEC,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            log_event(logger, "vocal_isolation_failed", reason=str(exc))
+            return audio_uri
+
+        if proc.returncode != 0 or not vocals_path.exists():
+            log_event(
+                logger,
+                "vocal_isolation_failed",
+                reason="demucs exited nonzero or output missing",
+                returncode=proc.returncode,
+                stderr=proc.stderr[-2000:] if proc.stderr else "",
+            )
+            return audio_uri
+
+        log_event(logger, "vocal_isolation_completed", vocals_path=str(vocals_path))
+        return str(vocals_path)

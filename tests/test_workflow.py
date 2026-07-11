@@ -417,6 +417,51 @@ async def test_run_pipeline_job_unloads_whisper_after_transcribe(tmp_path) -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "audio_profile, isolate_setting, expected",
+    [
+        ("singing", True, True),
+        ("singing", False, False),
+        ("auto", True, False),
+        ("single_speaker", True, False),
+        ("multi_speaker", True, False),
+    ],
+)
+async def test_transcribe_isolate_vocals_only_applies_to_singing_profile(
+    tmp_path, audio_profile, isolate_setting, expected
+) -> None:
+    from core.workflow import RunOptions
+
+    config = _make_config(tmp_path)
+    config.settings.whisper_isolate_vocals = isolate_setting
+    adapters = MagicMock(ffmpeg_bin="ffmpeg")
+    adapters.transcribe.unload = AsyncMock(return_value=True)
+    captured: dict = {}
+
+    async def _run_stage(stage_name, capability, request, job, artifact_store, job_store, **_kw):
+        if stage_name == "transcribe":
+            captured["isolate_vocals"] = request.isolate_vocals
+        return _stage_results()[stage_name]
+
+    with (
+        patch("core.workflow._make_adapters", return_value=adapters),
+        patch("core.workflow.run_stage", new=_run_stage),
+        patch("core.workflow._concat_audio", new=AsyncMock(return_value=_audio_track())),
+        patch("core.workflow.create_job_store", return_value=MagicMock()),
+        patch("core.workflow.create_artifact_store", return_value=MagicMock()),
+    ):
+        with _mock_shot_patches():
+            await run_pipeline_job(
+                "http://example.com",
+                rights_cleared=True,
+                app_config=config,
+                options=RunOptions(audio_profile=audio_profile),
+            )
+
+    assert captured["isolate_vocals"] is expected
+
+
+@pytest.mark.asyncio
 async def test_run_pipeline_job_announces_total_shot_count(tmp_path) -> None:
     """Dashboard should see an upfront shot-count message before Phase A and
     Phase B, so the timeline is clear before individual shots start."""

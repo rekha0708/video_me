@@ -87,6 +87,7 @@
 - `whisper_model_revision: str` = `''`
 - `whisper_language: str` = `'en'`
 - `whisper_vad_filter: bool` = `False`
+- `whisper_isolate_vocals: bool` = `False`
 - `ffmpeg_bin: str` = `'ffmpeg'`
 - `ffprobe_bin: str` = `'ffprobe'`
 - `render_allow_placeholder_lora: bool` = `False`
@@ -153,6 +154,7 @@
 ### `TranscribeRequest` (BaseModel) — `core/models/capabilities.py`
 
 - `audio_uri: str`
+- `isolate_vocals: bool` = `False`
 
 ### `TranscribeResult` (BaseModel) — `core/models/capabilities.py`
 
@@ -477,6 +479,7 @@ LLM-authored chart/diagram panel composited over the upper third of the shot.
 - `whisper_device: Literal['cpu', 'cuda'] | None` = `None`
 - `whisper_compute_type: str | None` = `None`
 - `whisper_language: str | None` = `None`
+- `whisper_isolate_vocals: bool | None` = `None`
 - `render_adapter: Literal['a1111', 'comfyui_flux', 'musubi_flux'] | None` = `None`
 - `video_adapter: Literal['wan_s2v', 'wan', 'ltx'] | None` = `None`
 - `lipsync_adapter: Literal['latentsync', 'musetalk'] | None` = `None`

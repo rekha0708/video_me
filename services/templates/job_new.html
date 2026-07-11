@@ -179,6 +179,14 @@
       <div class="form-hint">
         Tunes transcript pass/fail checks before planning.
       </div>
+      <label class="checkbox-row">
+        <input type="checkbox" name="whisper_isolate_vocals" id="nj-isolate-vocals" disabled>
+        <span>Isolate vocals before transcription (Demucs)</span>
+      </label>
+      <div class="form-hint" id="nj-isolate-vocals-hint">
+        Runs vocal/music separation before Whisper to improve lyric accuracy on singing content.
+        Only applies when Audio Type is "Singing / lyrics" — ignored otherwise.
+      </div>
     </div>
 
     {# ── Video model ── #}
@@ -355,9 +363,20 @@ function updateStoryPlaceholder(members) {
     + "Or just paste free text — it will be auto-segmented.";
 }
 
+function updateIsolateVocalsAvailability() {
+  const audioProfileSel = document.getElementById("nj-audio-profile");
+  const cb = document.getElementById("nj-isolate-vocals");
+  if (!audioProfileSel || !cb) return;
+  const available = !audioProfileSel.disabled && audioProfileSel.value === "singing";
+  cb.disabled = !available;
+  if (!available) cb.checked = false;
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   loadCasts();
   toggleSourceMode('url');
+  const audioProfileSel = document.getElementById("nj-audio-profile");
+  if (audioProfileSel) audioProfileSel.addEventListener("change", updateIsolateVocalsAvailability);
 });
 
 const PHASE_HINTS = {
@@ -426,6 +445,7 @@ function toggleSourceMode(mode) {
     audioProfileSel.disabled = noSourceAudio;
     if (noSourceAudio) audioProfileSel.value = "auto";
   }
+  updateIsolateVocalsAvailability();
   const sourceLangSel = document.getElementById("nj-whisper-language");
   if (sourceLangSel) {
     sourceLangSel.disabled = noSourceAudio;
@@ -578,6 +598,10 @@ async function submitNewJob(e) {
     if (videoAdapter) overrides.video_adapter = videoAdapter;
     if (lipsyncAdapter) overrides.lipsync_adapter = lipsyncAdapter;
     if (hasRealAudio && whisperLanguage) overrides.whisper_language = whisperLanguage;
+    const isolateVocalsCb = document.getElementById("nj-isolate-vocals");
+    if (isolateVocalsCb && !isolateVocalsCb.disabled && isolateVocalsCb.checked) {
+      overrides.whisper_isolate_vocals = true;
+    }
     if (maxShotDur && maxShotDur !== 8) overrides.max_shot_duration_sec = maxShotDur;
     if (document.getElementById("nj-auto-approve-plan").checked) overrides.auto_approve_plan = true;
     if (document.getElementById("nj-auto-approve-images").checked) overrides.auto_approve_images = true;

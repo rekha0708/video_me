@@ -2137,7 +2137,15 @@ async def _run_to_assembled_video(
             try:
                 transcribe_result = await _stage(
                     "transcribe", adapters.transcribe,
-                    TranscribeRequest(audio_uri=fetch_result.audio_uri),
+                    TranscribeRequest(
+                        audio_uri=fetch_result.audio_uri,
+                        # Vocal isolation only helps when music is mixed with the
+                        # vocal track; skip it for speech-only audio profiles.
+                        isolate_vocals=(
+                            config.settings.whisper_isolate_vocals
+                            and opts.audio_profile == "singing"
+                        ),
+                    ),
                     TranscribeResult,
                 )
             finally:

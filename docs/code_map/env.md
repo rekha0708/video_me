@@ -68,6 +68,7 @@
 | `VIDEO_ME_WHISPER_MODEL_REVISION` | `str` | `''` |
 | `VIDEO_ME_WHISPER_LANGUAGE` | `str` | `'en'` |
 | `VIDEO_ME_WHISPER_VAD_FILTER` | `bool` | `False` |
+| `VIDEO_ME_WHISPER_ISOLATE_VOCALS` | `bool` | `False` |
 | `VIDEO_ME_FFMPEG_BIN` | `str` | `'ffmpeg'` |
 | `VIDEO_ME_FFPROBE_BIN` | `str` | `'ffprobe'` |
 | `VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA` | `bool` | `False` |

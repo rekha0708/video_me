@@ -513,7 +513,8 @@ Transcription adapters.
   - `async run(self, req: TranscribeRequest) -> TranscribeResult`
   - `_ensure_model(self) -> '_WhisperModel'`
   - `async unload(self) -> bool` — Drop the local Whisper model and ask CUDA to release cached memory.
-  - `_transcribe(self, audio_uri: str) -> TranscribeResult`
+  - `_transcribe(self, audio_uri: str, isolate_vocals: bool=False) -> TranscribeResult`
+  - `_isolate_vocals(self, audio_uri: str) -> str` — Run Demucs source separation and return the vocals-stem path.
 
 ### `adapters/transcript_refine/llm_adapter.py`
 

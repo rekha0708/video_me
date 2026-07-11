@@ -225,6 +225,25 @@ def test_config_for_job_applies_overrides(tmp_path: Path) -> None:
     assert worker.config.settings.video_adapter == base_video_adapter
 
 
+def test_config_for_job_applies_whisper_isolate_vocals_override(tmp_path: Path) -> None:
+    from core.models.dashboard import DashboardJobOverrides
+
+    worker, _ = _make_worker(tmp_path)
+    assert worker.config.settings.whisper_isolate_vocals is False
+
+    req = CreateDashboardJobRequest(
+        source=DashboardSource(url="https://example.com/v"),
+        rights_cleared=True,
+        phase="all",
+        audio_profile="singing",
+        overrides=DashboardJobOverrides(whisper_isolate_vocals=True),
+    )
+    job_config = worker._config_for_job(req)
+
+    assert job_config.settings.whisper_isolate_vocals is True
+    assert worker.config.settings.whisper_isolate_vocals is False
+
+
 def test_config_for_job_no_overrides_returns_base_config(tmp_path: Path) -> None:
     worker, _ = _make_worker(tmp_path)
     req = _noop_request()  # no overrides set — all fields default to None

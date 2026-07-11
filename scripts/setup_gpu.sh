@@ -23,6 +23,7 @@ SKIP_WAN=0
 SKIP_WAN_I2V=1
 SKIP_LATENTSYNC=0
 SKIP_MUSETALK=1
+SKIP_DEMUCS=1
 SKIP_ENV_FILE=0
 ALLOW_MISSING_SERVICES=0
 CODE_TEST=0
@@ -64,6 +65,7 @@ Full GPU-machine setup for video_me on RunPod (or any Ubuntu+CUDA box):
     --with-chatterbox   Chatterbox TTS           (TTS_ADAPTER=chatterbox)
     --with-wan-i2v      Wan 2.2 I2V model        (VIDEO_ADAPTER=wan)
     --with-latentsync   LatentSync repair        (LIPSYNC_ADAPTER=latentsync)
+    --with-demucs       Demucs vocal isolation   (VIDEO_ME_WHISPER_ISOLATE_VOCALS=true)
     --with-musetalk     MuseTalk repair fallback (LIPSYNC_ADAPTER=musetalk)
     --with-ltx          Legacy LTX/ComfyUI video (VIDEO_ADAPTER=ltx)
     --with-wan          Back-compat: Wan I2V + LatentSync + MuseTalk
@@ -95,6 +97,7 @@ Options:
   --with-wan-i2v            Also install Wan2.2 I2V weights (VIDEO_ADAPTER=wan)
   --with-latentsync         Also install LatentSync repair (preferred for Wan I2V)
   --with-musetalk           Also install MuseTalk repair (legacy Wan I2V fallback)
+  --with-demucs             Also install Demucs vocal isolation (pre-Whisper stem separation, opt-in toggle for singing jobs)
   --with-ltx                Also install legacy LTX ComfyUI nodes + weights
   --with-wan                Back-compat alias for --with-wan-i2v --with-latentsync --with-musetalk
   --skip-env-file           Do not write .env (keep existing)
@@ -160,6 +163,7 @@ while [[ $# -gt 0 ]]; do
     --with-wan-i2v)       SKIP_WAN=0; SKIP_WAN_I2V=0; shift ;;
     --with-latentsync)    SKIP_LATENTSYNC=0; shift ;;
     --with-musetalk)      SKIP_MUSETALK=0; shift ;;
+    --with-demucs)        SKIP_DEMUCS=0; shift ;;
     --with-ltx)           SKIP_LTX=0; shift ;;
     --with-wan)           SKIP_WAN=0; SKIP_WAN_I2V=0; SKIP_LATENTSYNC=0; SKIP_MUSETALK=0; shift ;;
     # Kept for back-compat with older setup commands.
@@ -833,6 +837,30 @@ setup_wan() {
   fi
 }
 
+# ── Step 6b2: Demucs vocal isolation ─────────────────────────────────────────
+setup_demucs() {
+  log "Setting up Demucs vocal isolation (pre-Whisper stem separation)"
+  # Optional preprocessing for the transcribe stage: separates vocals from
+  # background music before faster-whisper runs, improving lyric accuracy on
+  # singing/lyric jobs. Applied only when a job sets audio_profile=singing AND
+  # VIDEO_ME_WHISPER_ISOLATE_VOCALS=true (dashboard toggle) — see
+  # adapters/transcribe/whisper_adapter.py:_isolate_vocals().
+
+  local venv_dir="$WORKSPACE/.venv_demucs"
+
+  if [[ ! -d "$venv_dir" ]]; then
+    log "Creating $venv_dir (system-site-packages for torch 2.8.0+cu128)"
+    run python3 -m venv --system-site-packages "$venv_dir"
+  else
+    ok "Demucs venv already exists at $venv_dir"
+  fi
+
+  local pip="$venv_dir/bin/pip"
+  run "$pip" install --upgrade pip
+  run "$pip" install demucs || warn "Demucs install failed — vocal isolation toggle will no-op"
+  ok "Demucs installed (model weights download lazily to \$HF_HOME on first use)"
+}
+
 # ── Step 6c: LatentSync ───────────────────────────────────────────────────────
 setup_latentsync() {
   log "Setting up LatentSync lip-sync repair (port 8041)"
@@ -1160,6 +1188,10 @@ fi
 
 if [[ "$SKIP_LATENTSYNC" == "0" ]]; then
   setup_latentsync
+fi
+
+if [[ "$SKIP_DEMUCS" == "0" ]]; then
+  setup_demucs
 fi
 
 if [[ "$SKIP_MUSETALK" == "0" ]]; then

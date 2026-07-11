@@ -113,6 +113,7 @@ class Settings(BaseSettings):
     whisper_model_revision: str = ""  # optional HF commit/tag to pin the cached faster-whisper snapshot
     whisper_language: str = "en"  # "en"/"hi" force source language; "auto" lets Whisper guess
     whisper_vad_filter: bool = False  # keep sung vocals/lyrics; VAD can be over-aggressive on music
+    whisper_isolate_vocals: bool = False  # Demucs vocal separation before Whisper; only applied when audio_profile="singing"
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"
     render_allow_placeholder_lora: bool = False
