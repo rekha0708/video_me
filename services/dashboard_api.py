@@ -1122,6 +1122,7 @@ def create_app(
 
     _RETRYABLE_OVERRIDE_KEYS = (
         "video_adapter", "lipsync_adapter", "render_adapter", "tts_adapter", "llm_model",
+        "whisper_language",
         "max_shot_duration_sec", "lipsync_failure_policy", "lipsync_max_retries",
         "av_sync_duration_tolerance_sec", "av_sync_failure_policy",
     )

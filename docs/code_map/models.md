@@ -82,6 +82,7 @@
 - `whisper_model_size: str` = `'medium'`
 - `whisper_device: str` = `'cuda'`
 - `whisper_compute_type: str` = `'int8'`
+- `whisper_language: str` = `''`
 - `whisper_vad_filter: bool` = `False`
 - `ffmpeg_bin: str` = `'ffmpeg'`
 - `ffprobe_bin: str` = `'ffprobe'`
@@ -472,6 +473,7 @@ LLM-authored chart/diagram panel composited over the upper third of the shot.
 - `llm_model: str | None` = `None`
 - `whisper_device: Literal['cpu', 'cuda'] | None` = `None`
 - `whisper_compute_type: str | None` = `None`
+- `whisper_language: str | None` = `None`
 - `render_adapter: Literal['a1111', 'comfyui_flux', 'musubi_flux'] | None` = `None`
 - `video_adapter: Literal['wan_s2v', 'wan', 'ltx'] | None` = `None`
 - `lipsync_adapter: Literal['latentsync', 'musetalk'] | None` = `None`

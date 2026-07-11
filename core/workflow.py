@@ -292,6 +292,7 @@ def _make_adapters(
             device=s.whisper_device,
             compute_type=s.whisper_compute_type,
             vad_filter=s.whisper_vad_filter,
+            language=s.whisper_language,
         ),
         analyze=LlmAnalyzeAdapter(
             model=s.llm_model,

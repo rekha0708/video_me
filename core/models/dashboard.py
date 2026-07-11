@@ -99,6 +99,7 @@ class DashboardJobOverrides(BaseModel):
     llm_model: str | None = None
     whisper_device: Literal["cpu", "cuda"] | None = None
     whisper_compute_type: str | None = None
+    whisper_language: str | None = None
     render_adapter: Literal["a1111", "comfyui_flux", "musubi_flux"] | None = None
     video_adapter: Literal["wan_s2v", "wan", "ltx"] | None = None
     lipsync_adapter: Literal["latentsync", "musetalk"] | None = None

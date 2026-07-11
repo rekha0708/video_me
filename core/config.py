@@ -108,6 +108,7 @@ class Settings(BaseSettings):
     whisper_model_size: str = "medium"
     whisper_device: str = "cuda"
     whisper_compute_type: str = "int8"
+    whisper_language: str = ""  # empty = auto-detect; set e.g. "en" to prevent music-driven misdetects
     whisper_vad_filter: bool = False  # keep sung vocals/lyrics; VAD can be over-aggressive on music
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"

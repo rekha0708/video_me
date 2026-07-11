@@ -133,12 +133,24 @@
 
     {# ── Language ── #}
     <div class="form-row">
-      <label>Language</label>
+      <label>Output Language</label>
       <select name="target_language" id="nj-lang">
         <option value="en" selected>English</option>
         <option value="hi">Hindi</option>
         <option value="both">Both (EN + HI)</option>
       </select>
+    </div>
+
+    <div class="form-row" id="nj-source-language-row">
+      <label>Source Language</label>
+      <select name="whisper_language" id="nj-whisper-language">
+        <option value="" selected>Auto-detect</option>
+        <option value="en">English</option>
+        <option value="hi">Hindi</option>
+      </select>
+      <div class="form-hint">
+        Force Whisper's source language when music/noise causes wrong auto-detection.
+      </div>
     </div>
 
     {# ── Render mode ── #}
@@ -414,6 +426,11 @@ function toggleSourceMode(mode) {
     audioProfileSel.disabled = noSourceAudio;
     if (noSourceAudio) audioProfileSel.value = "auto";
   }
+  const sourceLangSel = document.getElementById("nj-whisper-language");
+  if (sourceLangSel) {
+    sourceLangSel.disabled = noSourceAudio;
+    if (noSourceAudio) sourceLangSel.value = "";
+  }
 
   // Update rights checkbox label.
   const label = document.getElementById("nj-rights-label");
@@ -553,11 +570,13 @@ async function submitNewJob(e) {
 
     const videoAdapter = document.getElementById("nj-video-adapter").value;
     const lipsyncAdapter = document.getElementById("nj-lipsync-adapter").value;
+    const whisperLanguage = document.getElementById("nj-whisper-language").value;
     const maxShotDur = parseFloat(document.getElementById("nj-max-shot-duration").value);
     const castSel = document.getElementById("nj-cast");
     const overrides = {};
     if (videoAdapter) overrides.video_adapter = videoAdapter;
     if (lipsyncAdapter) overrides.lipsync_adapter = lipsyncAdapter;
+    if (whisperLanguage) overrides.whisper_language = whisperLanguage;
     if (maxShotDur && maxShotDur !== 8) overrides.max_shot_duration_sec = maxShotDur;
     if (document.getElementById("nj-auto-approve-plan").checked) overrides.auto_approve_plan = true;
     if (document.getElementById("nj-auto-approve-images").checked) overrides.auto_approve_images = true;

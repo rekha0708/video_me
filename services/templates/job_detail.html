@@ -45,6 +45,10 @@
       {% if video_override %}
         &nbsp;·&nbsp; video: <span class="td-mono">{{ video_override }}</span>
       {% endif %}
+      {% set whisper_language = overrides.get('whisper_language') %}
+      {% if whisper_language %}
+        &nbsp;·&nbsp; source lang: <span class="td-mono">{{ whisper_language }}</span>
+      {% endif %}
       {% set llm_override = overrides.get('llm_model') %}
       {% if llm_override %}
         &nbsp;·&nbsp; llm: <span class="td-mono">{{ llm_override }}</span>

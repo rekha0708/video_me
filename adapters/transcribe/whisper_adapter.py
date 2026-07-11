@@ -42,12 +42,14 @@ class WhisperAdapter(Transcribe):
         compute_type: str = "int8",
         beam_size: int = 5,
         vad_filter: bool = False,
+        language: str = "",
     ) -> None:
         self._model_size = model_size
         self._device = device
         self._compute_type = compute_type
         self._beam_size = beam_size
         self._vad_filter = vad_filter
+        self._language = language.strip() or None
         self._model: "_WhisperModel | None" = None
 
     async def health(self) -> HealthStatus:
@@ -100,12 +102,15 @@ class WhisperAdapter(Transcribe):
     def _transcribe(self, audio_uri: str) -> TranscribeResult:
         model = self._ensure_model()
 
-        segments_iter, info = model.transcribe(
-            audio_uri,
-            beam_size=self._beam_size,
-            word_timestamps=True,
-            vad_filter=self._vad_filter,
-        )
+        kwargs = {
+            "beam_size": self._beam_size,
+            "word_timestamps": True,
+            "vad_filter": self._vad_filter,
+        }
+        if self._language:
+            kwargs["language"] = self._language
+
+        segments_iter, info = model.transcribe(audio_uri, **kwargs)
 
         segments: list[TranscriptSegment] = []
         full_text_parts: list[str] = []

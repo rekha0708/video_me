@@ -122,6 +122,16 @@ def test_retry_with_body_overrides_video_adapter(tmp_path: Path) -> None:
     assert latest.payload["overrides"]["video_adapter"] == "wan"
 
 
+def test_retry_with_body_overrides_whisper_language(tmp_path: Path) -> None:
+    client, repo = _make_client_and_repo(tmp_path)
+    job_id = _seed_job(repo, status="failed")
+    resp = client.post(f"/api/jobs/{job_id}/retry", json={"whisper_language": "en"})
+    assert resp.status_code == 200
+    queue = repo.list_queue(job_id)
+    latest = queue[-1]
+    assert latest.payload["overrides"]["whisper_language"] == "en"
+
+
 def test_retry_with_body_overrides_lipsync_adapter(tmp_path: Path) -> None:
     client, repo = _make_client_and_repo(tmp_path)
     job_id = _seed_job(

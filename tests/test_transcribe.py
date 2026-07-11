@@ -97,6 +97,26 @@ def test_transcribe_passes_configured_vad_filter() -> None:
     assert kwargs["vad_filter"] is False
 
 
+def test_transcribe_auto_detects_language_by_default() -> None:
+    adapter = _adapter()
+    adapter._model = _make_model_mock([])
+
+    adapter._transcribe("song.wav")
+
+    kwargs = adapter._model.transcribe.call_args.kwargs
+    assert "language" not in kwargs
+
+
+def test_transcribe_passes_configured_language() -> None:
+    adapter = _adapter(language="en")
+    adapter._model = _make_model_mock([])
+
+    adapter._transcribe("song.wav")
+
+    kwargs = adapter._model.transcribe.call_args.kwargs
+    assert kwargs["language"] == "en"
+
+
 def test_transcribe_filters_blank_words() -> None:
     adapter = _adapter()
     segs = [
