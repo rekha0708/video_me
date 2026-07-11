@@ -397,3 +397,93 @@ async def test_unload_is_noop_when_model_is_not_loaded() -> None:
 
     assert result is True
     assert adapter._model is None
+
+
+# ------------------------------------------------------------------ stage_hook (dashboard events)
+
+def test_ensure_model_notifies_stage_hook_with_duration() -> None:
+    stage_hook = MagicMock()
+    adapter = _adapter(model_size="large-v3", device="cuda", compute_type="float16", stage_hook=stage_hook)
+
+    mock_cls = MagicMock()
+    with patch.dict("sys.modules", {"faster_whisper": MagicMock(WhisperModel=mock_cls)}):
+        adapter._ensure_model()
+
+    calls = stage_hook.call_args_list
+    assert calls[0].args == ("whisper_model_load", "stage_started")
+    assert "large-v3" in calls[0].kwargs["message"]
+    assert calls[1].args == ("whisper_model_load", "stage_completed")
+    assert "large-v3" in calls[1].kwargs["message"]
+    assert "took" in calls[1].kwargs["message"]
+
+
+def test_ensure_model_does_not_renotify_when_cached() -> None:
+    stage_hook = MagicMock()
+    adapter = _adapter(stage_hook=stage_hook)
+    adapter._model = MagicMock()
+
+    adapter._ensure_model()
+
+    stage_hook.assert_not_called()
+
+
+async def test_unload_notifies_stage_hook_with_duration() -> None:
+    stage_hook = MagicMock()
+    adapter = _adapter(model_size="large-v3", stage_hook=stage_hook)
+    adapter._model = MagicMock()
+
+    await adapter.unload()
+
+    calls = stage_hook.call_args_list
+    assert calls[0].args == ("whisper_model_unload", "stage_started")
+    assert calls[1].args == ("whisper_model_unload", "stage_completed")
+    assert "took" in calls[1].kwargs["message"]
+
+
+async def test_unload_does_not_notify_when_nothing_loaded() -> None:
+    stage_hook = MagicMock()
+    adapter = _adapter(stage_hook=stage_hook)
+
+    await adapter.unload()
+
+    stage_hook.assert_not_called()
+
+
+def test_isolate_vocals_notifies_stage_hook_on_success(tmp_path) -> None:
+    stage_hook = MagicMock()
+    adapter = _adapter(stage_hook=stage_hook)
+    audio_path = tmp_path / "song.wav"
+    audio_path.write_bytes(b"fake")
+
+    def fake_run(cmd, **kwargs):
+        out_dir = Path(cmd[cmd.index("-o") + 1])
+        vocals = out_dir / "htdemucs" / "song" / "vocals.wav"
+        vocals.parent.mkdir(parents=True, exist_ok=True)
+        vocals.write_bytes(b"vox")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    with patch("adapters.transcribe.whisper_adapter._DEMUCS_PYTHON") as mock_python, \
+         patch("adapters.transcribe.whisper_adapter.subprocess.run", side_effect=fake_run):
+        mock_python.exists.return_value = True
+        mock_python.__str__.return_value = "/workspace/.venv_demucs/bin/python"
+        adapter._isolate_vocals(str(audio_path))
+
+    calls = stage_hook.call_args_list
+    assert calls[0].args == ("vocal_isolation", "stage_started")
+    assert calls[1].args == ("vocal_isolation", "stage_completed")
+    assert "isolated" in calls[1].kwargs["message"].lower()
+
+
+def test_isolate_vocals_notifies_stage_hook_on_fallback(tmp_path) -> None:
+    stage_hook = MagicMock()
+    adapter = _adapter(stage_hook=stage_hook)
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"fake")
+
+    with patch("adapters.transcribe.whisper_adapter._DEMUCS_PYTHON") as mock_python:
+        mock_python.exists.return_value = False
+        adapter._isolate_vocals(str(audio_path))
+
+    stage_hook.assert_called_once()
+    assert stage_hook.call_args.args == ("vocal_isolation", "stage_completed")
+    assert "skipped" in stage_hook.call_args.kwargs["message"].lower()

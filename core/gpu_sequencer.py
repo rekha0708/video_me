@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Callable
 
 from core.observability import log_event
@@ -42,6 +43,9 @@ logger = logging.getLogger(__name__)
 # feed shows the model load instead of going silent.
 VIDEO_MODEL_LOAD_STAGE = "video_model_load"
 VOICE_MODEL_LOAD_STAGE = "voice_model_load"
+VIDEO_MODEL_UNLOAD_STAGE = "video_model_unload"
+VOICE_MODEL_UNLOAD_STAGE = "voice_model_unload"
+FISH_S2_PROCESS_START_STAGE = "fish_s2_process_start"
 
 
 def is_managed(adapter: Any) -> bool:
@@ -214,14 +218,21 @@ async def _fish_s2_reachable(base_url: str) -> bool:
 
 
 async def ensure_fish_s2_process_running(
-    settings: Any, *, sleep: Callable[[float], Any] = asyncio.sleep, poll_sec: float = 2.0,
+    settings: Any,
+    *,
+    sleep: Callable[[float], Any] = asyncio.sleep,
+    poll_sec: float = 2.0,
+    notify: Callable[..., Any] | None = None,
 ) -> None:
     """Start the Fish S2 server process if it isn't already running, and wait
     for it to accept connections before returning.
 
     Pairs with stop_fish_s2_process(): the worker kills the process after
     every job, so the next job that needs voice synthesis must (re)spawn it
-    on demand.
+    on demand. Silent no-op (no notify) when a process is already listening —
+    that's the common case and firing an event for it would just be noise;
+    the dashboard only needs to know about an actual spawn-and-wait, which
+    can take 120-150s cold (see fish_s2_load_timeout_sec below).
 
     Uses fish_s2_load_timeout_sec — the SAME setting _prepare_managed_adapter
     uses below for wait_until_loaded — deliberately, not a separate value.
@@ -239,6 +250,12 @@ async def ensure_fish_s2_process_running(
     from urllib.parse import urlparse
 
     logger.info("Fish Audio S2 process not running — starting it")
+    if notify:
+        notify(
+            FISH_S2_PROCESS_START_STAGE, "stage_started",
+            message="Fish Audio S2 process not running — spawning it and waiting for it to accept connections…",
+        )
+    started = time.monotonic()
     repo_root = Path(__file__).resolve().parent.parent
     log_path = Path(settings.fish_s2_log_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -264,7 +281,13 @@ async def ensure_fish_s2_process_running(
     deadline_tries = max(1, int(settings.fish_s2_load_timeout_sec / poll_sec))
     for _ in range(deadline_tries):
         if await _fish_s2_reachable(settings.fish_s2_base_url):
+            elapsed = time.monotonic() - started
             log_event(logger, "fish_s2_process_started")
+            if notify:
+                notify(
+                    FISH_S2_PROCESS_START_STAGE, "stage_completed",
+                    message=f"Fish Audio S2 process up and accepting connections (took {elapsed:.1f}s)",
+                )
             return
         await sleep(poll_sec)
     raise TimeoutError(
@@ -273,17 +296,41 @@ async def ensure_fish_s2_process_running(
     )
 
 
-async def ensure_video_model_unloaded(video_adapter: Any) -> None:
-    """Make sure a VRAM-managed video model is out of VRAM before the render phase."""
+async def ensure_video_model_unloaded(
+    video_adapter: Any,
+    *,
+    notify: Callable[..., Any] | None = None,
+    stage_name: str = VIDEO_MODEL_UNLOAD_STAGE,
+) -> None:
+    """Make sure a VRAM-managed model is out of VRAM before the render phase.
+
+    Despite the name, this is called for both the video and voice adapter
+    slots (see core/workflow.py) — pass a distinct ``stage_name`` per call
+    site (VIDEO_MODEL_UNLOAD_STAGE / VOICE_MODEL_UNLOAD_STAGE) so the
+    dashboard timeline and cost summary can tell them apart. Previously this
+    only logged to the process log, so the dashboard event feed never showed
+    when a resident video/voice model was actually freed.
+    """
     if not is_managed(video_adapter):
         return
+    adapter_name = type(video_adapter).__name__
+    if notify:
+        notify(stage_name, "stage_started", message=f"Unloading {adapter_name} to free VRAM…")
+    started = time.monotonic()
     unloaded = await video_adapter.unload()
+    elapsed = time.monotonic() - started
     log_event(
         logger,
         "video_model_unloaded",
-        adapter=type(video_adapter).__name__,
+        adapter=adapter_name,
         service_reachable=unloaded,
     )
+    if notify:
+        status = "freed" if unloaded else "was already idle/unreachable (nothing to free)"
+        notify(
+            stage_name, "stage_completed",
+            message=f"{adapter_name} {status} (took {elapsed:.1f}s)",
+        )
 
 
 async def _prepare_managed_adapter(
@@ -308,8 +355,13 @@ async def _prepare_managed_adapter(
     if not is_managed(adapter):
         return
 
+    adapter_name = type(adapter).__name__
     if notify:
-        notify(stage_name, "stage_started")
+        notify(
+            stage_name, "stage_started",
+            message=f"Loading {adapter_name} — freeing LLM VRAM, waiting {gap_sec:.0f}s, then loading model…",
+        )
+    started = time.monotonic()
 
     unload_ollama_model(settings.llm_base_url, settings.llm_model)
     if (settings.image_critique_base_url, settings.image_critique_model) != (
@@ -317,15 +369,19 @@ async def _prepare_managed_adapter(
     ):
         unload_ollama_model(settings.image_critique_base_url, settings.image_critique_model)
 
-    logger.info("Waiting %ss for VRAM to settle before loading %s", gap_sec, type(adapter).__name__)
+    logger.info("Waiting %ss for VRAM to settle before loading %s", gap_sec, adapter_name)
     await sleep(gap_sec)
 
     await adapter.load()
     await adapter.wait_until_loaded(timeout_sec)
 
-    log_event(logger, "video_model_loaded", adapter=type(adapter).__name__)
+    elapsed = time.monotonic() - started
+    log_event(logger, "video_model_loaded", adapter=adapter_name)
     if notify:
-        notify(stage_name, "stage_completed")
+        notify(
+            stage_name, "stage_completed",
+            message=f"{adapter_name} model loaded and ready (took {elapsed:.1f}s)",
+        )
 
 
 async def prepare_video_model(
@@ -382,7 +438,7 @@ async def prepare_voice_model(
     generic per-adapter process hook.
     """
     if is_managed(voice_adapter):
-        await ensure_fish_s2_process_running(settings, sleep=sleep)
+        await ensure_fish_s2_process_running(settings, sleep=sleep, notify=notify)
     await _prepare_managed_adapter(
         voice_adapter,
         settings,

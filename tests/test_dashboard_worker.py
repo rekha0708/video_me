@@ -391,6 +391,28 @@ async def test_run_action_stops_fish_s2_after_every_outcome(
     assert _no_real_wan_unload.await_count == 2
 
 
+async def test_run_action_records_descriptive_cleanup_events(tmp_path: Path) -> None:
+    """The Fish S2 process stop and Wan unload in _run_action's finally block
+    happen after the pipeline task's own stage_hook has already gone out of
+    scope, so they must record directly on the repo — otherwise this VRAM
+    cleanup (which can take real time) is invisible in the dashboard."""
+    worker, repo = _make_worker(tmp_path)
+    job, _ = repo.create_queued_job(_noop_request())
+
+    with patch("core.workflow.run_noop_job", new=AsyncMock(return_value=_fake_core_job("completed"))):
+        action = repo.claim_next_action("w1")
+        await worker._run_action(action)
+
+    events = repo.get_job_detail(job.job_id).events
+    fish_events = [e for e in events if e.stage_name == "fish_s2_process_stop"]
+    wan_events = [e for e in events if e.stage_name == "wan_model_unload"]
+
+    assert [e.event_type for e in fish_events] == ["stage_started", "stage_completed"]
+    assert "stopped" in fish_events[1].message.lower()
+    assert [e.event_type for e in wan_events] == ["stage_started", "stage_completed"]
+    assert "unloaded" in wan_events[1].message.lower()
+
+
 # ---------------------------------------------------------------------------
 # Worker: pipeline job failure
 # ---------------------------------------------------------------------------

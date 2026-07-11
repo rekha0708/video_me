@@ -73,6 +73,39 @@ async def test_unload_calls_adapter_unload() -> None:
     adapter.unload.assert_awaited_once()
 
 
+async def test_unload_notifies_with_descriptive_message() -> None:
+    adapter = _managed_adapter()
+    notify = MagicMock()
+
+    await ensure_video_model_unloaded(adapter, notify=notify, stage_name="video_model_unload")
+
+    started_call = next(c for c in notify.call_args_list if c.args == ("video_model_unload", "stage_started"))
+    completed_call = next(c for c in notify.call_args_list if c.args == ("video_model_unload", "stage_completed"))
+    assert "unloading" in started_call.kwargs["message"].lower()
+    assert "freed" in completed_call.kwargs["message"].lower()
+    assert "took" in completed_call.kwargs["message"].lower()
+
+
+async def test_unload_notify_reports_unreachable_service() -> None:
+    adapter = _managed_adapter()
+    adapter.unload = AsyncMock(return_value=False)
+    notify = MagicMock()
+
+    await ensure_video_model_unloaded(adapter, notify=notify, stage_name="voice_model_unload")
+
+    completed_call = next(c for c in notify.call_args_list if c.args == ("voice_model_unload", "stage_completed"))
+    assert "unreachable" in completed_call.kwargs["message"].lower()
+
+
+async def test_unload_skips_notify_for_unmanaged_adapter() -> None:
+    adapter = _unmanaged_adapter()
+    notify = MagicMock()
+
+    await ensure_video_model_unloaded(adapter, notify=notify)
+
+    notify.assert_not_called()
+
+
 # ------------------------------------------------------------------ prepare ordering
 
 async def test_prepare_orders_unload_gap_load_wait() -> None:
@@ -128,8 +161,10 @@ async def test_prepare_emits_video_model_load_events() -> None:
     notify = MagicMock()
     with patch("core.gpu_sequencer.unload_ollama_model"):
         await prepare_video_model(adapter, _settings(), sleep=AsyncMock(), notify=notify)
-    notify.assert_any_call(VIDEO_MODEL_LOAD_STAGE, "stage_started")
-    notify.assert_any_call(VIDEO_MODEL_LOAD_STAGE, "stage_completed")
+    started_call = next(c for c in notify.call_args_list if c.args[:2] == (VIDEO_MODEL_LOAD_STAGE, "stage_started"))
+    completed_call = next(c for c in notify.call_args_list if c.args[:2] == (VIDEO_MODEL_LOAD_STAGE, "stage_completed"))
+    assert "loading" in started_call.kwargs["message"].lower()
+    assert "loaded and ready" in completed_call.kwargs["message"].lower()
 
 
 async def test_prepare_no_events_for_unmanaged_adapter() -> None:
@@ -205,13 +240,17 @@ async def test_prepare_voice_ensures_process_running_only_when_managed() -> None
 async def test_prepare_voice_emits_voice_model_load_events() -> None:
     adapter = _managed_adapter()
     notify = MagicMock()
+    fish_mock = AsyncMock()
     with (
         patch("core.gpu_sequencer.unload_ollama_model"),
-        patch("core.gpu_sequencer.ensure_fish_s2_process_running", new=AsyncMock()),
+        patch("core.gpu_sequencer.ensure_fish_s2_process_running", new=fish_mock),
     ):
         await prepare_voice_model(adapter, _settings(), sleep=AsyncMock(), notify=notify)
-    notify.assert_any_call(VOICE_MODEL_LOAD_STAGE, "stage_started")
-    notify.assert_any_call(VOICE_MODEL_LOAD_STAGE, "stage_completed")
+    started_call = next(c for c in notify.call_args_list if c.args[:2] == (VOICE_MODEL_LOAD_STAGE, "stage_started"))
+    completed_call = next(c for c in notify.call_args_list if c.args[:2] == (VOICE_MODEL_LOAD_STAGE, "stage_completed"))
+    assert "loading" in started_call.kwargs["message"].lower()
+    assert "loaded and ready" in completed_call.kwargs["message"].lower()
+    assert fish_mock.await_args.kwargs["notify"] is notify
 
 
 async def test_prepare_voice_no_events_for_unmanaged_adapter() -> None:
@@ -353,6 +392,34 @@ async def test_ensure_fish_s2_process_running_spawns_when_unreachable(tmp_path) 
     assert kwargs["env"]["FISH_SPEECH_DIR"] == "/fake/fish-speech"
     assert kwargs["cwd"]  # spawned with an explicit repo-root cwd
     sleep.assert_awaited_once_with(2.0)  # default poll_sec
+
+
+async def test_ensure_fish_s2_process_running_notifies_only_when_spawning(tmp_path) -> None:
+    reachable = AsyncMock(side_effect=[False, True])
+    notify = MagicMock()
+    settings = _settings(
+        fish_s2_base_url="http://localhost:8025",
+        fish_s2_venv_python="/fake/venv/bin/uvicorn",
+        fish_s2_speech_dir="/fake/fish-speech",
+        fish_s2_log_path=str(tmp_path / "fish_s2.log"),
+    )
+    with (
+        patch("core.gpu_sequencer._fish_s2_reachable", new=reachable),
+        patch("core.gpu_sequencer.asyncio.create_subprocess_exec", new=AsyncMock(return_value=_fake_proc())),
+    ):
+        await ensure_fish_s2_process_running(settings, sleep=AsyncMock(), notify=notify)
+
+    started_call = next(c for c in notify.call_args_list if c.args[1] == "stage_started")
+    completed_call = next(c for c in notify.call_args_list if c.args[1] == "stage_completed")
+    assert "spawning" in started_call.kwargs["message"].lower()
+    assert "took" in completed_call.kwargs["message"].lower()
+
+
+async def test_ensure_fish_s2_process_running_no_notify_when_already_up() -> None:
+    notify = MagicMock()
+    with patch("core.gpu_sequencer._fish_s2_reachable", new=AsyncMock(return_value=True)):
+        await ensure_fish_s2_process_running(_settings(), notify=notify)
+    notify.assert_not_called()
 
 
 async def test_ensure_fish_s2_process_running_raises_timeout_if_never_reachable(tmp_path) -> None:

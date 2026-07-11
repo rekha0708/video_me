@@ -507,7 +507,8 @@ Transcription adapters.
 ### `adapters/transcribe/whisper_adapter.py`
 
 - **class `WhisperAdapter(Transcribe)`** — Transcription adapter using faster-whisper (CTranslate2 backend).
-  - `__init__(self, model_size: str='medium', device: str='cpu', compute_type: str='int8', beam_size: int=5, vad_filter: bool=False, language: str='', download_root: str='', local_files_only: bool=True, revision: str='') -> None`
+  - `__init__(self, model_size: str='medium', device: str='cpu', compute_type: str='int8', beam_size: int=5, vad_filter: bool=False, language: str='', download_root: str='', local_files_only: bool=True, revision: str='', stage_hook: 'Callable[..., None] | None'=None) -> None`
+  - `_notify(self, stage_name: str, event_type: str, message: str) -> None`
   - `async health(self) -> HealthStatus`
   - `async estimate_cost(self, req: TranscribeRequest) -> CostEstimate`
   - `async run(self, req: TranscribeRequest) -> TranscribeResult`

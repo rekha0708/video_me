@@ -3,8 +3,9 @@ import gc
 import logging
 import subprocess
 import tempfile
+import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from core.capabilities.base import Transcribe
 from core.models.capabilities import (
@@ -42,6 +43,16 @@ class WhisperAdapter(Transcribe):
         device:        "cpu" for local testing; "cuda" on rented GPU.
         compute_type:  "int8" for CPU; "float16" for CUDA GPU.
         beam_size:     Beam search width. 5 matches OpenAI Whisper default.
+        stage_hook:    Optional dashboard callback, same signature as
+                       core.workflow's RunOptions.stage_hook:
+                       (stage_name, event_type, *, message=None) -> None.
+                       Model load/unload and vocal isolation happen lazily
+                       inside blocking helpers with no external call site to
+                       wrap, so this adapter emits its own descriptive,
+                       timed dashboard events rather than relying on the
+                       workflow to bracket the calls (contrast with
+                       core.gpu_sequencer, which wraps its adapters
+                       externally because it controls the exact call sites).
     """
 
     version = "1.0.0"
@@ -57,6 +68,7 @@ class WhisperAdapter(Transcribe):
         download_root: str = "",
         local_files_only: bool = True,
         revision: str = "",
+        stage_hook: "Callable[..., None] | None" = None,
     ) -> None:
         self._model_size = model_size
         self._device = device
@@ -68,7 +80,12 @@ class WhisperAdapter(Transcribe):
         self._revision = revision.strip() or None
         normalized_language = language.strip().lower()
         self._language = None if normalized_language in ("", "auto") else normalized_language
+        self._stage_hook = stage_hook
         self._model: "_WhisperModel | None" = None
+
+    def _notify(self, stage_name: str, event_type: str, message: str) -> None:
+        if self._stage_hook:
+            self._stage_hook(stage_name, event_type, message=message)
 
     async def health(self) -> HealthStatus:
         try:
@@ -111,6 +128,7 @@ class WhisperAdapter(Transcribe):
     def _ensure_model(self) -> "_WhisperModel":
         if self._model is None:
             from faster_whisper import WhisperModel
+            spec = f"{self._model_size} ({self._device}/{self._compute_type})"
             log_event(
                 logger,
                 "whisper_model_loading",
@@ -118,6 +136,11 @@ class WhisperAdapter(Transcribe):
                 device=self._device,
                 compute_type=self._compute_type,
             )
+            self._notify(
+                "whisper_model_load", "stage_started",
+                f"Loading Whisper {spec} into memory…",
+            )
+            started = time.monotonic()
             self._model = WhisperModel(
                 self._model_size,
                 device=self._device,
@@ -126,12 +149,24 @@ class WhisperAdapter(Transcribe):
                 local_files_only=self._local_files_only,
                 revision=self._revision,
             )
+            elapsed = time.monotonic() - started
+            self._notify(
+                "whisper_model_load", "stage_completed",
+                f"Whisper {spec} loaded and ready (took {elapsed:.1f}s)",
+            )
         return self._model
 
     async def unload(self) -> bool:
         """Drop the local Whisper model and ask CUDA to release cached memory."""
         if self._model is None:
             return True
+
+        spec = f"{self._model_size} ({self._device}/{self._compute_type})"
+        self._notify(
+            "whisper_model_unload", "stage_started",
+            f"Unloading Whisper {spec} to free VRAM…",
+        )
+        started = time.monotonic()
 
         model = self._model
         self._model = None
@@ -146,7 +181,12 @@ class WhisperAdapter(Transcribe):
         if torch is not None and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+        elapsed = time.monotonic() - started
         log_event(logger, "whisper_model_unloaded", model_size=self._model_size)
+        self._notify(
+            "whisper_model_unload", "stage_completed",
+            f"Whisper {spec} unloaded (took {elapsed:.1f}s)",
+        )
         return True
 
     def _transcribe(self, audio_uri: str, isolate_vocals: bool = False) -> TranscribeResult:
@@ -205,6 +245,11 @@ class WhisperAdapter(Transcribe):
                 reason="demucs venv not found",
                 expected_path=str(_DEMUCS_PYTHON),
             )
+            self._notify(
+                "vocal_isolation", "stage_completed",
+                f"Vocal isolation skipped — demucs venv not found at {_DEMUCS_PYTHON}; "
+                "using the raw audio mix for transcription.",
+            )
             return audio_uri
 
         audio_path = Path(audio_uri)
@@ -213,6 +258,11 @@ class WhisperAdapter(Transcribe):
         vocals_path = out_dir / _DEMUCS_MODEL / track_stem / "vocals.wav"
 
         log_event(logger, "vocal_isolation_started", audio_uri=audio_uri)
+        self._notify(
+            "vocal_isolation", "stage_started",
+            f"Separating vocals from music with Demucs ({_DEMUCS_MODEL})…",
+        )
+        started = time.monotonic()
         try:
             proc = subprocess.run(
                 [
@@ -225,9 +275,16 @@ class WhisperAdapter(Transcribe):
                 timeout=_DEMUCS_TIMEOUT_SEC,
             )
         except (subprocess.TimeoutExpired, OSError) as exc:
+            elapsed = time.monotonic() - started
             log_event(logger, "vocal_isolation_failed", reason=str(exc))
+            self._notify(
+                "vocal_isolation", "stage_completed",
+                f"Vocal isolation failed after {elapsed:.1f}s ({exc}) — "
+                "falling back to the raw audio mix.",
+            )
             return audio_uri
 
+        elapsed = time.monotonic() - started
         if proc.returncode != 0 or not vocals_path.exists():
             log_event(
                 logger,
@@ -236,7 +293,16 @@ class WhisperAdapter(Transcribe):
                 returncode=proc.returncode,
                 stderr=proc.stderr[-2000:] if proc.stderr else "",
             )
+            self._notify(
+                "vocal_isolation", "stage_completed",
+                f"Vocal isolation failed after {elapsed:.1f}s (demucs exit {proc.returncode}) — "
+                "falling back to the raw audio mix.",
+            )
             return audio_uri
 
         log_event(logger, "vocal_isolation_completed", vocals_path=str(vocals_path))
+        self._notify(
+            "vocal_isolation", "stage_completed",
+            f"Vocals isolated in {elapsed:.1f}s using Demucs ({_DEMUCS_MODEL}).",
+        )
         return str(vocals_path)

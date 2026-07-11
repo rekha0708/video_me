@@ -14,6 +14,8 @@ from core.cast_params import CastMemberParams, CastPairParams, load_cast_pair_pa
 from core.config import AppConfig, load_app_config
 from core.executor import StageError, check_rights, run_stage
 from core.gpu_sequencer import (
+    VIDEO_MODEL_UNLOAD_STAGE,
+    VOICE_MODEL_UNLOAD_STAGE,
     ensure_video_model_unloaded,
     free_comfyui,
     is_managed,
@@ -266,6 +268,7 @@ def _make_adapters(
     work_dir: Path,
     *,
     approval_overrides: dict | None = None,
+    stage_hook: Callable[..., None] | None = None,
 ) -> _Adapters:
     """Instantiate all Phase 1 adapters with job-scoped work directories."""
     from adapters.adapt_script.llm_adapter import LlmAdaptScriptAdapter
@@ -297,6 +300,7 @@ def _make_adapters(
             revision=s.whisper_model_revision,
             vad_filter=s.whisper_vad_filter,
             language=s.whisper_language,
+            stage_hook=stage_hook,
         ),
         analyze=LlmAnalyzeAdapter(
             model=s.llm_model,
@@ -387,6 +391,7 @@ def _make_job_context(
     *,
     job_id: str | None = None,
     approval_overrides: dict | None = None,
+    stage_hook: Callable[..., None] | None = None,
 ) -> _JobContext:
     """Create stores, job record, work directory, and adapters for one run."""
     settings = config.settings
@@ -415,7 +420,9 @@ def _make_job_context(
         job_store=job_store,
         job=job,
         work_dir=work_dir,
-        adapters=_make_adapters(config, work_dir, approval_overrides=approval_overrides),
+        adapters=_make_adapters(
+            config, work_dir, approval_overrides=approval_overrides, stage_hook=stage_hook,
+        ),
     )
 
 
@@ -424,6 +431,7 @@ def _restore_job_context(
     config: AppConfig,
     *,
     approval_overrides: dict | None = None,
+    stage_hook: Callable[..., None] | None = None,
 ) -> _JobContext:
     """Reconstruct a context for a previously started job (for resume/phase runs).
 
@@ -454,7 +462,9 @@ def _restore_job_context(
         job_store=job_store,
         job=job,
         work_dir=work_dir,
-        adapters=_make_adapters(config, work_dir, approval_overrides=approval_overrides),
+        adapters=_make_adapters(
+            config, work_dir, approval_overrides=approval_overrides, stage_hook=stage_hook,
+        ),
     )
 
 
@@ -1853,23 +1863,23 @@ def _load_artifact(
         return None
 
 
-async def _unload_transcribe_model(transcribe_adapter: object, stage_hook: Callable[..., None] | None = None) -> None:
+async def _unload_transcribe_model(transcribe_adapter: object) -> None:
+    """Trigger the transcribe adapter's unload().
+
+    WhisperAdapter emits its own descriptive, timed "whisper_model_unload"
+    dashboard events internally (see adapters/transcribe/whisper_adapter.py)
+    since it already owns the model spec and load/unload timing — this is
+    just the trigger point in the pipeline sequence.
+    """
     unload = getattr(transcribe_adapter, "unload", None)
     if not callable(unload):
         return
-
-    if stage_hook:
-        stage_hook("whisper_model_unload", "stage_started")
     try:
         result = unload()
         if isawaitable(result):
             await result
-        if stage_hook:
-            stage_hook("whisper_model_unload", "stage_completed")
     except Exception as exc:
         logger.warning("Whisper model unload failed: %s", exc)
-        if stage_hook:
-            stage_hook("whisper_model_unload", "stage_failed")
 
 
 async def _critique_loop(
@@ -2149,7 +2159,7 @@ async def _run_to_assembled_video(
                     TranscribeResult,
                 )
             finally:
-                await _unload_transcribe_model(adapters.transcribe, opts.stage_hook)
+                await _unload_transcribe_model(adapters.transcribe)
 
             # 3. analyze_content
             metadata = await _stage(
@@ -2363,8 +2373,12 @@ async def _run_to_assembled_video(
         # or video_adapter=ltx) would otherwise sit stranded through this job's
         # entire render phase.
         _unload_ollama_model(config.settings.llm_base_url, config.settings.llm_model)
-        await ensure_video_model_unloaded(adapters.video)
-        await ensure_video_model_unloaded(adapters.voice)
+        await ensure_video_model_unloaded(
+            adapters.video, notify=opts.stage_hook, stage_name=VIDEO_MODEL_UNLOAD_STAGE,
+        )
+        await ensure_video_model_unloaded(
+            adapters.voice, notify=opts.stage_hook, stage_name=VOICE_MODEL_UNLOAD_STAGE,
+        )
         await free_comfyui(config.settings.comfyui_base_url)
 
         shots_to_run = (
@@ -2733,12 +2747,17 @@ async def run_pipeline_job(
         if lang_opts.resume and not (resume_job_id or job_id):
             raise ValueError("resume=True requires resume_job_id or job_id to be set.")
         ctx = (
-            _restore_job_context(resume_job_id, config, approval_overrides=approval_overrides)
+            _restore_job_context(
+                resume_job_id, config,
+                approval_overrides=approval_overrides,
+                stage_hook=lang_opts.stage_hook,
+            )
             if resume_job_id
             else _make_job_context(
                 source_url, rights_cleared, config,
                 job_id=job_id,
                 approval_overrides=approval_overrides,
+                stage_hook=lang_opts.stage_hook,
             )
         )
         last_job = await _run_single_language_job(ctx, lang_opts)

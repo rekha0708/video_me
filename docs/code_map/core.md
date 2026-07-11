@@ -76,8 +76,8 @@ GPU model sequencing between pipeline phases.
 - `async unload_wan(wan_base_url: str) -> bool` — Unload Wan's resident video model unconditionally, after every job.
 - `async stop_fish_s2_process() -> bool` — Kill the Fish S2 server process entirely, not just POST /unload.
 - `async _fish_s2_reachable(base_url: str) -> bool`
-- `async ensure_fish_s2_process_running(settings: Any, *, sleep: Callable[[float], Any]=asyncio.sleep, poll_sec: float=2.0) -> None` — Start the Fish S2 server process if it isn't already running, and wait
-- `async ensure_video_model_unloaded(video_adapter: Any) -> None` — Make sure a VRAM-managed video model is out of VRAM before the render phase.
+- `async ensure_fish_s2_process_running(settings: Any, *, sleep: Callable[[float], Any]=asyncio.sleep, poll_sec: float=2.0, notify: Callable[..., Any] | None=None) -> None` — Start the Fish S2 server process if it isn't already running, and wait
+- `async ensure_video_model_unloaded(video_adapter: Any, *, notify: Callable[..., Any] | None=None, stage_name: str=VIDEO_MODEL_UNLOAD_STAGE) -> None` — Make sure a VRAM-managed model is out of VRAM before the render phase.
 - `async _prepare_managed_adapter(adapter: Any, settings: Any, *, gap_sec: float, timeout_sec: float, stage_name: str, sleep: Callable[[float], Any], notify: Callable[[str, str], Any] | None) -> None` — Bring a VRAM-managed adapter's model into memory.
 - `async prepare_video_model(video_adapter: Any, settings: Any, *, sleep: Callable[[float], Any]=asyncio.sleep, notify: Callable[[str, str], Any] | None=None) -> None` — Bring a VRAM-managed video model into memory after the render phase.
 - `async prepare_voice_model(voice_adapter: Any, settings: Any, *, sleep: Callable[[float], Any]=asyncio.sleep, notify: Callable[[str, str], Any] | None=None) -> None` — Bring a VRAM-managed voice (TTS) model into memory, e.g. Fish Audio S2.
@@ -260,9 +260,9 @@ Shared Pydantic models for orchestration.
 - `_make_video_adapter(s, work_dir: Path)` — Select generate_video adapter based on VIDEO_ME_VIDEO_ADAPTER env var.
 - `_make_lipsync_adapter(s, work_dir: Path)` — Select lip_sync repair adapter for video backends without native sync.
 - `_make_tts_adapter(s, work_dir: Path)` — Select synthesize_voice adapter based on VIDEO_ME_TTS_ADAPTER env var.
-- `_make_adapters(config: AppConfig, work_dir: Path, *, approval_overrides: dict | None=None) -> _Adapters` — Instantiate all Phase 1 adapters with job-scoped work directories.
-- `_make_job_context(source_url: str, rights_cleared: bool, config: AppConfig, *, job_id: str | None=None, approval_overrides: dict | None=None) -> _JobContext` — Create stores, job record, work directory, and adapters for one run.
-- `_restore_job_context(job_id: str, config: AppConfig, *, approval_overrides: dict | None=None) -> _JobContext` — Reconstruct a context for a previously started job (for resume/phase runs).
+- `_make_adapters(config: AppConfig, work_dir: Path, *, approval_overrides: dict | None=None, stage_hook: Callable[..., None] | None=None) -> _Adapters` — Instantiate all Phase 1 adapters with job-scoped work directories.
+- `_make_job_context(source_url: str, rights_cleared: bool, config: AppConfig, *, job_id: str | None=None, approval_overrides: dict | None=None, stage_hook: Callable[..., None] | None=None) -> _JobContext` — Create stores, job record, work directory, and adapters for one run.
+- `_restore_job_context(job_id: str, config: AppConfig, *, approval_overrides: dict | None=None, stage_hook: Callable[..., None] | None=None) -> _JobContext` — Reconstruct a context for a previously started job (for resume/phase runs).
 - `_resolve_line(ref: str, script: Script)` — Parse a dialogue_line_ref and return the Line it points to.
 - `_resolve_shot_characters(shot: Shot, cast: Cast) -> tuple[CastMember, list[CastMember], CastMemberParams | CastPairParams | None, bool]` — Resolve primary/secondary characters and LoRA params for a shot.
 - `_shot_render_request(shot: Shot, primary: CastMember, other_members: list[CastMember], params: 'CastMemberParams | None') -> RenderCharacterRequest` — Build the render_character request for a shot — shared by the sequential
@@ -292,7 +292,7 @@ Shared Pydantic models for orchestration.
 - `_atempo_filter_chain(tempo: float) -> str` — Build an ffmpeg atempo chain whose product equals tempo.
 - `async _fit_audio_to_duration(track: AudioTrack, target_duration_sec: float, out_path: Path, ffmpeg_bin: str='ffmpeg', ffprobe_bin: str='ffprobe') -> AudioTrack` — Time-stretch, pad, and trim an audio track to a shot duration.
 - `_load_artifact(job_id: str, stage: str, model_cls: type, artifact_store: ArtifactStore) -> object | None` — Load a persisted stage artifact and deserialize it to model_cls. Returns None if absent.
-- `async _unload_transcribe_model(transcribe_adapter: object, stage_hook: Callable[..., None] | None=None) -> None`
+- `async _unload_transcribe_model(transcribe_adapter: object) -> None` — Trigger the transcribe adapter's unload().
 - `async _critique_loop(storyboard: Storyboard, script: Script, ctx: '_JobContext', max_iterations: int, visual_context: 'VisualContext | None'=None, storyboard_transform: Callable[[Storyboard], Storyboard] | None=None) -> tuple[Storyboard, list[str]]` — Run the plan critique loop: up to max_iterations re-plan attempts.
 - `async _render_plan_overlays(storyboard: Storyboard, ctx: '_JobContext', opts: 'RunOptions') -> Storyboard` — Render each shot.overlay to a PNG panel and set overlay.png_uri.
 - `async _run_plan_critique_and_approval(storyboard: Storyboard, script: Script, ctx: '_JobContext', opts: 'RunOptions', visual_context: 'VisualContext | None'=None, storyboard_transform: Callable[[Storyboard], Storyboard] | None=None) -> tuple[Storyboard, Script]` — Run the critique loop then the human approval gate.

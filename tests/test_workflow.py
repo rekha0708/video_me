@@ -159,6 +159,38 @@ def test_make_adapters_uses_runtime_settings(tmp_path) -> None:
     assert adapters.ffmpeg_bin == "/opt/bin/ffmpeg"
 
 
+def test_make_adapters_threads_stage_hook_into_transcribe(tmp_path) -> None:
+    config = _make_config(tmp_path)
+    hook = MagicMock()
+
+    adapters = _make_adapters(config, tmp_path / "job", stage_hook=hook)
+
+    assert adapters.transcribe._stage_hook is hook
+
+
+def test_make_adapters_defaults_stage_hook_to_none(tmp_path) -> None:
+    config = _make_config(tmp_path)
+
+    adapters = _make_adapters(config, tmp_path / "job")
+
+    assert adapters.transcribe._stage_hook is None
+
+
+def test_make_job_context_forwards_stage_hook_to_transcribe_adapter(tmp_path) -> None:
+    from core.workflow import _make_job_context
+
+    config = _make_config(tmp_path)
+    hook = MagicMock()
+
+    with (
+        patch("core.workflow.create_job_store", return_value=MagicMock()),
+        patch("core.workflow.create_artifact_store", return_value=MagicMock()),
+    ):
+        ctx = _make_job_context("http://example.com", True, config, stage_hook=hook)
+
+    assert ctx.adapters.transcribe._stage_hook is hook
+
+
 def test_make_adapters_uses_latentsync_runtime_settings(tmp_path) -> None:
     config = load_app_config()
     config.settings = Settings(

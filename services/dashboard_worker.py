@@ -16,6 +16,7 @@ import os
 import shlex
 import signal
 import socket
+import time
 import traceback as _traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -176,7 +177,27 @@ class DashboardWorker:
             # ~20GB fresh-process baseline). Killing the whole process is the
             # only reliable reset; the next job that needs it respawns it on
             # demand (core.gpu_sequencer.ensure_fish_s2_process_running).
-            await stop_fish_s2_process()
+            #
+            # These two cleanup steps run after the pipeline task (and its
+            # stage_hook) has already finished, so there's no RunOptions
+            # callback left to route through — record directly on the repo
+            # instead, otherwise this VRAM reclaim (which can take several
+            # seconds) is completely invisible in the dashboard timeline.
+            self.repo.record_event(
+                job_id, "stage_started",
+                "Stopping Fish Audio S2 process to reclaim VRAM /unload can't release…",
+                stage_name="fish_s2_process_stop",
+            )
+            started = time.monotonic()
+            killed = await stop_fish_s2_process()
+            elapsed = time.monotonic() - started
+            self.repo.record_event(
+                job_id, "stage_completed",
+                f"Fish Audio S2 process {'stopped' if killed else 'was not running'} "
+                f"(took {elapsed:.1f}s)",
+                stage_name="fish_s2_process_stop",
+            )
+
             # Wan is never unloaded anywhere in the mainline pipeline after
             # Phase A's pre-render-loop hook — once Phase B loads it, it stays
             # resident (56GB+) through assemble_video/publish and beyond, for
@@ -184,7 +205,20 @@ class DashboardWorker:
             # happens to evict it. Unlike Fish S2 this is a plain HTTP
             # /unload, not a process kill — Wan hasn't shown retention beyond
             # what /unload reclaims.
-            await unload_wan(self.config.settings.wan_base_url)
+            self.repo.record_event(
+                job_id, "stage_started",
+                "Unloading Wan video model to free VRAM for the next job…",
+                stage_name="wan_model_unload",
+            )
+            started = time.monotonic()
+            wan_unloaded = await unload_wan(self.config.settings.wan_base_url)
+            elapsed = time.monotonic() - started
+            self.repo.record_event(
+                job_id, "stage_completed",
+                f"Wan video model {'unloaded' if wan_unloaded else 'was already idle/unreachable'} "
+                f"(took {elapsed:.1f}s)",
+                stage_name="wan_model_unload",
+            )
 
     async def _execute_pipeline(self, action: DashboardQueueItem) -> None:
         """Dispatch to the right workflow function based on job phase."""
