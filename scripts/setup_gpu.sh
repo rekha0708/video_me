@@ -785,13 +785,15 @@ setup_latentsync() {
   local ckpt_dir="$latentsync_dir/checkpoints"
   if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$ckpt_dir"; fi
   if [[ ! -f "$ckpt_dir/latentsync_unet.pt" ]]; then
-    run "$venv_dir/bin/huggingface-cli" download ByteDance/LatentSync-1.6 \
+    run env HF_HUB_ENABLE_HF_TRANSFER=0 ${HF_TOKEN:+HF_TOKEN="$HF_TOKEN"} \
+      "$venv_dir/bin/huggingface-cli" download ByteDance/LatentSync-1.6 \
       latentsync_unet.pt --local-dir "$ckpt_dir"
   else
     ok "LatentSync U-Net checkpoint already exists"
   fi
   if [[ ! -f "$ckpt_dir/whisper/tiny.pt" ]]; then
-    run "$venv_dir/bin/huggingface-cli" download ByteDance/LatentSync-1.6 \
+    run env HF_HUB_ENABLE_HF_TRANSFER=0 ${HF_TOKEN:+HF_TOKEN="$HF_TOKEN"} \
+      "$venv_dir/bin/huggingface-cli" download ByteDance/LatentSync-1.6 \
       whisper/tiny.pt --local-dir "$ckpt_dir"
   else
     ok "LatentSync Whisper checkpoint already exists"
