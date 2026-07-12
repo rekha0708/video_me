@@ -117,6 +117,12 @@ class Settings(BaseSettings):
     whisper_isolate_vocals: bool = False  # Demucs vocal separation before Whisper; only applied when audio_profile="singing"
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"
+    # Final-video enhancer in adapters/assemble_video/ffmpeg_adapter.py.
+    # Off by default: normal assemble already exports a 1080x1920 MP4, while
+    # enabling this adds interpolation/sharper scaling work after video render.
+    video_upscale_enabled: bool = False
+    video_upscale_target_fps: int = 48
+    video_upscale_interpolation: Literal["fps", "minterpolate"] = "minterpolate"
     render_allow_placeholder_lora: bool = False
 
     # --- plan critique loop ---

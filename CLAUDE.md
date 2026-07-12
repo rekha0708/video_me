@@ -386,6 +386,9 @@ VIDEO_ME_FISH_S2_BASE_URL=http://localhost:8025
 WAN_S2V_OFFLOAD_MODEL=false
 WAN_I2V_OFFLOAD_MODEL=false
 LIGHTX2V_I2V_OFFLOAD_MODEL=false
+VIDEO_ME_VIDEO_UPSCALE_ENABLED=false
+VIDEO_ME_VIDEO_UPSCALE_TARGET_FPS=48
+VIDEO_ME_VIDEO_UPSCALE_INTERPOLATION=minterpolate
 # Legacy fallback URLs (only when the matching *_ADAPTER override is set):
 # VIDEO_ME_SD_BASE_URL=http://localhost:7860       # a1111
 # VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188  # ltx or comfyui_flux fallback

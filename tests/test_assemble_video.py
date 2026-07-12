@@ -185,6 +185,28 @@ def test_build_filter_contains_scale_pad(tmp_path: Path) -> None:
     assert "color=black" in f
 
 
+def test_build_filter_can_enable_upscale_interpolation(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path, video_upscale_enabled=True, upscale_target_fps=48)
+    caption_file = tmp_path / "caption.txt"
+    f = adapter._build_filter(caption_file, disclosure_required=False)
+    assert "minterpolate=fps=48" in f
+    assert "flags=lanczos" in f
+    assert "setsar=1" in f
+
+
+def test_build_filter_can_use_simple_fps_upscale_mode(tmp_path: Path) -> None:
+    adapter = _adapter(
+        tmp_path,
+        video_upscale_enabled=True,
+        upscale_target_fps=32,
+        upscale_interpolation="fps",
+    )
+    caption_file = tmp_path / "caption.txt"
+    f = adapter._build_filter(caption_file, disclosure_required=False)
+    assert "fps=32" in f
+    assert "minterpolate" not in f
+
+
 def test_build_filter_contains_drawtext_for_caption(tmp_path: Path) -> None:
     adapter = _adapter(tmp_path)
     caption_file = tmp_path / "caption.txt"

@@ -35,7 +35,7 @@ There are no per-stage "agents" — it's a single async pipeline process
 | 12b | generate_video *(fallback)* | **Wan 2.2 I2V** :8030 | ~52 GB | silent i2v; deferred-loaded; then LatentSync/MuseTalk repair |
 | 12c | generate_video *(experimental)* | **LightX2V Wan I2V** :8032 | GPU-bound, lower step count | Wan2.2-I2V-A14B + 4-step LightX2V LoRAs; visual-motion speed path |
 | 12d | lip_sync *(fallback/optional)* | **LatentSync** :8041 | ~18 GB | preferred repair for non-native I2V; MuseTalk :8040 remains a faster legacy fallback; `lipsync_adapter=none` intentionally skips repair |
-| 13 | assemble_video | ffmpeg (CPU) | 0 | concat, scale 1080×1920, captions, AI-disclosure label |
+| 13 | assemble_video | ffmpeg (CPU) | 0 | concat, scale 1080×1920, captions, AI-disclosure label; optional final interpolate/sharpen pass |
 | 14 | critique (video, Phase 2) | qwen3.6:35b | 30 | rubric on sampled output frames → pass/regenerate/reject |
 | 15 | publish | file copy (CPU) | 0 | → `review/<ts>_<lang>_<stem>/` + metadata.json |
 
@@ -82,5 +82,9 @@ Start everything + health-check: `bash scripts/start_services.sh`.
   adapter's 120 s timeout raises rather than OOM the next render.
 - **LightX2V fast path**: `LIGHTX2V_I2V_OFFLOAD_MODEL=false` is fastest and
   expects enough VRAM; set it true only when the LightX2V I2V service OOMs.
+- **Final video upscale toggle**: `VIDEO_ME_VIDEO_UPSCALE_ENABLED=true` enables
+  an ffmpeg final pass with Lanczos scaling and FPS interpolation. It is not a
+  ComfyUI latent diffusion upscale; the latent two-pass + RIFE/FILM backend is
+  the next GPU-quality implementation path.
 - **S2V requires audio before video**: `WanS2VAdapter` raises if `audio_uri`
   is missing, because the model conditions video length and mouth motion on audio.

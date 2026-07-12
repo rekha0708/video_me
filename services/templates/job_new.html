@@ -214,6 +214,18 @@
       <div class="form-hint">Used only when the video model does not handle lip-sync natively.</div>
     </div>
 
+    {# ── Final video enhancement ── #}
+    <div class="form-row">
+      <label>Final Video</label>
+      <label class="checkbox-row">
+        <input type="checkbox" name="video_upscale_enabled" id="nj-video-upscale">
+        <span>Upscale and smooth final video</span>
+      </label>
+      <div class="form-hint">
+        Adds a final 1080×1920 sharp scale and frame interpolation pass after assembly.
+      </div>
+    </div>
+
     {# ── Max shot duration ── #}
     <div class="form-row">
       <label>Max shot duration (seconds)</label>
@@ -610,6 +622,7 @@ async function submitNewJob(e) {
     const overrides = {};
     if (videoAdapter) overrides.video_adapter = videoAdapter;
     if (lipsyncAdapter) overrides.lipsync_adapter = lipsyncAdapter;
+    overrides.video_upscale_enabled = document.getElementById("nj-video-upscale").checked;
     if (hasRealAudio && whisperLanguage) overrides.whisper_language = whisperLanguage;
     const isolateVocalsCb = document.getElementById("nj-isolate-vocals");
     if (isolateVocalsCb && !isolateVocalsCb.disabled && isolateVocalsCb.checked) {

@@ -78,6 +78,9 @@ class FfmpegAssembleAdapter(AssembleVideo):
         caption_wrap_width: int = _DEFAULT_WRAP_WIDTH,
         crossfade_sec: float = _DEFAULT_CROSSFADE_SEC,
         target_fps: int = _DEFAULT_TARGET_FPS,
+        video_upscale_enabled: bool = False,
+        upscale_target_fps: int = 48,
+        upscale_interpolation: str = "minterpolate",
     ) -> None:
         self.work_dir = work_dir
         self._ffmpeg_bin = ffmpeg_bin
@@ -92,6 +95,9 @@ class FfmpegAssembleAdapter(AssembleVideo):
         self._crossfade_sec = crossfade_sec
         self._target_fps = target_fps
         self._caption_wrap_width = caption_wrap_width
+        self._video_upscale_enabled = video_upscale_enabled
+        self._upscale_target_fps = max(1, int(upscale_target_fps))
+        self._upscale_interpolation = upscale_interpolation
 
     async def health(self) -> HealthStatus:
         if not shutil.which(self._ffmpeg_bin):
@@ -139,6 +145,10 @@ class FfmpegAssembleAdapter(AssembleVideo):
             overlay_count=len(overlays),
             crossfade_sec=transition,
             preserve_timing=req.preserve_timing,
+            video_upscale_enabled=self._video_upscale_enabled,
+            upscale_target_fps=(
+                self._upscale_target_fps if self._video_upscale_enabled else None
+            ),
         )
 
         cmd = self._build_ffmpeg_args(
@@ -197,6 +207,27 @@ class FfmpegAssembleAdapter(AssembleVideo):
             usable = usable[:_MAX_OVERLAY_INPUTS]
         return usable
 
+    def _scale_pad_filter(self, *, require_fps: bool = False) -> str:
+        scale_flags = ":flags=lanczos" if self._video_upscale_enabled else ""
+        scale_pad = (
+            f"scale={self._width}:{self._height}{scale_flags}"
+            ":force_original_aspect_ratio=decrease,"
+            f"pad={self._width}:{self._height}"
+            ":(ow-iw)/2:(oh-ih)/2:color=black"
+        )
+        if self._video_upscale_enabled:
+            fps = self._upscale_target_fps
+            if self._upscale_interpolation == "minterpolate":
+                return (
+                    f"minterpolate=fps={fps}:mi_mode=mci:mc_mode=aobmc"
+                    ":me_mode=bidir:vsbmc=1,"
+                    f"{scale_pad},setsar=1"
+                )
+            return f"fps={fps},{scale_pad},setsar=1"
+        if require_fps:
+            return f"fps={self._target_fps},{scale_pad},setsar=1"
+        return scale_pad
+
     def _build_filter(
         self,
         caption_file: Path,
@@ -209,12 +240,7 @@ class FfmpegAssembleAdapter(AssembleVideo):
         """Build the video half of -filter_complex: scale+pad → overlay panels →
         caption → disclosure. base_video_label is the already-processed input
         (either the raw concat stream [0:v], or a crossfaded chain's output)."""
-        scale_pad = (
-            f"scale={self._width}:{self._height}"
-            ":force_original_aspect_ratio=decrease,"
-            f"pad={self._width}:{self._height}"
-            ":(ow-iw)/2:(oh-ih)/2:color=black"
-        )
+        scale_pad = self._scale_pad_filter()
         caption = (
             f"drawtext=textfile={caption_file}"
             f":fontsize={self._font_size}"
@@ -272,13 +298,7 @@ class FfmpegAssembleAdapter(AssembleVideo):
     ) -> tuple[str, str]:
         """xfade chain over n pre-indexed [0:v]..[n-1:v] inputs. Returns
         (filter statements joined by ';', final output label)."""
-        scale_pad = (
-            f"fps={self._target_fps},"
-            f"scale={self._width}:{self._height}"
-            ":force_original_aspect_ratio=decrease,"
-            f"pad={self._width}:{self._height}"
-            ":(ow-iw)/2:(oh-ih)/2:color=black,setsar=1"
-        )
+        scale_pad = self._scale_pad_filter(require_fps=True)
         stmts = []
         labels = []
         for i in range(n):

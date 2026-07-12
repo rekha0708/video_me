@@ -49,11 +49,15 @@ VIDEO_ME_VIDEO_ADAPTER=wan_lightx2v
 VIDEO_ME_LIPSYNC_ADAPTER=none
 VIDEO_ME_WAN_LIGHTX2V_BASE_URL=http://localhost:8032
 LIGHTX2V_I2V_OFFLOAD_MODEL=false
+VIDEO_ME_VIDEO_UPSCALE_ENABLED=true
 ```
 
 That path uses Wan2.2-I2V-A14B with LightX2V's 4-step I2V distill LoRAs and
 skips the lip-sync repair stage. Switch `VIDEO_ME_LIPSYNC_ADAPTER` back to
 `latentsync` if mouth alignment matters for a comparison run.
+The optional upscale flag runs the current ffmpeg final-video enhancer. A true
+ComfyUI latent two-pass upscale plus RIFE/FILM interpolation remains a separate
+GPU backend to add after the local enhancer is proven useful.
 
 ## One-command setup
 

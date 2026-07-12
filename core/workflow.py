@@ -369,6 +369,9 @@ def _make_adapters(
         assemble=FfmpegAssembleAdapter(
             work_dir=work_dir / "assembled",
             ffmpeg_bin=s.ffmpeg_bin,
+            video_upscale_enabled=s.video_upscale_enabled,
+            upscale_target_fps=s.video_upscale_target_fps,
+            upscale_interpolation=s.video_upscale_interpolation,
         ),
         critique=VlmCritiqueAdapter(
             work_dir=work_dir / "critique",

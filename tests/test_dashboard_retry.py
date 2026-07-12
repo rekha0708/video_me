@@ -148,6 +148,21 @@ def test_retry_with_body_overrides_lipsync_adapter(tmp_path: Path) -> None:
     assert latest.payload["overrides"]["lipsync_adapter"] == "latentsync"
 
 
+def test_retry_with_body_can_disable_video_upscale(tmp_path: Path) -> None:
+    client, repo = _make_client_and_repo(tmp_path)
+    job_id = _seed_job(repo, status="completed")
+    job = repo.get_job(job_id)
+    job.request["overrides"]["video_upscale_enabled"] = True
+    repo.save_job(job)
+
+    resp = client.post(f"/api/jobs/{job_id}/retry", json={"video_upscale_enabled": False})
+
+    assert resp.status_code == 200
+    queue = repo.list_queue(job_id)
+    latest = queue[-1]
+    assert latest.payload["overrides"]["video_upscale_enabled"] is False
+
+
 def test_retry_with_body_leaves_other_overrides_untouched(tmp_path: Path) -> None:
     client, repo = _make_client_and_repo(tmp_path)
     job_id = _seed_job(repo, status="completed", video_adapter="ltx")

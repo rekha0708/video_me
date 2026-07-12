@@ -162,7 +162,7 @@ Video-assembly adapters.
 ### `adapters/assemble_video/ffmpeg_adapter.py`
 
 - **class `FfmpegAssembleAdapter(AssembleVideo)`** — assemble_video adapter: stitch synced clips → add audio → burn captions
-  - `__init__(self, work_dir: Path, ffmpeg_bin: str='ffmpeg', width: int=_DEFAULT_WIDTH, height: int=_DEFAULT_HEIGHT, video_codec: str='libx264', audio_codec: str='aac', crf: int=23, font_size: int=50, font_color: str='white', caption_margin: int=_DEFAULT_CAPTION_MARGIN, caption_wrap_width: int=_DEFAULT_WRAP_WIDTH, crossfade_sec: float=_DEFAULT_CROSSFADE_SEC, target_fps: int=_DEFAULT_TARGET_FPS) -> None`
+  - `__init__(self, work_dir: Path, ffmpeg_bin: str='ffmpeg', width: int=_DEFAULT_WIDTH, height: int=_DEFAULT_HEIGHT, video_codec: str='libx264', audio_codec: str='aac', crf: int=23, font_size: int=50, font_color: str='white', caption_margin: int=_DEFAULT_CAPTION_MARGIN, caption_wrap_width: int=_DEFAULT_WRAP_WIDTH, crossfade_sec: float=_DEFAULT_CROSSFADE_SEC, target_fps: int=_DEFAULT_TARGET_FPS, video_upscale_enabled: bool=False, upscale_target_fps: int=48, upscale_interpolation: str='minterpolate') -> None`
   - `async health(self) -> HealthStatus`
   - `async estimate_cost(self, req: AssembleRequest) -> CostEstimate`
   - `async run(self, req: AssembleRequest) -> FinalVideo`
@@ -170,6 +170,7 @@ Video-assembly adapters.
   - `_write_concat_list(self, clips: list, work_dir: Path) -> Path` — Write ffmpeg concat demuxer file with absolute paths.
   - `_write_caption_file(self, caption_text: str, work_dir: Path) -> Path` — Write word-wrapped caption text; drawtext reads it via textfile=.
   - `_usable_overlays(self, overlays: list) -> list` — Cap the overlay input count and drop entries whose PNG is missing.
+  - `_scale_pad_filter(self, *, require_fps: bool=False) -> str`
   - `_build_filter(self, caption_file: Path, disclosure_required: bool, overlays: list=(), *, base_video_label: str='[0:v]', overlay_input_offset: int=2) -> str` — Build the video half of -filter_complex: scale+pad → overlay panels →
   - `_crossfade_transition(self, req: AssembleRequest) -> float` — Per-boundary crossfade duration, or 0.0 if crossfading isn't usable.
   - `_build_crossfade_video_chain(self, n: int, durations: list[float], transition: float) -> tuple[str, str]` — xfade chain over n pre-indexed [0:v]..[n-1:v] inputs. Returns

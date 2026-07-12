@@ -91,6 +91,9 @@
 - `whisper_isolate_vocals: bool` = `False`
 - `ffmpeg_bin: str` = `'ffmpeg'`
 - `ffprobe_bin: str` = `'ffprobe'`
+- `video_upscale_enabled: bool` = `False`
+- `video_upscale_target_fps: int` = `48`
+- `video_upscale_interpolation: Literal['fps', 'minterpolate']` = `'minterpolate'`
 - `render_allow_placeholder_lora: bool` = `False`
 - `max_plan_iterations: int` = `3`
 - `auto_approve_plan: bool` = `False`
@@ -491,6 +494,8 @@ LLM-authored chart/diagram panel composited over the upper third of the shot.
 - `lipsync_max_retries: int | None` = `Field(default=None, ge=0, le=5)`
 - `av_sync_duration_tolerance_sec: float | None` = `Field(default=None, ge=0.05, le=2.0)`
 - `av_sync_failure_policy: Literal['warn', 'fail'] | None` = `None`
+- `video_upscale_enabled: bool | None` = `None`
+- `video_upscale_target_fps: int | None` = `Field(default=None, ge=16, le=60)`
 - `auto_approve_plan: bool | None` = `None`
 - `auto_approve_images: bool | None` = `None`
 - `auto_approve_transcript: bool | None` = `None`

@@ -163,6 +163,12 @@
         <option value="none" {% if requested_la == 'none' %}selected{% endif %}>Skip repair</option>
       </select>
 
+      <label style="font-size:13px;font-weight:500;margin-left:8px">
+        {% set requested_upscale = job.request.get('overrides', {}).get('video_upscale_enabled') %}
+        <input type="checkbox" id="rerun-video-upscale" {% if requested_upscale %}checked{% endif %}>
+        Upscale
+      </label>
+
       <button class="btn btn-primary" id="retry-btn"
               onclick="retryJob('{{ job.job_id }}', this)">
         ↻ Re-run
@@ -692,6 +698,7 @@ async function retryJob(jobId, btn) {
   const phase = document.getElementById("rerun-phase")?.value || "";
   const videoAdapter = document.getElementById("rerun-video-adapter")?.value || "";
   const lipsyncAdapter = document.getElementById("rerun-lipsync-adapter")?.value || "";
+  const videoUpscale = document.getElementById("rerun-video-upscale")?.checked || false;
   const phaseLabel = phase || "same phase";
   if (!confirm(`Re-run job ${jobId} from "${phaseLabel}"?\n\nStages that already completed will be skipped.`)) return;
   const label = btn.textContent;
@@ -701,6 +708,7 @@ async function retryJob(jobId, btn) {
   if (phase) body.phase = phase;
   if (videoAdapter) body.video_adapter = videoAdapter;
   if (lipsyncAdapter) body.lipsync_adapter = lipsyncAdapter;
+  body.video_upscale_enabled = videoUpscale;
   try {
     const res = await fetch(`/api/jobs/${jobId}/retry`, {
       method: "POST",

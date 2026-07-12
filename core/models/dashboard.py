@@ -111,6 +111,8 @@ class DashboardJobOverrides(BaseModel):
     lipsync_max_retries: int | None = Field(default=None, ge=0, le=5)
     av_sync_duration_tolerance_sec: float | None = Field(default=None, ge=0.05, le=2.0)
     av_sync_failure_policy: Literal["warn", "fail"] | None = None
+    video_upscale_enabled: bool | None = None
+    video_upscale_target_fps: int | None = Field(default=None, ge=16, le=60)
     auto_approve_plan: bool | None = None
     auto_approve_images: bool | None = None
     auto_approve_transcript: bool | None = None

@@ -1408,6 +1408,7 @@ def create_app(
         "whisper_language",
         "max_shot_duration_sec", "lipsync_failure_policy", "lipsync_max_retries",
         "av_sync_duration_tolerance_sec", "av_sync_failure_policy",
+        "video_upscale_enabled", "video_upscale_target_fps",
     )
 
     _RERUN_PHASES = ("transcribe", "script_plan", "render", "assemble", "all")
@@ -1514,8 +1515,8 @@ def create_app(
                 retry_request["audio_profile"] = requested_profile
             overrides = dict(retry_request.get("overrides") or {})
             for key in _RETRYABLE_OVERRIDE_KEYS:
-                value = body.get(key)
-                if value:
+                if key in body and body[key] is not None:
+                    value = body[key]
                     overrides[key] = value
             retry_request["overrides"] = overrides
 

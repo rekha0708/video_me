@@ -72,6 +72,9 @@
 | `VIDEO_ME_WHISPER_ISOLATE_VOCALS` | `bool` | `False` |
 | `VIDEO_ME_FFMPEG_BIN` | `str` | `'ffmpeg'` |
 | `VIDEO_ME_FFPROBE_BIN` | `str` | `'ffprobe'` |
+| `VIDEO_ME_VIDEO_UPSCALE_ENABLED` | `bool` | `False` |
+| `VIDEO_ME_VIDEO_UPSCALE_TARGET_FPS` | `int` | `48` |
+| `VIDEO_ME_VIDEO_UPSCALE_INTERPOLATION` | `Literal['fps', 'minterpolate']` | `'minterpolate'` |
 | `VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA` | `bool` | `False` |
 | `VIDEO_ME_MAX_PLAN_ITERATIONS` | `int` | `3` |
 | `VIDEO_ME_AUTO_APPROVE_PLAN` | `bool` | `False` |

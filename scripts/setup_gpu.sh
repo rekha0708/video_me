@@ -1146,6 +1146,9 @@ LIGHTX2V_I2V_WIDTH=400
 LIGHTX2V_I2V_HEIGHT=704
 LIGHTX2V_I2V_STEPS=4
 LIGHTX2V_I2V_ATTN_MODE=sage_attn2
+VIDEO_ME_VIDEO_UPSCALE_ENABLED=false
+VIDEO_ME_VIDEO_UPSCALE_TARGET_FPS=48
+VIDEO_ME_VIDEO_UPSCALE_INTERPOLATION=minterpolate
 
 # Video/lip-sync QA policy. Wan S2V is native audio-conditioned video, so the
 # lip-sync repair policy applies only when VIDEO_ME_VIDEO_ADAPTER is non-native.
