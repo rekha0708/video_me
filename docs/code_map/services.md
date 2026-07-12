@@ -172,6 +172,14 @@ Runtime GPU/server status collection for the dashboard.
 - `_collect_system_status() -> dict[str, Any]`
 - `collect_gpu_status(*, workspace: Path | None=None, log_lines: int=120, runner: CommandRunner=_default_runner) -> dict[str, Any]` — Collect host, GPU, process, and service-log status for the dashboard.
 
+### `services/gpu_watermarks.py`
+
+High/low watermark tracking for the GPU/VRAM stats the dashboard already
+
+- `_update_metric(store: dict[str, Any], key: str, value: float | int | None) -> None`
+- `update_watermarks(store: dict[str, Any], status: dict[str, Any]) -> dict[str, Any]` — Fold one collect_gpu_status() sample into `store` (mutated in place) and return it.
+- `reset_watermarks(store: dict[str, Any]) -> None`
+
 ### `services/latentsync_server.py`
 
 LatentSync lip-sync HTTP service wrapper.

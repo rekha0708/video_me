@@ -32,6 +32,13 @@ from scripts.check_runtime_readiness import (
 )
 from services.dashboard_repository import DashboardRepository
 from services.gpu_status import collect_gpu_status
+from services.gpu_watermarks import reset_watermarks, update_watermarks
+
+# Min/max GPU/VRAM stats seen since this API process started (or since the
+# last POST /api/runtime/gpu-watermarks/reset) — see services/gpu_watermarks.py.
+# Deliberately process-lifetime, not persisted: same scope as WorkerHeartbeat
+# and other in-memory dashboard state, resets on `restart_dashboard.sh`.
+_gpu_watermarks: dict[str, Any] = {}
 
 _TERMINAL_STATUSES = {
     DashboardJobStatus.COMPLETED,
@@ -576,9 +583,14 @@ def create_app(
     @app.get("/api/runtime/gpu-status")
     def runtime_gpu_status(log_lines: int = 120) -> dict[str, Any]:
         log_lines = max(10, min(int(log_lines), 500))
-        return _base_response(
-            collect_gpu_status(workspace=Path.cwd(), log_lines=log_lines)
-        )
+        status = collect_gpu_status(workspace=Path.cwd(), log_lines=log_lines)
+        watermarks = update_watermarks(_gpu_watermarks, status)
+        return _base_response({**status, "watermarks": watermarks})
+
+    @app.post("/api/runtime/gpu-watermarks/reset")
+    def runtime_gpu_watermarks_reset() -> dict[str, Any]:
+        reset_watermarks(_gpu_watermarks)
+        return _base_response({"watermarks": _gpu_watermarks})
 
     @app.get("/api/config/defaults")
     def config_defaults() -> dict[str, Any]:

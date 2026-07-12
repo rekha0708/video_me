@@ -17,6 +17,10 @@
       Auto
     </label>
     <button class="btn btn-outline btn-sm" id="gpu-refresh-btn" onclick="loadGpuStatus()">↺ Refresh</button>
+    <button class="btn btn-outline btn-sm" id="gpu-watermark-reset-btn" onclick="resetGpuWatermarks()"
+            title="Clear the ↑high / ↓low tracking below and start fresh from the next sample">
+      ⟲ Reset watermarks
+    </button>
   </div>
 </div>
 
@@ -28,24 +32,28 @@
     <div class="gpu-metric-value" id="metric-cpu">--</div>
     <div class="gpu-meter"><div class="gpu-meter-fill" id="metric-cpu-bar"></div></div>
     <div class="gpu-metric-sub" id="metric-load">load --</div>
+    <div class="gpu-metric-watermark" id="metric-cpu-watermark">↑-- ↓--</div>
   </div>
   <div class="gpu-metric">
     <div class="gpu-metric-label">Memory</div>
     <div class="gpu-metric-value" id="metric-memory">--</div>
     <div class="gpu-meter"><div class="gpu-meter-fill" id="metric-memory-bar"></div></div>
     <div class="gpu-metric-sub" id="metric-memory-sub">--</div>
+    <div class="gpu-metric-watermark" id="metric-memory-watermark">↑-- ↓--</div>
   </div>
   <div class="gpu-metric">
     <div class="gpu-metric-label">GPU</div>
     <div class="gpu-metric-value" id="metric-gpu">--</div>
     <div class="gpu-meter"><div class="gpu-meter-fill" id="metric-gpu-bar"></div></div>
     <div class="gpu-metric-sub" id="metric-gpu-sub">--</div>
+    <div class="gpu-metric-watermark" id="metric-gpu-watermark">↑-- ↓--</div>
   </div>
   <div class="gpu-metric">
     <div class="gpu-metric-label">VRAM</div>
     <div class="gpu-metric-value" id="metric-vram">--</div>
     <div class="gpu-meter"><div class="gpu-meter-fill" id="metric-vram-bar"></div></div>
     <div class="gpu-metric-sub" id="metric-vram-sub">--</div>
+    <div class="gpu-metric-watermark" id="metric-vram-watermark">↑-- ↓--</div>
   </div>
 </div>
 
@@ -57,8 +65,8 @@
         <tr>
           <th>ID</th>
           <th>Name</th>
-          <th>GPU</th>
-          <th>VRAM</th>
+          <th>GPU (↑high ↓low)</th>
+          <th>VRAM (↑high ↓low)</th>
           <th>Mem Ctrl</th>
           <th>Temp</th>
           <th>Power</th>
@@ -149,7 +157,12 @@ function usageTone(value) {
   return "";
 }
 
-function addUsageCell(row, value, detail) {
+function fmtWatermark(watermark) {
+  if (!watermark) return "";
+  return `↑${fmtPercent(watermark.max)} ↓${fmtPercent(watermark.min)}`;
+}
+
+function addUsageCell(row, value, detail, watermark) {
   const cell = document.createElement("td");
   cell.className = "gpu-row-meter-cell";
 
@@ -180,6 +193,14 @@ function addUsageCell(row, value, detail) {
 
   cell.appendChild(top);
   cell.appendChild(meter);
+
+  if (watermark) {
+    const wm = document.createElement("div");
+    wm.className = "gpu-metric-watermark";
+    wm.textContent = fmtWatermark(watermark);
+    cell.appendChild(wm);
+  }
+
   row.appendChild(cell);
 }
 
@@ -207,6 +228,20 @@ function setGpuAlert(kind, text) {
   alert.appendChild(banner);
 }
 
+async function resetGpuWatermarks() {
+  const btn = document.getElementById("gpu-watermark-reset-btn");
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch("/api/runtime/gpu-watermarks/reset", { method: "POST" });
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    await loadGpuStatus();
+  } catch (err) {
+    setGpuAlert("error", `Could not reset watermarks: ${err.message}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function loadGpuStatus() {
   const btn = document.getElementById("gpu-refresh-btn");
   if (btn) btn.disabled = true;
@@ -228,6 +263,7 @@ function renderGpuStatus(data) {
   const gpus = data.gpus || [];
   const processes = data.processes || [];
   const nvidia = data.nvidia_smi || {};
+  const watermarks = data.watermarks || {};
 
   setText("gpu-hostname", system.hostname || "unknown host");
   setText("gpu-updated", data.collected_at ? `updated ${formatTime(data.collected_at)}` : "updated --");
@@ -240,16 +276,19 @@ function renderGpuStatus(data) {
     ? system.load_avg.map((v) => Number(v).toFixed(2)).join(" / ")
     : "--";
   setText("metric-load", `load ${loadAvg} · ${system.cpu_count || "--"} cores`);
+  setText("metric-cpu-watermark", fmtWatermark(watermarks.cpu_percent));
 
   setText("metric-memory", fmtPercent(memory.used_percent));
   setMeter("metric-memory-bar", memory.used_percent);
   setText("metric-memory-sub", `${fmtMb(memory.used_mb)} / ${fmtMb(memory.total_mb)}`);
+  setText("metric-memory-watermark", fmtWatermark(watermarks.memory_used_percent));
 
   const gpuUtils = gpus.map((gpu) => gpu.gpu_util_percent).filter((v) => v !== null && v !== undefined);
   const maxGpu = gpuUtils.length ? Math.max(...gpuUtils) : null;
   setText("metric-gpu", fmtPercent(maxGpu));
   setMeter("metric-gpu-bar", maxGpu);
   setText("metric-gpu-sub", gpus.length ? `${gpus.length} device${gpus.length === 1 ? "" : "s"}` : "no NVIDIA device");
+  setText("metric-gpu-watermark", fmtWatermark(watermarks.gpu_util_percent));
 
   const usedVram = gpus.reduce((sum, gpu) => sum + (gpu.memory_used_mb || 0), 0);
   const totalVram = gpus.reduce((sum, gpu) => sum + (gpu.memory_total_mb || 0), 0);
@@ -257,14 +296,15 @@ function renderGpuStatus(data) {
   setText("metric-vram", fmtPercent(vramPct));
   setMeter("metric-vram-bar", vramPct);
   setText("metric-vram-sub", totalVram ? `${fmtMb(usedVram)} / ${fmtMb(totalVram)}` : "--");
+  setText("metric-vram-watermark", fmtWatermark(watermarks.vram_used_percent));
 
-  renderGpuDevices(gpus);
+  renderGpuDevices(gpus, watermarks.per_gpu || {});
   setText("gpu-processes-note", data.process_name_note || "");
   renderGpuProcesses(processes, gpus);
   renderGpuLogs(data.logs || []);
 }
 
-function renderGpuDevices(gpus) {
+function renderGpuDevices(gpus, perGpuWatermarks) {
   const body = document.getElementById("gpu-devices-body");
   if (!body) return;
   body.innerHTML = "";
@@ -274,10 +314,15 @@ function renderGpuDevices(gpus) {
   }
   gpus.forEach((gpu) => {
     const row = document.createElement("tr");
+    const wm = (perGpuWatermarks || {})[gpu.uuid || String(gpu.index)] || {};
     addCell(row, fmtInt(gpu.index), "td-mono");
     addCell(row, gpu.name || "--");
-    addUsageCell(row, gpu.gpu_util_percent);
-    addUsageCell(row, gpu.vram_used_percent, `${fmtMb(gpu.memory_used_mb)} / ${fmtMb(gpu.memory_total_mb)}`);
+    addUsageCell(row, gpu.gpu_util_percent, null, wm.gpu_util_percent);
+    addUsageCell(
+      row, gpu.vram_used_percent,
+      `${fmtMb(gpu.memory_used_mb)} / ${fmtMb(gpu.memory_total_mb)}`,
+      wm.vram_used_percent,
+    );
     addUsageCell(row, gpu.memory_util_percent);
     addCell(row, gpu.temperature_c === null || gpu.temperature_c === undefined ? "--" : `${gpu.temperature_c} C`);
     addCell(row, `${fmtWatts(gpu.power_draw_w)} / ${fmtWatts(gpu.power_limit_w)}`, "td-muted");

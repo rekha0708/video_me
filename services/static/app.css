@@ -540,6 +540,13 @@ textarea:focus {
   min-height: 18px;
 }
 
+.gpu-metric-watermark {
+  color: var(--muted);
+  font-size: 11px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  margin-top: 2px;
+}
+
 .gpu-meter {
   height: 8px;
   width: 100%;

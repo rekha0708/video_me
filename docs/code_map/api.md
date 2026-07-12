@@ -2,7 +2,7 @@
 
 # Dashboard API routes (`services/dashboard_api.py`)
 
-41 routes.
+42 routes.
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
@@ -38,6 +38,7 @@
 | GET | `/api/local-images` | `list_local_images` |  |
 | GET | `/api/local-videos` | `list_local_videos` |  |
 | GET | `/api/runtime/gpu-status` | `runtime_gpu_status` |  |
+| POST | `/api/runtime/gpu-watermarks/reset` | `runtime_gpu_watermarks_reset` |  |
 | GET | `/api/runtime/readiness` | `runtime_readiness` |  |
 | GET | `/api/runtime/services` | `runtime_services` |  |
 | POST | `/api/uploads/character-image` | `upload_character_image` |  |

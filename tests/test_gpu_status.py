@@ -199,3 +199,106 @@ def test_gpu_status_endpoint_clamps_log_lines(tmp_path: Path, monkeypatch: pytes
     assert resp.json()["system"]["hostname"] == "gpu-host"
     assert seen["log_lines"] == 500
     assert isinstance(seen["workspace"], Path)
+
+
+def _dashboard_test_app(tmp_path: Path):
+    from core.config import AppConfig, Settings
+    from core.models.profile import Cast, CastMember, ChannelProfile
+    import services.dashboard_api as dashboard_api
+
+    settings = Settings(
+        data_dir=str(tmp_path / "data"),
+        artifact_dir=str(tmp_path / "art"),
+        sqlite_path=str(tmp_path / "test.db"),
+    )
+    cfg = AppConfig(
+        settings=settings,
+        channel_profile=ChannelProfile(
+            id="test", name="test", aspect_ratio="9:16", genre_content="education",
+            tone="friendly", format="animated_character", made_for_kids=True,
+        ),
+        cast=Cast(
+            id="kids_duo", species="human", is_original_synthetic=True,
+            members=[
+                CastMember(
+                    id="max", name="Max", visual_descriptor="boy",
+                    lora_ref="loras/max", voice_profile_ref="voices/max", personality="friendly",
+                ),
+            ],
+        ),
+    )
+    return dashboard_api, dashboard_api.create_app(config_loader=lambda: cfg)
+
+
+@pytest.mark.skipif(not _has_fastapi, reason="fastapi not installed")
+def test_gpu_status_endpoint_includes_and_widens_watermarks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fastapi.testclient import TestClient
+
+    dashboard_api, app = _dashboard_test_app(tmp_path)
+    dashboard_api._gpu_watermarks.clear()  # isolate from other tests sharing this module global
+
+    samples = iter([
+        {
+            "collected_at": "t1", "workspace": str(tmp_path),
+            "system": {"hostname": "h", "cpu_percent": 10.0, "memory": {"used_percent": 20.0}},
+            "nvidia_smi": {"available": True, "error": None}, "processes": [], "logs": [],
+            "gpus": [{
+                "uuid": "gpu-0", "index": 0, "gpu_util_percent": 30, "vram_used_percent": 40.0,
+                "memory_used_mb": 4000, "memory_total_mb": 10000,
+            }],
+        },
+        {
+            "collected_at": "t2", "workspace": str(tmp_path),
+            "system": {"hostname": "h", "cpu_percent": 90.0, "memory": {"used_percent": 5.0}},
+            "nvidia_smi": {"available": True, "error": None}, "processes": [], "logs": [],
+            "gpus": [{
+                "uuid": "gpu-0", "index": 0, "gpu_util_percent": 5, "vram_used_percent": 10.0,
+                "memory_used_mb": 1000, "memory_total_mb": 10000,
+            }],
+        },
+    ])
+    monkeypatch.setattr(dashboard_api, "collect_gpu_status", lambda **_kw: next(samples))
+
+    client = TestClient(app, raise_server_exceptions=False)
+
+    wm1 = client.get("/api/runtime/gpu-status").json()["watermarks"]
+    assert wm1["cpu_percent"] == {"min": 10.0, "max": 10.0}
+
+    wm2 = client.get("/api/runtime/gpu-status").json()["watermarks"]
+    assert wm2["cpu_percent"] == {"min": 10.0, "max": 90.0}
+    assert wm2["gpu_util_percent"] == {"min": 5, "max": 30}
+    assert wm2["per_gpu"]["gpu-0"]["vram_used_percent"] == {"min": 10.0, "max": 40.0}
+
+    dashboard_api._gpu_watermarks.clear()
+
+
+@pytest.mark.skipif(not _has_fastapi, reason="fastapi not installed")
+def test_gpu_watermarks_reset_endpoint_clears_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fastapi.testclient import TestClient
+
+    dashboard_api, app = _dashboard_test_app(tmp_path)
+    dashboard_api._gpu_watermarks.clear()
+
+    monkeypatch.setattr(
+        dashboard_api, "collect_gpu_status",
+        lambda **_kw: {
+            "collected_at": "t1", "workspace": str(tmp_path),
+            "system": {"hostname": "h", "cpu_percent": 55.0, "memory": {"used_percent": 33.0}},
+            "nvidia_smi": {"available": True, "error": None}, "processes": [], "logs": [], "gpus": [],
+        },
+    )
+
+    client = TestClient(app, raise_server_exceptions=False)
+    client.get("/api/runtime/gpu-status")
+    assert dashboard_api._gpu_watermarks  # populated
+
+    reset_resp = client.post("/api/runtime/gpu-watermarks/reset")
+    assert reset_resp.status_code == 200
+    assert reset_resp.json()["watermarks"] == {}
+    assert dashboard_api._gpu_watermarks == {}
+
+    dashboard_api._gpu_watermarks.clear()

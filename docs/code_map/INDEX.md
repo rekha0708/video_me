@@ -88,6 +88,7 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `services/dashboard_worker.py` — Dashboard worker — claims queued jobs, runs the pipeline, emits events.
 - `services/fish_s2_server.py` — Fish Audio S2 TTS HTTP service wrapper.
 - `services/gpu_status.py` — Runtime GPU/server status collection for the dashboard.
+- `services/gpu_watermarks.py` — High/low watermark tracking for the GPU/VRAM stats the dashboard already
 - `services/latentsync_server.py` — LatentSync lip-sync HTTP service wrapper.
 - `services/musetalk_compat/sitecustomize.py` — PyTorch 2.6+ changed torch.load's weights_only default from False to True,
 - `services/musetalk_server.py` — MuseTalk lip-sync HTTP service wrapper.
@@ -130,6 +131,7 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `tests/test_generate_video.py` — (no module docstring)
 - `tests/test_gpu_sequencer.py` — (no module docstring)
 - `tests/test_gpu_status.py` — (no module docstring)
+- `tests/test_gpu_watermarks.py` — (no module docstring)
 - `tests/test_latentsync_adapter.py` — (no module docstring)
 - `tests/test_lip_sync.py` — (no module docstring)
 - `tests/test_ltx_render.py` — Unit tests for LtxAdapter prompt/workflow building (no ComfyUI calls).
