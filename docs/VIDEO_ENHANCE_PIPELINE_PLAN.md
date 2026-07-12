@@ -61,6 +61,12 @@ run as short-lived subprocesses only during the `video_enhance` stage, so simply
 installing them does not keep VRAM occupied. Use `--skip-video-enhance` only for
 minimal/fast setup runs.
 
+To retry only the RIFE model download/extract after a failed setup run:
+
+```bash
+bash scripts/setup_gpu.sh --download-rife-model-only
+```
+
 `realesrgan_rife` is the intended first AI throughput benchmark:
 
 1. Real-ESRGAN video restoration.

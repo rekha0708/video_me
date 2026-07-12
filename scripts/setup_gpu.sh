@@ -45,6 +45,7 @@ fi
 WHISPER_DOWNLOAD_ROOT="${VIDEO_ME_WHISPER_DOWNLOAD_ROOT:-}"
 WHISPER_MODEL_REVISION="${VIDEO_ME_WHISPER_MODEL_REVISION:-}"
 SKIP_WHISPER_MODEL=0
+DOWNLOAD_RIFE_MODEL_ONLY=0
 
 usage() {
   cat <<'EOF'
@@ -84,6 +85,8 @@ Options:
   --skip-system-deps        Skip apt-get installs
   --skip-python-deps        Skip pip install
   --skip-whisper-model      Skip faster-whisper model prefetch
+  --download-rife-model-only
+                            Only download/extract RIFE pretrained HD model, then exit
   --whisper-model MODEL     Whisper model used by jobs [default: large-v3]
   --whisper-model-revision REV
                             Optional HF commit/tag to pin faster-whisper downloads
@@ -130,6 +133,9 @@ Quick commands:
   # Dry-run to preview all steps:
   bash scripts/setup_gpu.sh --dry-run
 
+  # Retry only the RIFE model zip download/extract:
+  bash scripts/setup_gpu.sh --download-rife-model-only
+
   # Code-only smoke test (no GPU, no services):
   bash scripts/setup_gpu.sh --code-test --skip-services --skip-ollama --skip-comfyui --skip-fish-s2 --skip-wan
 
@@ -160,6 +166,7 @@ while [[ $# -gt 0 ]]; do
     --skip-system-deps)   SKIP_SYSTEM_DEPS=1; shift ;;
     --skip-python-deps)   SKIP_PYTHON_DEPS=1; shift ;;
     --skip-whisper-model) SKIP_WHISPER_MODEL=1; shift ;;
+    --download-rife-model-only) DOWNLOAD_RIFE_MODEL_ONLY=1; shift ;;
     --whisper-model)      [[ $# -ge 2 ]] || die "--whisper-model requires a model name"; WHISPER_MODEL_SIZE="$2"; if [[ "$WHISPER_PREFETCH_MODELS_SET" == "0" ]]; then WHISPER_PREFETCH_MODELS="$2"; fi; shift 2 ;;
     --whisper-model-revision) [[ $# -ge 2 ]] || die "--whisper-model-revision requires a revision"; WHISPER_MODEL_REVISION="$2"; shift 2 ;;
     --prefetch-whisper-models) [[ $# -ge 2 ]] || die "--prefetch-whisper-models requires a comma-separated list"; WHISPER_PREFETCH_MODELS="$2"; WHISPER_PREFETCH_MODELS_SET=1; shift 2 ;;
@@ -912,6 +919,69 @@ setup_lightx2v() {
 }
 
 # ── Step 6c2: AI video enhancement (Real-ESRGAN + RIFE/FILM) ────────────────
+setup_rife_model() {
+  log "Setting up RIFE pretrained HD model"
+
+  local venv_dir="${1:-$WORKSPACE/.venv_video_enhance}"
+  local rife_dir="${2:-$WORKSPACE/ECCV2022-RIFE}"
+
+  if [[ ! -d "$venv_dir" ]]; then
+    log "Creating $venv_dir (system-site-packages for CUDA torch)"
+    run python3 -m venv --system-site-packages "$venv_dir"
+  else
+    ok "AI video enhance venv already exists at $venv_dir"
+  fi
+
+  local pip="$venv_dir/bin/pip"
+  run "$pip" install --upgrade pip setuptools wheel
+
+  if [[ ! -d "$rife_dir" ]]; then
+    run git clone https://github.com/hzwer/ECCV2022-RIFE.git "$rife_dir"
+  else
+    ok "RIFE already cloned at $rife_dir"
+    if [[ -d "$rife_dir/.git" ]]; then
+      run git -C "$rife_dir" pull --ff-only || warn "RIFE git pull failed — continuing"
+    else
+      warn "$rife_dir is not a git checkout — continuing with existing files"
+    fi
+  fi
+
+  # RIFE's upstream requirements.txt pins numpy<=1.23.5. That version has no
+  # Python 3.12 wheel and fails during source-build setup with pkgutil.ImpImporter
+  # removed. Keep RIFE on the modern shared video deps instead; torch is inherited
+  # from the CUDA base image through --system-site-packages.
+  run "$pip" install gdown opencv-python tqdm "numpy>=1.26,<2.3" ffmpeg-python moviepy "imageio[ffmpeg]" scikit-video || \
+      warn "Some RIFE runtime deps may have failed"
+
+  if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$rife_dir/train_log"; fi
+  if compgen -G "$rife_dir/train_log/*.pkl" >/dev/null; then
+    ok "RIFE model weights already present in $rife_dir/train_log"
+    return
+  fi
+
+  log "Downloading RIFE pretrained HD model zip"
+  local rife_zip="$WORKSPACE/RIFE_trained_model_v3.6.zip"
+  local rife_tmp="$WORKSPACE/rife_model_extract"
+  # Newer gdown releases removed/changed the old `--id <file_id>` form.
+  # Use a positional Google Drive URL so the same command works across gdown
+  # versions.
+  run "$venv_dir/bin/gdown" "https://drive.google.com/uc?id=1APIzVeI-4ZZCEuIRE1m6WYfSCaOsi_7_" -O "$rife_zip"
+  if [[ "$DRY_RUN" == "0" ]]; then
+    rm -rf "$rife_tmp"
+    mkdir -p "$rife_tmp"
+    run "$venv_dir/bin/python" -m zipfile -e "$rife_zip" "$rife_tmp"
+    run find "$rife_tmp" -type f \( -name "*.pkl" -o -name "RIFE*.py" \) -exec cp {} "$rife_dir/train_log/" \;
+    rm -rf "$rife_tmp"
+  fi
+  if [[ "$DRY_RUN" != "0" ]]; then
+    ok "[dry run] RIFE model zip would be extracted into $rife_dir/train_log"
+  elif ! compgen -G "$rife_dir/train_log/*.pkl" >/dev/null; then
+    warn "RIFE zip extracted but no *.pkl found; download manually into $rife_dir/train_log"
+  else
+    ok "RIFE model weights ready in $rife_dir/train_log"
+  fi
+}
+
 setup_video_enhance() {
   log "Setting up AI video enhancement backends (Real-ESRGAN + RIFE/FILM)"
   # These run as short-lived subprocesses from adapters/video_enhance/ai_adapter.py,
@@ -974,48 +1044,7 @@ setup_video_enhance() {
     "$realesrgan_weights/realesr-animevideov3.pth" \
     "Real-ESRGAN anime video v3"
 
-  if [[ ! -d "$rife_dir" ]]; then
-    run git clone https://github.com/hzwer/ECCV2022-RIFE.git "$rife_dir"
-  else
-    ok "RIFE already cloned at $rife_dir"
-    if [[ -d "$rife_dir/.git" ]]; then
-      run git -C "$rife_dir" pull --ff-only || warn "RIFE git pull failed — continuing"
-    else
-      warn "$rife_dir is not a git checkout — continuing with existing files"
-    fi
-  fi
-  # RIFE's upstream requirements.txt pins numpy<=1.23.5. That version has no
-  # Python 3.12 wheel and fails during source-build setup with pkgutil.ImpImporter
-  # removed. Keep RIFE on the modern shared video deps instead; torch is inherited
-  # from the CUDA base image through --system-site-packages.
-  run "$pip" install opencv-python tqdm "numpy>=1.26,<2.3" ffmpeg-python moviepy "imageio[ffmpeg]" scikit-video || \
-      warn "Some RIFE runtime deps may have failed"
-  if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$rife_dir/train_log"; fi
-  if compgen -G "$rife_dir/train_log/*.pkl" >/dev/null; then
-    ok "RIFE model weights already present in $rife_dir/train_log"
-  else
-    log "Downloading RIFE pretrained HD model zip"
-    local rife_zip="$WORKSPACE/RIFE_trained_model_v3.6.zip"
-    local rife_tmp="$WORKSPACE/rife_model_extract"
-    # Newer gdown releases removed/changed the old `--id <file_id>` form.
-    # Use a positional Google Drive URL so the same command works across gdown
-    # versions.
-    run "$venv_dir/bin/gdown" "https://drive.google.com/uc?id=1APIzVeI-4ZZCEuIRE1m6WYfSCaOsi_7_" -O "$rife_zip"
-    if [[ "$DRY_RUN" == "0" ]]; then
-      rm -rf "$rife_tmp"
-      mkdir -p "$rife_tmp"
-      unzip -q "$rife_zip" -d "$rife_tmp"
-      find "$rife_tmp" -type f \( -name "*.pkl" -o -name "RIFE*.py" \) -exec cp {} "$rife_dir/train_log/" \;
-      rm -rf "$rife_tmp"
-    fi
-    if [[ "$DRY_RUN" != "0" ]]; then
-      ok "[dry run] RIFE model zip would be extracted into $rife_dir/train_log"
-    elif ! compgen -G "$rife_dir/train_log/*.pkl" >/dev/null; then
-      warn "RIFE zip extracted but no *.pkl found; download manually into $rife_dir/train_log"
-    else
-      ok "RIFE model weights ready in $rife_dir/train_log"
-    fi
-  fi
+  setup_rife_model "$venv_dir" "$rife_dir"
 
   local film_bootstrap="python3"
   if need_cmd python3.10; then
@@ -1411,6 +1440,12 @@ run_readiness() {
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 log "video_me GPU setup  (workspace: $WORKSPACE)"
+
+if [[ "$DOWNLOAD_RIFE_MODEL_ONLY" == "1" ]]; then
+  setup_rife_model
+  log "RIFE model-only setup complete"
+  exit 0
+fi
 
 check_cuda
 
