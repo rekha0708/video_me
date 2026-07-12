@@ -108,6 +108,7 @@ _COST_GROUP_ORDER = [
     "render",
     "voice",
     "video",
+    "enhance",
     "assemble",
     "training",
     "other",
@@ -119,6 +120,7 @@ _COST_GROUP_LABELS = {
     "render": "Image render",
     "voice": "Voice / source audio",
     "video": "Video + lip-sync",
+    "enhance": "Video enhancement",
     "assemble": "Assembly",
     "training": "Training",
     "other": "Other",
@@ -151,6 +153,7 @@ _COST_STAGE_GROUPS = {
     "lip_sync": "video",
     "lip_sync_qa": "video",
     "shot_complete": "video",
+    "video_enhance": "enhance",
     "assemble_video": "assemble",
     "publish": "assemble",
     "lora_train": "training",
@@ -1409,6 +1412,7 @@ def create_app(
         "max_shot_duration_sec", "lipsync_failure_policy", "lipsync_max_retries",
         "av_sync_duration_tolerance_sec", "av_sync_failure_policy",
         "video_upscale_enabled", "video_upscale_target_fps",
+        "video_enhance_enabled", "video_enhance_adapter", "video_enhance_target_fps",
     )
 
     _RERUN_PHASES = ("transcribe", "script_plan", "render", "assemble", "all")

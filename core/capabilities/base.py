@@ -30,6 +30,8 @@ from core.models.capabilities import (
     SeparateAudioResult,
     TranscribeRequest,
     TranscribeResult,
+    VideoEnhanceRequest,
+    VideoEnhanceResult,
     VideoClip,
     VideoRequest,
     VisualContext,
@@ -122,6 +124,10 @@ class MixAudio(Capability[MixAudioRequest, AudioTrack], ABC):
 
 class AssembleVideo(Capability[AssembleRequest, FinalVideo], ABC):
     name = "assemble_video"
+
+
+class EnhanceVideo(Capability[VideoEnhanceRequest, VideoEnhanceResult], ABC):
+    name = "video_enhance"
 
 
 class Critique(Capability[CritiqueRequest, CritiqueResult], ABC):

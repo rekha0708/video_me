@@ -12,6 +12,7 @@
 #   ComfyUI       (port 8188)  — LTX-2.3 legacy video gen / Flux fallback
 #   Wan 2.2 I2V   (port 8030)  — image-to-video fallback (VIDEO_ADAPTER=wan)
 #   LightX2V I2V  (port 8032)  — experimental 4-step Wan I2V fast path
+#   AI Enhance    (subprocess) — Real-ESRGAN/RIFE/FILM, no resident port
 #   LatentSync    (port 8041)  — lip-sync repair for Wan I2V
 #   MuseTalk      (port 8040)  — legacy lip-sync fallback
 #   Chatterbox    (port 8020)  — EN-only TTS fallback (TTS_ADAPTER=chatterbox)
@@ -150,6 +151,8 @@ RENDER_ADAPTER="${VIDEO_ME_RENDER_ADAPTER:-musubi_flux}"
 VIDEO_ADAPTER="${VIDEO_ME_VIDEO_ADAPTER:-wan_s2v}"
 TTS_ADAPTER="${VIDEO_ME_TTS_ADAPTER:-fish_s2}"
 LIPSYNC_ADAPTER="${VIDEO_ME_LIPSYNC_ADAPTER:-latentsync}"
+VIDEO_ENHANCE_ENABLED="${VIDEO_ME_VIDEO_ENHANCE_ENABLED:-false}"
+VIDEO_ENHANCE_ADAPTER="${VIDEO_ME_VIDEO_ENHANCE_ADAPTER:-ffmpeg}"
 WHISPER_MODEL_SIZE="${VIDEO_ME_WHISPER_MODEL_SIZE:-large-v3}"
 WHISPER_MODEL_REVISION="${VIDEO_ME_WHISPER_MODEL_REVISION:-}"
 
@@ -160,6 +163,7 @@ NEED_CHATTERBOX=0
 NEED_WAN_S2V=0
 NEED_WAN_I2V=0
 NEED_WAN_LIGHTX2V=0
+NEED_VIDEO_ENHANCE_CLI=0
 NEED_LATENTSYNC=0
 NEED_MUSETALK=0
 
@@ -194,7 +198,20 @@ case "$TTS_ADAPTER" in
   chatterbox) NEED_CHATTERBOX=1 ;;
 esac
 
-log "Configured adapters: render=$RENDER_ADAPTER video=$VIDEO_ADAPTER tts=$TTS_ADAPTER lipsync=$LIPSYNC_ADAPTER"
+if [[ "$VIDEO_ENHANCE_ENABLED" == "true" || "$VIDEO_ENHANCE_ENABLED" == "1" ]]; then
+  case "$VIDEO_ENHANCE_ADAPTER" in
+    ffmpeg) ;;
+    latent_rife|latent_film)
+      NEED_VIDEO_ENHANCE_CLI=1
+      NEED_COMFYUI=1
+      ;;
+    rife|film|realesrgan_rife|realesrgan_film)
+      NEED_VIDEO_ENHANCE_CLI=1
+      ;;
+  esac
+fi
+
+log "Configured adapters: render=$RENDER_ADAPTER video=$VIDEO_ADAPTER tts=$TTS_ADAPTER lipsync=$LIPSYNC_ADAPTER enhance=$VIDEO_ENHANCE_ADAPTER enabled=$VIDEO_ENHANCE_ENABLED"
 
 # ── faster-whisper model cache ────────────────────────────────────────────────
 # Whisper is loaded inside dashboard worker jobs, not as a long-running service.
@@ -287,6 +304,53 @@ if [[ "$RENDER_ADAPTER" == "musubi_flux" ]]; then
   fi
 else
   ok "musubi-tuner not selected by current render adapter — skipping"
+fi
+
+# ── AI video enhancement (subprocess backends, no resident service) ───────────
+if [[ "$NEED_VIDEO_ENHANCE_CLI" == "1" ]]; then
+  log "AI video enhance ($VIDEO_ENHANCE_ADAPTER, subprocess — no port)"
+  if [[ "$VIDEO_ENHANCE_ADAPTER" == "rife" || "$VIDEO_ENHANCE_ADAPTER" == "realesrgan_rife" || "$VIDEO_ENHANCE_ADAPTER" == "latent_rife" ]]; then
+    if [[ ! -x "$WORKSPACE/.venv_video_enhance/bin/python" ]]; then
+      warn "AI video enhance venv missing at $WORKSPACE/.venv_video_enhance — run setup_gpu.sh --with-video-enhance"
+    elif [[ ! -f "$WORKSPACE/ECCV2022-RIFE/inference_video.py" ]]; then
+      warn "RIFE checkout missing at $WORKSPACE/ECCV2022-RIFE — run setup_gpu.sh --with-video-enhance"
+    elif ! compgen -G "$WORKSPACE/ECCV2022-RIFE/train_log/*.pkl" >/dev/null; then
+      warn "RIFE weights missing in $WORKSPACE/ECCV2022-RIFE/train_log — run setup_gpu.sh --with-video-enhance"
+    else
+      ok "RIFE backend files present"
+    fi
+  fi
+  if [[ "$VIDEO_ENHANCE_ADAPTER" == "realesrgan_rife" || "$VIDEO_ENHANCE_ADAPTER" == "realesrgan_film" ]]; then
+    if [[ ! -f "$WORKSPACE/Real-ESRGAN/inference_realesrgan_video.py" ]]; then
+      warn "Real-ESRGAN checkout missing at $WORKSPACE/Real-ESRGAN — run setup_gpu.sh --with-video-enhance"
+    elif [[ ! -f "$WORKSPACE/Real-ESRGAN/weights/realesr-general-x4v3.pth" ]]; then
+      warn "Real-ESRGAN weights missing — run setup_gpu.sh --with-video-enhance"
+    elif [[ ! -f "$WORKSPACE/Real-ESRGAN/weights/realesr-general-wdn-x4v3.pth" ]]; then
+      warn "Real-ESRGAN weak-denoise weight missing — run setup_gpu.sh --with-video-enhance"
+    else
+      ok "Real-ESRGAN backend files present"
+    fi
+  fi
+  if [[ "$VIDEO_ENHANCE_ADAPTER" == "film" || "$VIDEO_ENHANCE_ADAPTER" == "realesrgan_film" || "$VIDEO_ENHANCE_ADAPTER" == "latent_film" ]]; then
+    if [[ ! -x "$WORKSPACE/.venv_film/bin/python" ]]; then
+      warn "FILM venv missing at $WORKSPACE/.venv_film — run setup_gpu.sh --with-video-enhance"
+    elif [[ ! -f "$WORKSPACE/frame-interpolation/eval/interpolator_cli.py" ]]; then
+      warn "FILM checkout missing at $WORKSPACE/frame-interpolation — run setup_gpu.sh --with-video-enhance"
+    elif [[ ! -d "$WORKSPACE/FILM/film_net/Style/saved_model" ]]; then
+      warn "FILM Style SavedModel missing at $WORKSPACE/FILM/film_net/Style/saved_model"
+    else
+      ok "FILM backend files present"
+    fi
+  fi
+  if [[ "$VIDEO_ENHANCE_ADAPTER" == "latent_rife" || "$VIDEO_ENHANCE_ADAPTER" == "latent_film" ]]; then
+    if [[ -f "$ROOT_DIR/${VIDEO_ME_VIDEO_ENHANCE_LATENT_WORKFLOW:-assets/comfyui_workflows/video_enhance_latent.json}" ]]; then
+      ok "Latent enhance workflow file present"
+    else
+      warn "Latent enhance workflow file missing: ${VIDEO_ME_VIDEO_ENHANCE_LATENT_WORKFLOW:-assets/comfyui_workflows/video_enhance_latent.json}"
+    fi
+  fi
+else
+  ok "AI video enhance not selected — skipping"
 fi
 
 # ── Fish Audio S2 TTS ─────────────────────────────────────────────────────────

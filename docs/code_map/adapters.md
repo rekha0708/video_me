@@ -30,6 +30,8 @@
 | synthesize_voice | `FishS2TtsAdapter` | `adapters/synthesize_voice/fish_s2_adapter.py` |
 | synthesize_voice | `TtsAdapter` | `adapters/synthesize_voice/tts_adapter.py` |
 | transcribe | `WhisperAdapter` | `adapters/transcribe/whisper_adapter.py` |
+| video_enhance | `AiVideoEnhanceAdapter` | `adapters/video_enhance/ai_adapter.py` |
+| video_enhance | `FfmpegVideoEnhanceAdapter` | `adapters/video_enhance/ffmpeg_adapter.py` |
 
 ABCs with no adapter in `adapters/`: `approve_images`, `mix_audio`, `separate_audio`
 
@@ -551,3 +553,47 @@ LLM-powered transcript refinement adapter.
 - **class `LlmTranscriptRefineAdapter`** — Refine a raw transcript using an LLM + operator notes.
   - `__init__(self, base_url: str, model: str) -> None`
   - `async refine(self, transcript: dict, notes: str) -> dict` — Return a corrected transcript dict.
+
+### `adapters/video_enhance/__init__.py`
+
+Experimental video enhancement adapters.
+
+
+### `adapters/video_enhance/ai_adapter.py`
+
+- **class `AiVideoEnhanceAdapter(EnhanceVideo)`** — Experimental AI video enhancement pipeline.
+  - `__init__(self, *, backend: AiEnhanceBackend, work_dir: Path, ffmpeg_bin: str='ffmpeg', ffprobe_bin: str='ffprobe', realesrgan_python: str='/workspace/.venv_video_enhance/bin/python', realesrgan_dir: Path=Path('/workspace/Real-ESRGAN'), realesrgan_model: str='realesr-general-x4v3', realesrgan_outscale: float=2.0, realesrgan_tile: int=256, rife_python: str='/workspace/.venv_video_enhance/bin/python', rife_dir: Path=Path('/workspace/ECCV2022-RIFE'), rife_model_dir: Path=Path('/workspace/ECCV2022-RIFE/train_log'), rife_exp: int=1, rife_scale: float=1.0, rife_fp16: bool=True, film_python: str='/workspace/.venv_film/bin/python', film_dir: Path=Path('/workspace/frame-interpolation'), film_model_path: Path=Path('/workspace/FILM/film_net/Style/saved_model'), film_times_to_interpolate: int=2, film_block_height: int=1, film_block_width: int=1, comfyui_base_url: str='http://localhost:8188', latent_workflow: Path=Path('assets/comfyui_workflows/video_enhance_latent.json')) -> None`
+  - `async health(self) -> HealthStatus`
+  - `async estimate_cost(self, req: VideoEnhanceRequest) -> CostEstimate`
+  - `async run(self, req: VideoEnhanceRequest) -> VideoEnhanceResult`
+  - `_missing_common(self) -> list[str]`
+  - `_missing_realesrgan(self) -> list[str]`
+  - `_missing_rife(self) -> list[str]`
+  - `_missing_film(self) -> list[str]`
+  - `_missing_latent(self) -> list[str]`
+  - `_missing_python(label: str, python_bin: str) -> list[str]`
+  - `_uses_realesrgan(self) -> bool`
+  - `_uses_rife(self) -> bool`
+  - `_uses_film(self) -> bool`
+  - `_uses_latent(self) -> bool`
+  - `async _run_realesrgan(self, input_path: Path, scratch_dir: Path) -> Path`
+  - `async _run_rife(self, req: VideoEnhanceRequest, input_path: Path, scratch_dir: Path) -> Path`
+  - `async _run_film(self, req: VideoEnhanceRequest, input_path: Path, scratch_dir: Path) -> Path`
+  - `async _run_latent_comfyui(self, req: VideoEnhanceRequest, input_path: Path, scratch_dir: Path) -> Path`
+  - `_apply_comfy_placeholders(workflow: dict[str, Any], req: VideoEnhanceRequest, input_path: Path, output_prefix: str) -> None`
+  - `async _wait_for_comfy_video(self, client: Any, prompt_id: str) -> bytes`
+  - `async _normalize_output(self, original_input: Path, enhanced_input: Path, output_path: Path, req: VideoEnhanceRequest) -> None`
+  - `async _probe_video(self, path: Path) -> dict[str, float]`
+  - `async _run_command(self, cmd: list[str], cwd: Path | None=None) -> None`
+- `_parse_rate(value: str | None) -> float`
+
+### `adapters/video_enhance/ffmpeg_adapter.py`
+
+- **class `FfmpegVideoEnhanceAdapter(EnhanceVideo)`** — Standalone video_enhance adapter using ffmpeg scale/pad plus FPS interpolation.
+  - `__init__(self, work_dir: Path, ffmpeg_bin: str='ffmpeg') -> None`
+  - `async health(self) -> HealthStatus`
+  - `async estimate_cost(self, req: VideoEnhanceRequest) -> CostEstimate`
+  - `async run(self, req: VideoEnhanceRequest) -> VideoEnhanceResult`
+  - `_build_ffmpeg_args(self, input_path: Path, output_path: Path, req: VideoEnhanceRequest) -> list[str]`
+  - `_filter(self, req: VideoEnhanceRequest) -> str`
+  - `async _run_ffmpeg(self, cmd: list[str]) -> None`

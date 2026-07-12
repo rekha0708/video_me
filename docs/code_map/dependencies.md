@@ -17,7 +17,7 @@
 - `core.models.job` → `core.models.common`
 - `core.router` → `core.registry`
 - `core.storage` → `core.config`, `core.models.common`, `core.models.job`
-- `core.workflow` → `adapters.adapt_script.llm_adapter`, `adapters.analyze_content.llm_adapter`, `adapters.analyze_visuals.vlm_adapter`, `adapters.approval.image_approval_adapter`, `adapters.approval.web_approval_adapter`, `adapters.assemble_video.ffmpeg_adapter`, `adapters.critique.image_critique_adapter`, `adapters.critique.plan_critique_adapter`, `adapters.critique.vlm_adapter`, `adapters.fetch_media.ytdlp_adapter`, `adapters.generate_video.ltx_adapter`, `adapters.generate_video.wan_adapter`, `adapters.generate_video.wan_lightx2v_adapter`, `adapters.generate_video.wan_s2v_adapter`, `adapters.lip_sync.latentsync_adapter`, `adapters.lip_sync.lip_sync_adapter`, `adapters.lip_sync.noop_adapter`, `adapters.plan_shots.llm_adapter`, `adapters.publish.manual_adapter`, `adapters.render_character.comfyui_flux_adapter`, `adapters.render_character.diffusion_adapter`, `adapters.render_character.musubi_flux_adapter`, `adapters.render_overlays.matplotlib_adapter`, `adapters.synthesize_voice.fish_s2_adapter`, `adapters.synthesize_voice.tts_adapter`, `adapters.transcribe.whisper_adapter`, `core.cast_params`, `core.config`, `core.executor`, `core.gpu_sequencer`, `core.models.capabilities`, `core.models.content`, `core.models.guardrails`, `core.models.job`, `core.models.profile`, `core.observability`, `core.storage`
+- `core.workflow` → `adapters.adapt_script.llm_adapter`, `adapters.analyze_content.llm_adapter`, `adapters.analyze_visuals.vlm_adapter`, `adapters.approval.image_approval_adapter`, `adapters.approval.web_approval_adapter`, `adapters.assemble_video.ffmpeg_adapter`, `adapters.critique.image_critique_adapter`, `adapters.critique.plan_critique_adapter`, `adapters.critique.vlm_adapter`, `adapters.fetch_media.ytdlp_adapter`, `adapters.generate_video.ltx_adapter`, `adapters.generate_video.wan_adapter`, `adapters.generate_video.wan_lightx2v_adapter`, `adapters.generate_video.wan_s2v_adapter`, `adapters.lip_sync.latentsync_adapter`, `adapters.lip_sync.lip_sync_adapter`, `adapters.lip_sync.noop_adapter`, `adapters.plan_shots.llm_adapter`, `adapters.publish.manual_adapter`, `adapters.render_character.comfyui_flux_adapter`, `adapters.render_character.diffusion_adapter`, `adapters.render_character.musubi_flux_adapter`, `adapters.render_overlays.matplotlib_adapter`, `adapters.synthesize_voice.fish_s2_adapter`, `adapters.synthesize_voice.tts_adapter`, `adapters.transcribe.whisper_adapter`, `adapters.video_enhance.ai_adapter`, `adapters.video_enhance.ffmpeg_adapter`, `core.cast_params`, `core.config`, `core.executor`, `core.gpu_sequencer`, `core.models.capabilities`, `core.models.content`, `core.models.guardrails`, `core.models.job`, `core.models.profile`, `core.observability`, `core.storage`
 
 ## adapters/
 
@@ -51,6 +51,8 @@
 - `adapters.synthesize_voice.fish_s2_adapter` → `core.capabilities.base`, `core.models.capabilities`, `core.models.common`, `core.observability`
 - `adapters.synthesize_voice.tts_adapter` → `core.capabilities.base`, `core.models.capabilities`, `core.models.common`, `core.observability`
 - `adapters.transcribe.whisper_adapter` → `core.capabilities.base`, `core.models.capabilities`, `core.models.common`, `core.observability`
+- `adapters.video_enhance.ai_adapter` → `core.capabilities.base`, `core.models.capabilities`, `core.models.common`, `core.observability`
+- `adapters.video_enhance.ffmpeg_adapter` → `core.capabilities.base`, `core.models.capabilities`, `core.models.common`, `core.observability`
 
 ## services/
 
@@ -63,6 +65,7 @@
 
 - `scripts.check_runtime_readiness` → `adapters.render_character.diffusion_adapter`, `adapters.synthesize_voice.tts_adapter`, `core.config`
 - `scripts.check_track_b` → `adapters.render_character.diffusion_adapter`, `adapters.synthesize_voice.tts_adapter`, `core.config`
+- `scripts.enhance_video` → `adapters.video_enhance.ai_adapter`, `adapters.video_enhance.ffmpeg_adapter`, `core.models.capabilities`
 - `scripts.generate_training_images` → `core.config`, `core.models.common`
 - `scripts.run_noop_job` → `core.observability`, `core.workflow`
 - `scripts.setup_gpu` → `scripts`

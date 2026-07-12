@@ -226,6 +226,26 @@
       </div>
     </div>
 
+    <div class="form-row">
+      <label>Experimental Enhance</label>
+      <label class="checkbox-row">
+        <input type="checkbox" name="video_enhance_enabled" id="nj-video-enhance">
+        <span>Enhance clips before assembly</span>
+      </label>
+      <select id="nj-video-enhance-adapter" style="margin-top:6px;max-width:360px">
+        <option value="ffmpeg">FFmpeg baseline</option>
+        <option value="realesrgan_rife">Real-ESRGAN + RIFE</option>
+        <option value="realesrgan_film">Real-ESRGAN + FILM</option>
+        <option value="rife">RIFE only</option>
+        <option value="film">FILM only</option>
+        <option value="latent_rife">Latent workflow + RIFE</option>
+        <option value="latent_film">Latent workflow + FILM</option>
+      </select>
+      <div class="form-hint">
+        Runs the separate video_enhance pipeline only for this job. AI backends require setup_gpu.sh --with-video-enhance; latent modes also require a validated ComfyUI workflow file.
+      </div>
+    </div>
+
     {# ── Max shot duration ── #}
     <div class="form-row">
       <label>Max shot duration (seconds)</label>
@@ -623,6 +643,8 @@ async function submitNewJob(e) {
     if (videoAdapter) overrides.video_adapter = videoAdapter;
     if (lipsyncAdapter) overrides.lipsync_adapter = lipsyncAdapter;
     overrides.video_upscale_enabled = document.getElementById("nj-video-upscale").checked;
+    overrides.video_enhance_enabled = document.getElementById("nj-video-enhance").checked;
+    overrides.video_enhance_adapter = document.getElementById("nj-video-enhance-adapter").value;
     if (hasRealAudio && whisperLanguage) overrides.whisper_language = whisperLanguage;
     const isolateVocalsCb = document.getElementById("nj-isolate-vocals");
     if (isolateVocalsCb && !isolateVocalsCb.disabled && isolateVocalsCb.checked) {

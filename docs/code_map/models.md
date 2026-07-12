@@ -94,6 +94,28 @@
 - `video_upscale_enabled: bool` = `False`
 - `video_upscale_target_fps: int` = `48`
 - `video_upscale_interpolation: Literal['fps', 'minterpolate']` = `'minterpolate'`
+- `video_enhance_enabled: bool` = `False`
+- `video_enhance_adapter: Literal['ffmpeg', 'rife', 'film', 'realesrgan_rife', 'realesrgan_film', 'latent_rife', 'latent_film']` = `'ffmpeg'`
+- `video_enhance_target_fps: int` = `48`
+- `video_enhance_interpolation: Literal['fps', 'minterpolate']` = `'minterpolate'`
+- `video_enhance_realesrgan_python: str` = `'/workspace/.venv_video_enhance/bin/python'`
+- `video_enhance_realesrgan_dir: str` = `'/workspace/Real-ESRGAN'`
+- `video_enhance_realesrgan_model: str` = `'realesr-general-x4v3'`
+- `video_enhance_realesrgan_outscale: float` = `2.0`
+- `video_enhance_realesrgan_tile: int` = `256`
+- `video_enhance_rife_python: str` = `'/workspace/.venv_video_enhance/bin/python'`
+- `video_enhance_rife_dir: str` = `'/workspace/ECCV2022-RIFE'`
+- `video_enhance_rife_model_dir: str` = `'/workspace/ECCV2022-RIFE/train_log'`
+- `video_enhance_rife_exp: int` = `1`
+- `video_enhance_rife_scale: float` = `1.0`
+- `video_enhance_rife_fp16: bool` = `True`
+- `video_enhance_film_python: str` = `'/workspace/.venv_film/bin/python'`
+- `video_enhance_film_dir: str` = `'/workspace/frame-interpolation'`
+- `video_enhance_film_model_path: str` = `'/workspace/FILM/film_net/Style/saved_model'`
+- `video_enhance_film_times_to_interpolate: int` = `2`
+- `video_enhance_film_block_height: int` = `1`
+- `video_enhance_film_block_width: int` = `1`
+- `video_enhance_latent_workflow: str` = `'assets/comfyui_workflows/video_enhance_latent.json'`
 - `render_allow_placeholder_lora: bool` = `False`
 - `max_plan_iterations: int` = `3`
 - `auto_approve_plan: bool` = `False`
@@ -349,6 +371,29 @@ A rendered overlay PNG + the absolute time window it is visible in the final vid
 - `duration_sec: float`
 - `sidecar_uri: str | None` = `None`
 
+### `VideoEnhanceRequest` (BaseModel) — `core/models/capabilities.py`
+
+- `video_uri: str`
+- `duration_sec: float`
+- `output_name: str` = `'enhanced.mp4'`
+- `target_width: int` = `1080`
+- `target_height: int` = `1920`
+- `target_fps: int` = `48`
+- `interpolation: Literal['fps', 'minterpolate', 'rife', 'film']` = `'minterpolate'`
+- `stage: Literal['clip', 'final']` = `'clip'`
+- `has_burned_text: bool` = `False`
+- `preserve_audio: bool` = `True`
+
+### `VideoEnhanceResult` (BaseModel) — `core/models/capabilities.py`
+
+- `video_uri: str`
+- `duration_sec: float`
+- `width: int | None` = `None`
+- `height: int | None` = `None`
+- `fps: float | None` = `None`
+- `adapter: str` = `''`
+- `notes: list[str]` = `Field(default_factory=list)`
+
 ### `CritiqueRequest` (BaseModel) — `core/models/capabilities.py`
 
 - `video_uri: str`
@@ -496,6 +541,9 @@ LLM-authored chart/diagram panel composited over the upper third of the shot.
 - `av_sync_failure_policy: Literal['warn', 'fail'] | None` = `None`
 - `video_upscale_enabled: bool | None` = `None`
 - `video_upscale_target_fps: int | None` = `Field(default=None, ge=16, le=60)`
+- `video_enhance_enabled: bool | None` = `None`
+- `video_enhance_adapter: Literal['ffmpeg', 'rife', 'film', 'realesrgan_rife', 'realesrgan_film', 'latent_rife', 'latent_film'] | None` = `None`
+- `video_enhance_target_fps: int | None` = `Field(default=None, ge=16, le=60)`
 - `auto_approve_plan: bool | None` = `None`
 - `auto_approve_images: bool | None` = `None`
 - `auto_approve_transcript: bool | None` = `None`

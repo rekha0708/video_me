@@ -280,6 +280,31 @@ class FinalVideo(BaseModel):
     sidecar_uri: str | None = None
 
 
+# ---------- video_enhance ----------
+
+class VideoEnhanceRequest(BaseModel):
+    video_uri: str
+    duration_sec: float
+    output_name: str = "enhanced.mp4"
+    target_width: int = 1080
+    target_height: int = 1920
+    target_fps: int = 48
+    interpolation: Literal["fps", "minterpolate", "rife", "film"] = "minterpolate"
+    stage: Literal["clip", "final"] = "clip"
+    has_burned_text: bool = False
+    preserve_audio: bool = True
+
+
+class VideoEnhanceResult(BaseModel):
+    video_uri: str
+    duration_sec: float
+    width: int | None = None
+    height: int | None = None
+    fps: float | None = None
+    adapter: str = ""
+    notes: list[str] = Field(default_factory=list)
+
+
 # ---------- critique ----------
 
 class CritiqueRequest(BaseModel):

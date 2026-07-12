@@ -113,6 +113,17 @@ class DashboardJobOverrides(BaseModel):
     av_sync_failure_policy: Literal["warn", "fail"] | None = None
     video_upscale_enabled: bool | None = None
     video_upscale_target_fps: int | None = Field(default=None, ge=16, le=60)
+    video_enhance_enabled: bool | None = None
+    video_enhance_adapter: Literal[
+        "ffmpeg",
+        "rife",
+        "film",
+        "realesrgan_rife",
+        "realesrgan_film",
+        "latent_rife",
+        "latent_film",
+    ] | None = None
+    video_enhance_target_fps: int | None = Field(default=None, ge=16, le=60)
     auto_approve_plan: bool | None = None
     auto_approve_images: bool | None = None
     auto_approve_transcript: bool | None = None

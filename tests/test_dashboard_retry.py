@@ -163,6 +163,25 @@ def test_retry_with_body_can_disable_video_upscale(tmp_path: Path) -> None:
     assert latest.payload["overrides"]["video_upscale_enabled"] is False
 
 
+def test_retry_with_body_can_enable_video_enhance(tmp_path: Path) -> None:
+    client, repo = _make_client_and_repo(tmp_path)
+    job_id = _seed_job(repo, status="completed")
+
+    resp = client.post(
+        f"/api/jobs/{job_id}/retry",
+        json={
+            "video_enhance_enabled": True,
+            "video_enhance_adapter": "realesrgan_rife",
+        },
+    )
+
+    assert resp.status_code == 200
+    queue = repo.list_queue(job_id)
+    latest = queue[-1]
+    assert latest.payload["overrides"]["video_enhance_enabled"] is True
+    assert latest.payload["overrides"]["video_enhance_adapter"] == "realesrgan_rife"
+
+
 def test_retry_with_body_leaves_other_overrides_untouched(tmp_path: Path) -> None:
     client, repo = _make_client_and_repo(tmp_path)
     job_id = _seed_job(repo, status="completed", video_adapter="ltx")

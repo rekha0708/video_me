@@ -17,9 +17,11 @@ from core.models.capabilities import (
     PublishResult,
     TranscribeResult,
     TranscriptSegment,
+    VideoEnhanceResult,
     VideoClip,
     WordTimestamp,
 )
+from core.models.common import ArtifactRef
 from core.models.content import (
     ContentMetadata,
     LearningObjective,
@@ -40,6 +42,7 @@ from core.workflow import (
     _concat_audio,
     _fit_audio_to_duration,
     _generate_shot_video,
+    _enhance_video_clips,
     _make_adapters,
     _rebuild_storyboard_by_duration,
     _retime_source_audio_plan,
@@ -51,6 +54,7 @@ from core.workflow import (
     _validate_timed_storyboard,
     run_pipeline_job,
     run_with_critique,
+    RunOptions,
 )
 
 
@@ -1150,6 +1154,89 @@ async def test_assemble_receives_all_synced_clips(tmp_path) -> None:
         await run_pipeline_job("http://example.com", rights_cleared=True, app_config=config)
 
     assert len(assemble_request_captured["request"].clips) == 2
+
+
+@pytest.mark.asyncio
+async def test_video_enhance_skips_when_checkbox_off(tmp_path) -> None:
+    config = _make_config(tmp_path)
+    clips = [VideoClip(uri="/tmp/c1.mp4", duration_sec=3.0, shot_id="s01")]
+    adapter = MagicMock()
+    adapter.run = AsyncMock()
+    ctx = SimpleNamespace(
+        job=SimpleNamespace(job_id="job1", stage_results={}),
+        artifact_store=MagicMock(),
+        job_store=MagicMock(),
+    )
+
+    result = await _enhance_video_clips(
+        clips,
+        SimpleNamespace(video_enhance=adapter),
+        config,
+        ctx,
+        RunOptions(),
+    )
+
+    assert result is clips
+    adapter.run.assert_not_called()
+    ctx.artifact_store.put_json.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_video_enhance_runs_before_assembly_when_enabled(tmp_path) -> None:
+    config = _make_config(tmp_path)
+    config.settings.video_enhance_enabled = True
+    config.settings.video_enhance_target_fps = 48
+    config.settings.video_enhance_interpolation = "minterpolate"
+
+    clips = [VideoClip(uri="/tmp/c1.mp4", duration_sec=3.0, shot_id="s01")]
+    adapter = MagicMock()
+    adapter.name = "video_enhance"
+    adapter.health = AsyncMock(return_value=SimpleNamespace(status="ok", reason=None))
+    adapter.run = AsyncMock(
+        return_value=VideoEnhanceResult(
+            video_uri="/tmp/c1_enhanced.mp4",
+            duration_sec=3.0,
+            width=1080,
+            height=1920,
+            fps=48.0,
+            adapter="ffmpeg",
+            notes=["baseline"],
+        )
+    )
+    ctx = SimpleNamespace(
+        job=SimpleNamespace(job_id="job1", stage_results={}),
+        artifact_store=MagicMock(
+            put_json=MagicMock(return_value=ArtifactRef(uri="/tmp/video_enhance.json"))
+        ),
+        job_store=MagicMock(),
+    )
+    events: list[tuple[str, str, str | None]] = []
+
+    def stage_hook(stage_name: str, event_type: str, **kw) -> None:
+        events.append((stage_name, event_type, kw.get("shot_id")))
+
+    with patch("core.workflow._probe_duration_sec", new=AsyncMock(return_value=3.1)):
+        result = await _enhance_video_clips(
+            clips,
+            SimpleNamespace(video_enhance=adapter),
+            config,
+            ctx,
+            RunOptions(stage_hook=stage_hook),
+        )
+
+    assert result == [VideoClip(uri="/tmp/c1_enhanced.mp4", duration_sec=3.1, shot_id="s01")]
+    req = adapter.run.call_args.args[0]
+    assert req.video_uri == "/tmp/c1.mp4"
+    assert req.target_fps == 48
+    assert req.interpolation == "minterpolate"
+    assert req.has_burned_text is False
+    assert events == [
+        ("video_enhance", "stage_started", "s01"),
+        ("video_enhance", "stage_completed", "s01"),
+    ]
+    payload = ctx.artifact_store.put_json.call_args.args[2]
+    assert payload["attempts"][0]["enhanced_uri"] == "/tmp/c1_enhanced.mp4"
+    assert "video_enhance" in ctx.job.stage_results
 
 
 @pytest.mark.asyncio

@@ -123,6 +123,38 @@ class Settings(BaseSettings):
     video_upscale_enabled: bool = False
     video_upscale_target_fps: int = 48
     video_upscale_interpolation: Literal["fps", "minterpolate"] = "minterpolate"
+    # Experimental separate clip-enhancement pipeline. Off by default and only
+    # applied before final assembly when a job/dashboard override enables it.
+    video_enhance_enabled: bool = False
+    video_enhance_adapter: Literal[
+        "ffmpeg",
+        "rife",
+        "film",
+        "realesrgan_rife",
+        "realesrgan_film",
+        "latent_rife",
+        "latent_film",
+    ] = "ffmpeg"
+    video_enhance_target_fps: int = 48
+    video_enhance_interpolation: Literal["fps", "minterpolate"] = "minterpolate"
+    video_enhance_realesrgan_python: str = "/workspace/.venv_video_enhance/bin/python"
+    video_enhance_realesrgan_dir: str = "/workspace/Real-ESRGAN"
+    video_enhance_realesrgan_model: str = "realesr-general-x4v3"
+    video_enhance_realesrgan_outscale: float = 2.0
+    video_enhance_realesrgan_tile: int = 256
+    video_enhance_rife_python: str = "/workspace/.venv_video_enhance/bin/python"
+    video_enhance_rife_dir: str = "/workspace/ECCV2022-RIFE"
+    video_enhance_rife_model_dir: str = "/workspace/ECCV2022-RIFE/train_log"
+    video_enhance_rife_exp: int = 1
+    video_enhance_rife_scale: float = 1.0
+    video_enhance_rife_fp16: bool = True
+    video_enhance_film_python: str = "/workspace/.venv_film/bin/python"
+    video_enhance_film_dir: str = "/workspace/frame-interpolation"
+    video_enhance_film_model_path: str = "/workspace/FILM/film_net/Style/saved_model"
+    video_enhance_film_times_to_interpolate: int = 2
+    video_enhance_film_block_height: int = 1
+    video_enhance_film_block_width: int = 1
+    video_enhance_latent_workflow: str = "assets/comfyui_workflows/video_enhance_latent.json"
     render_allow_placeholder_lora: bool = False
 
     # --- plan critique loop ---

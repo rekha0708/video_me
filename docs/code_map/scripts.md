@@ -14,6 +14,7 @@ Executable helpers for local development.
 - `check_python_packages(settings: Settings, find_spec: Callable[[str], object | None]=importlib.util.find_spec) -> list[CheckResult]`
 - `check_system_tools(which: Callable[[str], str | None]=shutil.which) -> list[CheckResult]`
 - `check_track_b_assets(config: AppConfig, *, code_test: bool=False) -> list[CheckResult]`
+- `check_video_enhance_assets(settings: Settings) -> list[CheckResult]`
 - `_join_url(base_url: str, suffix: str) -> str`
 - `_service_urls(settings: Settings) -> list[tuple[str, str, bool]]` — Return (name, url, required) tuples. required=False means WARN on failure.
 - `_url_ok(url: str, *, timeout: float, urlopen: Callable=urllib.request.urlopen) -> tuple[bool, str]`
@@ -27,6 +28,14 @@ Executable helpers for local development.
 ### `scripts/check_track_b.py`
 
 - `main() -> int`
+
+### `scripts/enhance_video.py`
+
+Run the experimental standalone video_enhance pipeline on one local MP4.
+
+- `_probe_duration_sec(path: Path, ffprobe_bin: str='ffprobe') -> float`
+- `_parse_args() -> argparse.Namespace`
+- `async _main() -> None`
 
 ### `scripts/generate_code_map.py`
 

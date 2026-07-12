@@ -22,6 +22,7 @@ SKIP_CHATTERBOX=1
 SKIP_WAN=0
 SKIP_WAN_I2V=1
 SKIP_LIGHTX2V=1
+SKIP_VIDEO_ENHANCE=1
 SKIP_LATENTSYNC=0
 SKIP_MUSETALK=1
 SKIP_DEMUCS=1
@@ -66,6 +67,7 @@ Full GPU-machine setup for video_me on RunPod (or any Ubuntu+CUDA box):
     --with-chatterbox   Chatterbox TTS           (TTS_ADAPTER=chatterbox)
     --with-wan-i2v      Wan 2.2 I2V model        (VIDEO_ADAPTER=wan)
     --with-lightx2v     LightX2V Wan I2V fast path (VIDEO_ADAPTER=wan_lightx2v)
+    --with-video-enhance Real-ESRGAN + RIFE/FILM AI video enhancement backends
     --with-latentsync   LatentSync repair        (default install; explicit for clarity)
     --with-demucs       Demucs vocal isolation   (VIDEO_ME_WHISPER_ISOLATE_VOCALS=true)
     --with-musetalk     MuseTalk repair fallback (LIPSYNC_ADAPTER=musetalk)
@@ -94,11 +96,13 @@ Options:
   --skip-wan                Skip Wan2.2 S2V install (default video, port 8031)
   --skip-wan-i2v            Skip Wan2.2 I2V fallback weights
   --skip-lightx2v           Skip LightX2V Wan I2V fast-path setup
+  --skip-video-enhance      Skip AI video enhance setup [default]
   --skip-latentsync         Skip LatentSync fallback setup
   --with-a1111              Also install AUTOMATIC1111 (SD 1.5 render fallback, port 7860)
   --with-chatterbox         Also install Chatterbox TTS (EN-only fallback, port 8020)
   --with-wan-i2v            Also install Wan2.2 I2V weights (VIDEO_ADAPTER=wan)
   --with-lightx2v           Also install LightX2V + Wan2.2 I2V distill LoRAs
+  --with-video-enhance      Also install Real-ESRGAN, RIFE, FILM wrappers/weights
   --with-latentsync         Install LatentSync repair (already default; preferred for Wan I2V)
   --with-musetalk           Also install MuseTalk repair (legacy Wan I2V fallback)
   --with-demucs             Also install Demucs vocal isolation (pre-Whisper stem separation, opt-in toggle for singing jobs)
@@ -167,6 +171,7 @@ while [[ $# -gt 0 ]]; do
     --with-chatterbox)    SKIP_CHATTERBOX=0; shift ;;
     --with-wan-i2v)       SKIP_WAN=0; SKIP_WAN_I2V=0; shift ;;
     --with-lightx2v)      SKIP_WAN=0; SKIP_WAN_I2V=0; SKIP_LIGHTX2V=0; shift ;;
+    --with-video-enhance) SKIP_VIDEO_ENHANCE=0; shift ;;
     --with-latentsync)    SKIP_LATENTSYNC=0; shift ;;
     --with-musetalk)      SKIP_MUSETALK=0; shift ;;
     --with-demucs)        SKIP_DEMUCS=0; shift ;;
@@ -177,6 +182,7 @@ while [[ $# -gt 0 ]]; do
     --skip-wan)           SKIP_WAN=1; shift ;;
     --skip-wan-i2v)       SKIP_WAN_I2V=1; shift ;;
     --skip-lightx2v)      SKIP_LIGHTX2V=1; shift ;;
+    --skip-video-enhance) SKIP_VIDEO_ENHANCE=1; shift ;;
     --skip-latentsync)    SKIP_LATENTSYNC=1; shift ;;
     --skip-musetalk)      SKIP_MUSETALK=1; shift ;;
     --skip-env-file)      SKIP_ENV_FILE=1; shift ;;
@@ -225,11 +231,11 @@ check_cuda() {
 
 # ── Step 2: System packages ──────────────────────────────────────────────────
 install_system_deps() {
-  log "Installing system packages (ffmpeg, yt-dlp, curl, git, libgl1)"
+  log "Installing system packages (ffmpeg, yt-dlp, curl, git, libgl1, unzip)"
 
   if need_cmd apt-get; then
     run sudo apt-get update -qq
-    run sudo apt-get install -y --no-install-recommends ffmpeg curl git libgl1
+    run sudo apt-get install -y --no-install-recommends ffmpeg curl git libgl1 unzip
     ok "apt packages installed"
 
     # yt-dlp system binary (in addition to the Python package)
@@ -905,6 +911,160 @@ setup_lightx2v() {
   fi
 }
 
+# ── Step 6c2: AI video enhancement (Real-ESRGAN + RIFE/FILM) ────────────────
+setup_video_enhance() {
+  log "Setting up AI video enhancement backends (Real-ESRGAN + RIFE/FILM)"
+  # These run as short-lived subprocesses from adapters/video_enhance/ai_adapter.py,
+  # not as resident services. That keeps VRAM free except during the
+  # video_enhance stage.
+
+  local venv_dir="$WORKSPACE/.venv_video_enhance"
+  local realesrgan_dir="$WORKSPACE/Real-ESRGAN"
+  local rife_dir="$WORKSPACE/ECCV2022-RIFE"
+  local film_dir="$WORKSPACE/frame-interpolation"
+  local film_venv="$WORKSPACE/.venv_film"
+  local film_model_root="$WORKSPACE/FILM"
+
+  if [[ ! -d "$venv_dir" ]]; then
+    log "Creating $venv_dir (system-site-packages for CUDA torch)"
+    run python3 -m venv --system-site-packages "$venv_dir"
+  else
+    ok "AI video enhance venv already exists at $venv_dir"
+  fi
+
+  local pip="$venv_dir/bin/pip"
+  run "$pip" install --upgrade pip setuptools wheel
+  run "$pip" install gdown opencv-python tqdm numpy ffmpeg-python moviepy "imageio[ffmpeg]" scikit-video || \
+      warn "Some shared video enhance deps may have failed"
+
+  if [[ ! -d "$realesrgan_dir" ]]; then
+    run git clone https://github.com/xinntao/Real-ESRGAN.git "$realesrgan_dir"
+  else
+    ok "Real-ESRGAN already cloned at $realesrgan_dir"
+    if [[ -d "$realesrgan_dir/.git" ]]; then
+      run git -C "$realesrgan_dir" pull --ff-only || warn "Real-ESRGAN git pull failed — continuing"
+    else
+      warn "$realesrgan_dir is not a git checkout — continuing with existing files"
+    fi
+  fi
+  run "$pip" install -r "$realesrgan_dir/requirements.txt" || warn "Some Real-ESRGAN deps may have failed"
+  run "$pip" install -e "$realesrgan_dir" || warn "Real-ESRGAN editable install failed"
+
+  local realesrgan_weights="$realesrgan_dir/weights"
+  if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$realesrgan_weights"; fi
+  download_if_missing() {
+    local url="$1" dest="$2" label="$3"
+    if [[ -f "$dest" ]]; then
+      ok "$label already exists at $dest"
+    else
+      log "Downloading $label"
+      run curl -fL "$url" -o "$dest"
+    fi
+  }
+  download_if_missing \
+    "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth" \
+    "$realesrgan_weights/realesr-general-x4v3.pth" \
+    "Real-ESRGAN general x4v3"
+  download_if_missing \
+    "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-wdn-x4v3.pth" \
+    "$realesrgan_weights/realesr-general-wdn-x4v3.pth" \
+    "Real-ESRGAN general weak-denoise x4v3"
+  download_if_missing \
+    "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth" \
+    "$realesrgan_weights/realesr-animevideov3.pth" \
+    "Real-ESRGAN anime video v3"
+
+  if [[ ! -d "$rife_dir" ]]; then
+    run git clone https://github.com/hzwer/ECCV2022-RIFE.git "$rife_dir"
+  else
+    ok "RIFE already cloned at $rife_dir"
+    if [[ -d "$rife_dir/.git" ]]; then
+      run git -C "$rife_dir" pull --ff-only || warn "RIFE git pull failed — continuing"
+    else
+      warn "$rife_dir is not a git checkout — continuing with existing files"
+    fi
+  fi
+  run "$pip" install -r "$rife_dir/requirements.txt" || warn "Some RIFE deps may have failed"
+  if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$rife_dir/train_log"; fi
+  if compgen -G "$rife_dir/train_log/*.pkl" >/dev/null; then
+    ok "RIFE model weights already present in $rife_dir/train_log"
+  else
+    log "Downloading RIFE pretrained HD model zip"
+    local rife_zip="$WORKSPACE/RIFE_trained_model_v3.6.zip"
+    local rife_tmp="$WORKSPACE/rife_model_extract"
+    run "$venv_dir/bin/gdown" --id "1APIzVeI-4ZZCEuIRE1m6WYfSCaOsi_7_" -O "$rife_zip"
+    if [[ "$DRY_RUN" == "0" ]]; then
+      rm -rf "$rife_tmp"
+      mkdir -p "$rife_tmp"
+      unzip -q "$rife_zip" -d "$rife_tmp"
+      find "$rife_tmp" -type f \( -name "*.pkl" -o -name "RIFE*.py" \) -exec cp {} "$rife_dir/train_log/" \;
+      rm -rf "$rife_tmp"
+    fi
+    if [[ "$DRY_RUN" != "0" ]]; then
+      ok "[dry run] RIFE model zip would be extracted into $rife_dir/train_log"
+    elif ! compgen -G "$rife_dir/train_log/*.pkl" >/dev/null; then
+      warn "RIFE zip extracted but no *.pkl found; download manually into $rife_dir/train_log"
+    else
+      ok "RIFE model weights ready in $rife_dir/train_log"
+    fi
+  fi
+
+  local film_bootstrap="python3"
+  if need_cmd python3.10; then
+    film_bootstrap="python3.10"
+  else
+    warn "python3.10 not found — using python3 for FILM; upstream tested TF2/CUDA stack may require Python 3.9/3.10"
+  fi
+  if [[ ! -d "$film_venv" ]]; then
+    log "Creating $film_venv (separate TensorFlow/FILM environment)"
+    run "$film_bootstrap" -m venv "$film_venv"
+  else
+    ok "FILM venv already exists at $film_venv"
+  fi
+  local film_pip="$film_venv/bin/pip"
+  run "$film_pip" install --upgrade pip setuptools wheel
+
+  if [[ ! -d "$film_dir" ]]; then
+    run git clone https://github.com/google-research/frame-interpolation.git "$film_dir"
+  else
+    ok "FILM already cloned at $film_dir"
+    if [[ -d "$film_dir/.git" ]]; then
+      run git -C "$film_dir" pull --ff-only || warn "FILM git pull failed — continuing"
+    else
+      warn "$film_dir is not a git checkout — continuing with existing files"
+    fi
+  fi
+  run "$film_pip" install -r "$film_dir/requirements.txt" || warn "Some FILM deps may have failed"
+  run "$film_pip" install gdown || warn "gdown install failed in FILM venv"
+
+  if [[ -d "$film_model_root/film_net/Style/saved_model" ]]; then
+    ok "FILM Style SavedModel already present at $film_model_root/film_net/Style/saved_model"
+  else
+    log "Downloading FILM pretrained SavedModels"
+    if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$film_model_root"; fi
+    run "$film_venv/bin/gdown" --folder \
+        "https://drive.google.com/drive/folders/1q8110-qp225asX3DQvZnfLfJPkCHmDpy?usp=sharing" \
+        -O "$film_model_root"
+    if [[ "$DRY_RUN" == "0" ]] && [[ ! -d "$film_model_root/film_net/Style/saved_model" ]]; then
+      local found_film_net
+      found_film_net="$(find "$film_model_root" -type d -path "*/film_net/Style/saved_model" -print -quit 2>/dev/null || true)"
+      if [[ -n "$found_film_net" ]]; then
+        local nested_film_net
+        nested_film_net="$(cd "$found_film_net/../.." && pwd)"
+        if [[ ! -e "$film_model_root/film_net" ]]; then
+          run ln -s "$nested_film_net" "$film_model_root/film_net"
+          ok "Symlinked FILM model folder to $film_model_root/film_net"
+        fi
+      fi
+    fi
+    if [[ "$DRY_RUN" == "0" ]] && [[ ! -d "$film_model_root/film_net/Style/saved_model" ]]; then
+      warn "FILM model folder did not land at $film_model_root/film_net/Style/saved_model; inspect $film_model_root"
+    fi
+  fi
+
+  ok "AI video enhance setup complete"
+}
+
 # ── Step 6b2: Demucs vocal isolation ─────────────────────────────────────────
 setup_demucs() {
   log "Setting up Demucs vocal isolation (pre-Whisper stem separation)"
@@ -1149,6 +1309,28 @@ LIGHTX2V_I2V_ATTN_MODE=sage_attn2
 VIDEO_ME_VIDEO_UPSCALE_ENABLED=false
 VIDEO_ME_VIDEO_UPSCALE_TARGET_FPS=48
 VIDEO_ME_VIDEO_UPSCALE_INTERPOLATION=minterpolate
+VIDEO_ME_VIDEO_ENHANCE_ENABLED=false
+VIDEO_ME_VIDEO_ENHANCE_ADAPTER=ffmpeg
+VIDEO_ME_VIDEO_ENHANCE_TARGET_FPS=48
+VIDEO_ME_VIDEO_ENHANCE_INTERPOLATION=minterpolate
+VIDEO_ME_VIDEO_ENHANCE_REALESRGAN_PYTHON=$WORKSPACE/.venv_video_enhance/bin/python
+VIDEO_ME_VIDEO_ENHANCE_REALESRGAN_DIR=$WORKSPACE/Real-ESRGAN
+VIDEO_ME_VIDEO_ENHANCE_REALESRGAN_MODEL=realesr-general-x4v3
+VIDEO_ME_VIDEO_ENHANCE_REALESRGAN_OUTSCALE=2.0
+VIDEO_ME_VIDEO_ENHANCE_REALESRGAN_TILE=256
+VIDEO_ME_VIDEO_ENHANCE_RIFE_PYTHON=$WORKSPACE/.venv_video_enhance/bin/python
+VIDEO_ME_VIDEO_ENHANCE_RIFE_DIR=$WORKSPACE/ECCV2022-RIFE
+VIDEO_ME_VIDEO_ENHANCE_RIFE_MODEL_DIR=$WORKSPACE/ECCV2022-RIFE/train_log
+VIDEO_ME_VIDEO_ENHANCE_RIFE_EXP=1
+VIDEO_ME_VIDEO_ENHANCE_RIFE_SCALE=1.0
+VIDEO_ME_VIDEO_ENHANCE_RIFE_FP16=true
+VIDEO_ME_VIDEO_ENHANCE_FILM_PYTHON=$WORKSPACE/.venv_film/bin/python
+VIDEO_ME_VIDEO_ENHANCE_FILM_DIR=$WORKSPACE/frame-interpolation
+VIDEO_ME_VIDEO_ENHANCE_FILM_MODEL_PATH=$WORKSPACE/FILM/film_net/Style/saved_model
+VIDEO_ME_VIDEO_ENHANCE_FILM_TIMES_TO_INTERPOLATE=2
+VIDEO_ME_VIDEO_ENHANCE_FILM_BLOCK_HEIGHT=1
+VIDEO_ME_VIDEO_ENHANCE_FILM_BLOCK_WIDTH=1
+VIDEO_ME_VIDEO_ENHANCE_LATENT_WORKFLOW=assets/comfyui_workflows/video_enhance_latent.json
 
 # Video/lip-sync QA policy. Wan S2V is native audio-conditioned video, so the
 # lip-sync repair policy applies only when VIDEO_ME_VIDEO_ADAPTER is non-native.
@@ -1258,6 +1440,10 @@ fi
 
 if [[ "$SKIP_LIGHTX2V" == "0" ]]; then
   setup_lightx2v
+fi
+
+if [[ "$SKIP_VIDEO_ENHANCE" == "0" ]]; then
+  setup_video_enhance
 fi
 
 # Fallback adapters (opt-in via --with-*)

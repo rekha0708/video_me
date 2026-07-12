@@ -169,6 +169,25 @@
         Upscale
       </label>
 
+      <label style="font-size:13px;font-weight:500;margin-left:8px">
+        {% set requested_enhance = job.request.get('overrides', {}).get('video_enhance_enabled') %}
+        <input type="checkbox" id="rerun-video-enhance" {% if requested_enhance %}checked{% endif %}>
+        Enhance clips
+      </label>
+
+      <label style="font-size:13px;font-weight:500;margin-left:8px">Enhance backend</label>
+      <select id="rerun-video-enhance-adapter" style="font-size:13px;padding:3px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg)">
+        {% set requested_ea = job.request.get('overrides', {}).get('video_enhance_adapter') %}
+        <option value="" {% if not requested_ea %}selected{% endif %}>Default</option>
+        <option value="ffmpeg" {% if requested_ea == 'ffmpeg' %}selected{% endif %}>FFmpeg</option>
+        <option value="realesrgan_rife" {% if requested_ea == 'realesrgan_rife' %}selected{% endif %}>Real-ESRGAN + RIFE</option>
+        <option value="realesrgan_film" {% if requested_ea == 'realesrgan_film' %}selected{% endif %}>Real-ESRGAN + FILM</option>
+        <option value="rife" {% if requested_ea == 'rife' %}selected{% endif %}>RIFE only</option>
+        <option value="film" {% if requested_ea == 'film' %}selected{% endif %}>FILM only</option>
+        <option value="latent_rife" {% if requested_ea == 'latent_rife' %}selected{% endif %}>Latent + RIFE</option>
+        <option value="latent_film" {% if requested_ea == 'latent_film' %}selected{% endif %}>Latent + FILM</option>
+      </select>
+
       <button class="btn btn-primary" id="retry-btn"
               onclick="retryJob('{{ job.job_id }}', this)">
         ↻ Re-run
@@ -700,6 +719,8 @@ async function retryJob(jobId, btn) {
   const videoAdapter = document.getElementById("rerun-video-adapter")?.value || "";
   const lipsyncAdapter = document.getElementById("rerun-lipsync-adapter")?.value || "";
   const videoUpscale = document.getElementById("rerun-video-upscale")?.checked || false;
+  const videoEnhance = document.getElementById("rerun-video-enhance")?.checked || false;
+  const videoEnhanceAdapter = document.getElementById("rerun-video-enhance-adapter")?.value || "";
   const phaseLabel = phase || "same phase";
   if (!confirm(`Re-run job ${jobId} from "${phaseLabel}"?\n\nStages that already completed will be skipped.`)) return;
   const label = btn.textContent;
@@ -710,6 +731,8 @@ async function retryJob(jobId, btn) {
   if (videoAdapter) body.video_adapter = videoAdapter;
   if (lipsyncAdapter) body.lipsync_adapter = lipsyncAdapter;
   body.video_upscale_enabled = videoUpscale;
+  body.video_enhance_enabled = videoEnhance;
+  if (videoEnhanceAdapter) body.video_enhance_adapter = videoEnhanceAdapter;
   try {
     const res = await fetch(`/api/jobs/${jobId}/retry`, {
       method: "POST",

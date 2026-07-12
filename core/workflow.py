@@ -41,6 +41,7 @@ from core.models.capabilities import (
     PublishRequest,
     RenderCharacterRequest,
     TranscribeRequest,
+    VideoEnhanceRequest,
     VideoClip,
     VideoRequest,
     VisualContext,
@@ -179,6 +180,7 @@ class _Adapters:
     voice: object
     video: object
     lipsync: object
+    video_enhance: object | None
     assemble: object
     critique: object
     publish: object
@@ -235,6 +237,54 @@ def _make_video_adapter(s, work_dir: Path):
         )
     from adapters.generate_video.wan_adapter import WanAdapter
     return WanAdapter(work_dir=work_dir / "video" / "wan", base_url=s.wan_base_url)
+
+
+def _make_video_enhance_adapter(s, work_dir: Path):
+    if not s.video_enhance_enabled:
+        return None
+    if s.video_enhance_adapter == "ffmpeg":
+        from adapters.video_enhance.ffmpeg_adapter import FfmpegVideoEnhanceAdapter
+        return FfmpegVideoEnhanceAdapter(
+            work_dir=work_dir / "video_enhance" / "ffmpeg",
+            ffmpeg_bin=s.ffmpeg_bin,
+        )
+    if s.video_enhance_adapter in {
+        "rife",
+        "film",
+        "realesrgan_rife",
+        "realesrgan_film",
+        "latent_rife",
+        "latent_film",
+    }:
+        from adapters.video_enhance.ai_adapter import AiVideoEnhanceAdapter
+        return AiVideoEnhanceAdapter(
+            backend=s.video_enhance_adapter,
+            work_dir=work_dir / "video_enhance" / s.video_enhance_adapter,
+            ffmpeg_bin=s.ffmpeg_bin,
+            ffprobe_bin=s.ffprobe_bin,
+            realesrgan_python=s.video_enhance_realesrgan_python,
+            realesrgan_dir=Path(s.video_enhance_realesrgan_dir),
+            realesrgan_model=s.video_enhance_realesrgan_model,
+            realesrgan_outscale=s.video_enhance_realesrgan_outscale,
+            realesrgan_tile=s.video_enhance_realesrgan_tile,
+            rife_python=s.video_enhance_rife_python,
+            rife_dir=Path(s.video_enhance_rife_dir),
+            rife_model_dir=Path(s.video_enhance_rife_model_dir),
+            rife_exp=s.video_enhance_rife_exp,
+            rife_scale=s.video_enhance_rife_scale,
+            rife_fp16=s.video_enhance_rife_fp16,
+            film_python=s.video_enhance_film_python,
+            film_dir=Path(s.video_enhance_film_dir),
+            film_model_path=Path(s.video_enhance_film_model_path),
+            film_times_to_interpolate=s.video_enhance_film_times_to_interpolate,
+            film_block_height=s.video_enhance_film_block_height,
+            film_block_width=s.video_enhance_film_block_width,
+            comfyui_base_url=s.comfyui_base_url,
+            latent_workflow=Path(s.video_enhance_latent_workflow),
+        )
+    raise NotImplementedError(
+        f"VIDEO_ME_VIDEO_ENHANCE_ADAPTER={s.video_enhance_adapter!r} is not supported."
+    )
 
 
 def _make_lipsync_adapter(s, work_dir: Path):
@@ -366,6 +416,7 @@ def _make_adapters(
         voice=_make_tts_adapter(s, work_dir),
         video=_make_video_adapter(s, work_dir),
         lipsync=_make_lipsync_adapter(s, work_dir),
+        video_enhance=_make_video_enhance_adapter(s, work_dir),
         assemble=FfmpegAssembleAdapter(
             work_dir=work_dir / "assembled",
             ffmpeg_bin=s.ffmpeg_bin,
@@ -2494,6 +2545,7 @@ async def _run_to_assembled_video(
     # assembly collapsing to the first clip's ~7.7s alone). Correct it here
     # with the same ffprobe probe _build_overlay_windows already trusts.
     synced_clips = await _probe_clip_durations(synced_clips, config.settings.ffprobe_bin)
+    synced_clips = await _enhance_video_clips(synced_clips, adapters, config, ctx, opts)
 
     # ── Assemble phase ────────────────────────────────────────────────────────
     # 8. assemble_video
@@ -2554,6 +2606,111 @@ async def _probe_clip_durations(
             clip if actual is None else clip.model_copy(update={"duration_sec": actual})
         )
     return corrected
+
+
+async def _enhance_video_clips(
+    clips: list[VideoClip],
+    adapters: _Adapters,
+    config: AppConfig,
+    ctx: _JobContext,
+    opts: RunOptions,
+) -> list[VideoClip]:
+    settings = config.settings
+    if not settings.video_enhance_enabled:
+        return clips
+    if adapters.video_enhance is None:
+        raise RuntimeError("Video enhance is enabled, but no video_enhance adapter is configured.")
+    health = await adapters.video_enhance.health()
+    if health.status == "down":
+        raise StageError(
+            "video_enhance",
+            f"Adapter 'video_enhance' is down: {health.reason}",
+        )
+
+    enhanced: list[VideoClip] = []
+    attempts: list[dict[str, Any]] = []
+    for idx, clip in enumerate(clips, start=1):
+        shot_id = clip.shot_id or f"clip_{idx:02d}"
+        if opts.stage_hook:
+            opts.stage_hook(
+                "video_enhance",
+                "stage_started",
+                shot_id=shot_id,
+                message=f"Shot {shot_id}: enhancing video clip before final assembly",
+            )
+        try:
+            result = await adapters.video_enhance.run(
+                VideoEnhanceRequest(
+                    video_uri=clip.uri,
+                    duration_sec=clip.duration_sec,
+                    output_name=f"{shot_id}_enhanced.mp4",
+                    target_fps=settings.video_enhance_target_fps,
+                    interpolation=settings.video_enhance_interpolation,
+                    stage="clip",
+                    has_burned_text=False,
+                    preserve_audio=True,
+                )
+            )
+        except Exception as exc:
+            if opts.stage_hook:
+                opts.stage_hook(
+                    "video_enhance",
+                    "stage_failed",
+                    shot_id=shot_id,
+                    message=f"Shot {shot_id}: video enhance failed",
+                )
+            if opts.error_hook:
+                hook_result = opts.error_hook("video_enhance", exc)
+                if isawaitable(hook_result):
+                    await hook_result
+            raise
+
+        probed_duration = await _probe_duration_sec(result.video_uri, settings.ffprobe_bin)
+        enhanced_clip = VideoClip(
+            uri=result.video_uri,
+            duration_sec=probed_duration or result.duration_sec or clip.duration_sec,
+            shot_id=clip.shot_id,
+        )
+        enhanced.append(enhanced_clip)
+        attempts.append(
+            {
+                "shot_id": shot_id,
+                "source_uri": clip.uri,
+                "enhanced_uri": enhanced_clip.uri,
+                "source_duration_sec": clip.duration_sec,
+                "enhanced_duration_sec": enhanced_clip.duration_sec,
+                "adapter": result.adapter,
+                "notes": result.notes,
+            }
+        )
+        if opts.stage_hook:
+            opts.stage_hook(
+                "video_enhance",
+                "stage_completed",
+                shot_id=shot_id,
+                message=f"Shot {shot_id}: video enhance complete",
+            )
+
+    artifact = ctx.artifact_store.put_json(
+        ctx.job.job_id,
+        "video_enhance",
+        {
+            "enabled": True,
+            "adapter": settings.video_enhance_adapter,
+            "target_fps": settings.video_enhance_target_fps,
+            "interpolation": settings.video_enhance_interpolation,
+            "attempts": attempts,
+        },
+    )
+    stage_result = completed_stage(
+        "video_enhance",
+        artifact,
+        adapter_name=getattr(adapters.video_enhance, "name", "video_enhance"),
+    )
+    ctx.job.stage_results["video_enhance"] = stage_result
+    ctx.job_store.save_stage_result(ctx.job.job_id, stage_result)
+    ctx.job_store.save_job(ctx.job)
+    return enhanced
 
 
 async def _build_overlay_windows(

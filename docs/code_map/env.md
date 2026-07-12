@@ -75,6 +75,28 @@
 | `VIDEO_ME_VIDEO_UPSCALE_ENABLED` | `bool` | `False` |
 | `VIDEO_ME_VIDEO_UPSCALE_TARGET_FPS` | `int` | `48` |
 | `VIDEO_ME_VIDEO_UPSCALE_INTERPOLATION` | `Literal['fps', 'minterpolate']` | `'minterpolate'` |
+| `VIDEO_ME_VIDEO_ENHANCE_ENABLED` | `bool` | `False` |
+| `VIDEO_ME_VIDEO_ENHANCE_ADAPTER` | `Literal['ffmpeg', 'rife', 'film', 'realesrgan_rife', 'realesrgan_film', 'latent_rife', 'latent_film']` | `'ffmpeg'` |
+| `VIDEO_ME_VIDEO_ENHANCE_TARGET_FPS` | `int` | `48` |
+| `VIDEO_ME_VIDEO_ENHANCE_INTERPOLATION` | `Literal['fps', 'minterpolate']` | `'minterpolate'` |
+| `VIDEO_ME_VIDEO_ENHANCE_REALESRGAN_PYTHON` | `str` | `'/workspace/.venv_video_enhance/bin/python'` |
+| `VIDEO_ME_VIDEO_ENHANCE_REALESRGAN_DIR` | `str` | `'/workspace/Real-ESRGAN'` |
+| `VIDEO_ME_VIDEO_ENHANCE_REALESRGAN_MODEL` | `str` | `'realesr-general-x4v3'` |
+| `VIDEO_ME_VIDEO_ENHANCE_REALESRGAN_OUTSCALE` | `float` | `2.0` |
+| `VIDEO_ME_VIDEO_ENHANCE_REALESRGAN_TILE` | `int` | `256` |
+| `VIDEO_ME_VIDEO_ENHANCE_RIFE_PYTHON` | `str` | `'/workspace/.venv_video_enhance/bin/python'` |
+| `VIDEO_ME_VIDEO_ENHANCE_RIFE_DIR` | `str` | `'/workspace/ECCV2022-RIFE'` |
+| `VIDEO_ME_VIDEO_ENHANCE_RIFE_MODEL_DIR` | `str` | `'/workspace/ECCV2022-RIFE/train_log'` |
+| `VIDEO_ME_VIDEO_ENHANCE_RIFE_EXP` | `int` | `1` |
+| `VIDEO_ME_VIDEO_ENHANCE_RIFE_SCALE` | `float` | `1.0` |
+| `VIDEO_ME_VIDEO_ENHANCE_RIFE_FP16` | `bool` | `True` |
+| `VIDEO_ME_VIDEO_ENHANCE_FILM_PYTHON` | `str` | `'/workspace/.venv_film/bin/python'` |
+| `VIDEO_ME_VIDEO_ENHANCE_FILM_DIR` | `str` | `'/workspace/frame-interpolation'` |
+| `VIDEO_ME_VIDEO_ENHANCE_FILM_MODEL_PATH` | `str` | `'/workspace/FILM/film_net/Style/saved_model'` |
+| `VIDEO_ME_VIDEO_ENHANCE_FILM_TIMES_TO_INTERPOLATE` | `int` | `2` |
+| `VIDEO_ME_VIDEO_ENHANCE_FILM_BLOCK_HEIGHT` | `int` | `1` |
+| `VIDEO_ME_VIDEO_ENHANCE_FILM_BLOCK_WIDTH` | `int` | `1` |
+| `VIDEO_ME_VIDEO_ENHANCE_LATENT_WORKFLOW` | `str` | `'assets/comfyui_workflows/video_enhance_latent.json'` |
 | `VIDEO_ME_RENDER_ALLOW_PLACEHOLDER_LORA` | `bool` | `False` |
 | `VIDEO_ME_MAX_PLAN_ITERATIONS` | `int` | `3` |
 | `VIDEO_ME_AUTO_APPROVE_PLAN` | `bool` | `False` |

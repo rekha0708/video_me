@@ -154,6 +154,67 @@ def check_track_b_assets(config: AppConfig, *, code_test: bool = False) -> list[
     return results
 
 
+def check_video_enhance_assets(settings: Settings) -> list[CheckResult]:
+    if not settings.video_enhance_enabled or settings.video_enhance_adapter == "ffmpeg":
+        return [
+            CheckResult(
+                "Video enhance backend",
+                PASS,
+                "disabled or ffmpeg-only; no AI model assets required",
+            )
+        ]
+
+    adapter = settings.video_enhance_adapter
+    results: list[CheckResult] = []
+
+    def require_file(name: str, path: Path) -> None:
+        if path.exists():
+            results.append(CheckResult(name, PASS, str(path)))
+        else:
+            results.append(CheckResult(name, FAIL, f"missing: {path}"))
+
+    def require_dir(name: str, path: Path) -> None:
+        if path.exists():
+            results.append(CheckResult(name, PASS, str(path)))
+        else:
+            results.append(CheckResult(name, FAIL, f"missing: {path}"))
+
+    if adapter in {"rife", "realesrgan_rife", "latent_rife"}:
+        require_file("Video enhance RIFE python", Path(settings.video_enhance_rife_python))
+        require_file("Video enhance RIFE CLI", Path(settings.video_enhance_rife_dir) / "inference_video.py")
+        rife_model_dir = Path(settings.video_enhance_rife_model_dir)
+        if any(rife_model_dir.glob("*.pkl")):
+            results.append(CheckResult("Video enhance RIFE weights", PASS, str(rife_model_dir)))
+        else:
+            results.append(CheckResult("Video enhance RIFE weights", FAIL, f"missing *.pkl in {rife_model_dir}"))
+
+    if adapter in {"film", "realesrgan_film", "latent_film"}:
+        require_file("Video enhance FILM python", Path(settings.video_enhance_film_python))
+        require_file("Video enhance FILM CLI", Path(settings.video_enhance_film_dir) / "eval" / "interpolator_cli.py")
+        require_dir("Video enhance FILM SavedModel", Path(settings.video_enhance_film_model_path))
+
+    if adapter in {"realesrgan_rife", "realesrgan_film"}:
+        require_file(
+            "Video enhance Real-ESRGAN python",
+            Path(settings.video_enhance_realesrgan_python),
+        )
+        realesrgan_dir = Path(settings.video_enhance_realesrgan_dir)
+        require_file("Video enhance Real-ESRGAN CLI", realesrgan_dir / "inference_realesrgan_video.py")
+        weight_names = [f"{settings.video_enhance_realesrgan_model}.pth"]
+        if settings.video_enhance_realesrgan_model == "realesr-general-x4v3":
+            weight_names.append("realesr-general-wdn-x4v3.pth")
+        for weight_name in weight_names:
+            require_file(
+                "Video enhance Real-ESRGAN weight",
+                realesrgan_dir / "weights" / weight_name,
+            )
+
+    if adapter in {"latent_rife", "latent_film"}:
+        require_file("Video enhance latent workflow", Path(settings.video_enhance_latent_workflow))
+
+    return results
+
+
 def _join_url(base_url: str, suffix: str) -> str:
     return f"{base_url.rstrip('/')}/{suffix.lstrip('/')}"
 
@@ -204,6 +265,14 @@ def _service_urls(settings: Settings) -> list[tuple[str, str, bool]]:
         elif settings.lipsync_adapter == "musetalk":
             base_url = getattr(settings, "musetalk_base_url", None) or settings.lipsync_base_url
             urls.append(("MuseTalk lip-sync (fallback)", _join_url(base_url, "health"), True))
+
+    if (
+        settings.video_enhance_enabled
+        and settings.video_enhance_adapter in {"latent_rife", "latent_film"}
+    ):
+        comfy_url = settings.comfyui_base_url + "/"
+        if not any(url == comfy_url for _, url, _ in urls):
+            urls.append(("ComfyUI (latent video enhance)", comfy_url, True))
 
     # TTS backend
     if settings.tts_adapter == "fish_s2":
@@ -262,6 +331,7 @@ def collect_readiness_results(
     results.extend(check_python_packages(config.settings))
     results.extend(check_system_tools())
     results.extend(check_track_b_assets(config, code_test=code_test))
+    results.extend(check_video_enhance_assets(config.settings))
     if skip_services:
         results.append(
             CheckResult(

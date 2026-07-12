@@ -79,6 +79,9 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `adapters/transcribe/__init__.py` — Transcription adapters.
 - `adapters/transcribe/whisper_adapter.py` — (no module docstring)
 - `adapters/transcript_refine/llm_adapter.py` — LLM-powered transcript refinement adapter.
+- `adapters/video_enhance/__init__.py` — Experimental video enhancement adapters.
+- `adapters/video_enhance/ai_adapter.py` — (no module docstring)
+- `adapters/video_enhance/ffmpeg_adapter.py` — (no module docstring)
 
 ## services/
 
@@ -103,6 +106,7 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `scripts/__init__.py` — Executable helpers for local development.
 - `scripts/check_runtime_readiness.py` — (no module docstring)
 - `scripts/check_track_b.py` — (no module docstring)
+- `scripts/enhance_video.py` — Run the experimental standalone video_enhance pipeline on one local MP4.
 - `scripts/generate_code_map.py` — Generate the code map under docs/code_map/ from the project source via AST.
 - `scripts/generate_training_images.py` — Generate LoRA training images using Flux 2.0 + qwen3.6:35b with human approval loop.
 - `scripts/generate_voices.py` — Bootstrap reference voice WAVs for Max and Zoe using ChatterboxTTS.
@@ -153,5 +157,7 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `tests/test_story_ingest.py` — Tests for adapters/story_ingest (structured parser, heuristic, LLM segmenter).
 - `tests/test_synthesize_voice.py` — (no module docstring)
 - `tests/test_transcribe.py` — (no module docstring)
+- `tests/test_video_enhance_ai_adapter.py` — (no module docstring)
+- `tests/test_video_enhance_ffmpeg_adapter.py` — (no module docstring)
 - `tests/test_wan_s2v_adapter.py` — (no module docstring)
 - `tests/test_workflow.py` — Tests for run_pipeline_job (A1.12) and its private helpers.
