@@ -37,11 +37,10 @@ def _no_real_fish_s2_pkill(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_real_wan_unload(monkeypatch):
-    """_run_action's finally block also calls unload_wan() unconditionally
-    after every job — a real POST to the configured wan_base_url. Without
-    this, running this test file on a real GPU pod would hit an actual,
-    currently-running Wan server mid-job. Autouse so no test can accidentally
-    skip it (same reasoning as _no_real_fish_s2_pkill above)."""
+    """_run_action's finally block also calls unload_wan() for HTTP video
+    backends after every job. Without this, running this test file on a real
+    GPU pod would hit an actual, currently-running video server mid-job.
+    Autouse so no test can accidentally skip it."""
     mock = AsyncMock(return_value=True)
     monkeypatch.setattr("services.dashboard_worker.unload_wan", mock)
     return mock
@@ -368,10 +367,9 @@ async def test_worker_runs_noop_job_to_completed(tmp_path: Path) -> None:
 async def test_run_action_stops_fish_s2_after_every_outcome(
     tmp_path: Path, _no_real_fish_s2_pkill, _no_real_wan_unload,
 ) -> None:
-    """stop_fish_s2_process() and unload_wan() must fire after completion,
-    failure, AND cancel — both are in a `finally`, not just the happy path —
-    since neither Fish S2's process-level retention nor Wan's never-unloaded-
-    after-Phase-B gap depend on how a job ends."""
+    """Fish S2 process cleanup must fire after completion and failure. The
+    default S2V backend is subprocess-per-request, so there is no resident
+    video `/unload` endpoint to call."""
     worker, repo = _make_worker(tmp_path)
 
     # Completed
@@ -380,7 +378,7 @@ async def test_run_action_stops_fish_s2_after_every_outcome(
         action = repo.claim_next_action("w1")
         await worker._run_action(action)
     assert _no_real_fish_s2_pkill.await_count == 1
-    assert _no_real_wan_unload.await_count == 1
+    assert _no_real_wan_unload.await_count == 0
 
     # Failed
     job_fail, _ = repo.create_queued_job(_noop_request())
@@ -388,16 +386,18 @@ async def test_run_action_stops_fish_s2_after_every_outcome(
         action = repo.claim_next_action("w1")
         await worker._run_action(action)
     assert _no_real_fish_s2_pkill.await_count == 2
-    assert _no_real_wan_unload.await_count == 2
+    assert _no_real_wan_unload.await_count == 0
 
 
 async def test_run_action_records_descriptive_cleanup_events(tmp_path: Path) -> None:
-    """The Fish S2 process stop and Wan unload in _run_action's finally block
+    """The Fish S2 process stop and video unload in _run_action's finally block
     happen after the pipeline task's own stage_hook has already gone out of
     scope, so they must record directly on the repo — otherwise this VRAM
     cleanup (which can take real time) is invisible in the dashboard."""
     worker, repo = _make_worker(tmp_path)
-    job, _ = repo.create_queued_job(_noop_request())
+    req = _noop_request()
+    req.overrides.video_adapter = "wan"
+    job, _ = repo.create_queued_job(req)
 
     with patch("core.workflow.run_noop_job", new=AsyncMock(return_value=_fake_core_job("completed"))):
         action = repo.claim_next_action("w1")
@@ -405,12 +405,32 @@ async def test_run_action_records_descriptive_cleanup_events(tmp_path: Path) -> 
 
     events = repo.get_job_detail(job.job_id).events
     fish_events = [e for e in events if e.stage_name == "fish_s2_process_stop"]
-    wan_events = [e for e in events if e.stage_name == "wan_model_unload"]
+    video_events = [e for e in events if e.stage_name == "wan_model_unload"]
 
     assert [e.event_type for e in fish_events] == ["stage_started", "stage_completed"]
     assert "stopped" in fish_events[1].message.lower()
-    assert [e.event_type for e in wan_events] == ["stage_started", "stage_completed"]
-    assert "unloaded" in wan_events[1].message.lower()
+    assert [e.event_type for e in video_events] == ["stage_started", "stage_completed"]
+    assert "wan video model" in video_events[0].message.lower()
+    assert "unloaded" in video_events[1].message.lower()
+
+
+@pytest.mark.asyncio
+async def test_run_action_unloads_selected_lightx2v_backend(
+    tmp_path: Path, _no_real_wan_unload,
+) -> None:
+    worker, repo = _make_worker(tmp_path)
+    req = _noop_request()
+    req.overrides.video_adapter = "wan_lightx2v"
+    job, _ = repo.create_queued_job(req)
+
+    with patch("core.workflow.run_noop_job", new=AsyncMock(return_value=_fake_core_job("completed"))):
+        action = repo.claim_next_action("w1")
+        await worker._run_action(action)
+
+    assert _no_real_wan_unload.await_args.args[0] == worker.config.settings.wan_lightx2v_base_url
+    events = repo.get_job_detail(job.job_id).events
+    lightx2v_events = [e for e in events if e.stage_name == "wan_lightx2v_model_unload"]
+    assert [e.event_type for e in lightx2v_events] == ["stage_started", "stage_completed"]
 
 
 # ---------------------------------------------------------------------------

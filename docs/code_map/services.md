@@ -110,6 +110,7 @@ Dashboard worker — claims queued jobs, runs the pipeline, emits events.
   - `_reclaim_orphaned_jobs(self) -> None` — Requeue jobs left claimed by a worker that died mid-run.
   - `async _run_action(self, action: DashboardQueueItem) -> None`
   - `async _execute_pipeline(self, action: DashboardQueueItem) -> None` — Dispatch to the right workflow function based on job phase.
+  - `_video_cleanup_target(self, req: CreateDashboardJobRequest) -> tuple[str, str, str] | None`
   - `async _run_noop(self, req: CreateDashboardJobRequest, job_id: str) -> None`
   - `async _run_lora_training(self, req: CreateDashboardJobRequest, job_id: str) -> None`
   - `async _run_lora_subprocess(self, job_id: str, stage_name: str, cmd: list[str]) -> None` — Run one LoRA pipeline step (cache latents/text-encoder or train), streaming

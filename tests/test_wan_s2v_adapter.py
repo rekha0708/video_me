@@ -64,6 +64,7 @@ def _mock_httpx(mp4_bytes: bytes = _FAKE_MP4, *, post_error: Exception | None = 
 def test_wan_s2v_declares_native_lipsync_and_voice_unload() -> None:
     assert WanS2VAdapter.native_lipsync is True
     assert WanS2VAdapter.requires_voice_unloaded is True
+    assert getattr(WanS2VAdapter, "managed_vram", False) is False
 
 
 async def test_run_requires_audio_before_video(tmp_path: Path) -> None:

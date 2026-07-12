@@ -52,6 +52,7 @@ function makeBadge(status, extraClass) {
 let _pollTimer = null;
 let _sse = null;
 let _lastEventId = 0;
+let _seenEventIds = new Set();
 let _currentJobId = null;
 let _wasTerminal = false;  // true if job was already terminal when page loaded
 
@@ -59,9 +60,21 @@ const TERMINAL_STATUSES = new Set(["completed", "failed", "blocked", "cancelled"
 
 function initJobDetail(jobId, initialStatus) {
   _currentJobId = jobId;
+  seedEventCursorFromDom();
   _wasTerminal = TERMINAL_STATUSES.has(initialStatus);
   if (_wasTerminal) return;  // already done — no SSE, no auto-reload loop
   connectSSE(jobId);
+}
+
+function seedEventCursorFromDom() {
+  _seenEventIds = new Set();
+  _lastEventId = 0;
+  document.querySelectorAll("#events-feed [data-event-id]").forEach((row) => {
+    const id = Number(row.dataset.eventId || 0);
+    if (!Number.isFinite(id) || id <= 0) return;
+    _seenEventIds.add(id);
+    _lastEventId = Math.max(_lastEventId, id);
+  });
 }
 
 function connectSSE(jobId) {
@@ -73,10 +86,13 @@ function connectSSE(jobId) {
   _sse.onmessage = (e) => {
     try {
       const ev = JSON.parse(e.data);
-      appendEvent(ev);
-      _lastEventId = ev.event_id || _lastEventId;
+      const appended = appendEvent(ev);
+      const eventId = Number(ev.event_id || 0);
+      if (Number.isFinite(eventId) && eventId > 0) {
+        _lastEventId = Math.max(_lastEventId, eventId);
+      }
       // Live-update the stage timeline dots.
-      if (ev.stage_name && ev.event_type) {
+      if (appended && ev.stage_name && ev.event_type) {
         updateTimeline(ev.stage_name, ev.event_type);
       }
     } catch (_) {}
@@ -168,10 +184,18 @@ function checkStall(lastHeartbeatAt, status) {
 
 function appendEvent(ev) {
   const feed = document.getElementById("events-feed");
-  if (!feed) return;
+  const eventId = Number(ev.event_id || 0);
+  if (Number.isFinite(eventId) && eventId > 0 && _seenEventIds.has(eventId)) {
+    return false;
+  }
+  if (!feed) return false;
 
   const row = document.createElement("div");
   row.className = "ev-row";
+  if (Number.isFinite(eventId) && eventId > 0) {
+    row.dataset.eventId = String(eventId);
+    _seenEventIds.add(eventId);
+  }
 
   const time = document.createElement("span");
   time.className = "ev-time";
@@ -196,6 +220,7 @@ function appendEvent(ev) {
 
   feed.appendChild(row);
   feed.scrollTop = feed.scrollHeight;
+  return true;
 }
 
 // ---------------------------------------------------------------------------

@@ -125,6 +125,7 @@ class DashboardWorker:
 
     async def _run_action(self, action: DashboardQueueItem) -> None:
         job_id = action.job_id
+        req = CreateDashboardJobRequest(**action.payload)
         logger.info("Worker %s claimed job %s", self.worker_id, job_id)
 
         self.repo.update_job_status(
@@ -198,27 +199,23 @@ class DashboardWorker:
                 stage_name="fish_s2_process_stop",
             )
 
-            # Wan is never unloaded anywhere in the mainline pipeline after
-            # Phase A's pre-render-loop hook — once Phase B loads it, it stays
-            # resident (56GB+) through assemble_video/publish and beyond, for
-            # every outcome, until some *future* job's own pre-Phase-A hook
-            # happens to evict it. Unlike Fish S2 this is a plain HTTP
-            # /unload, not a process kill — Wan hasn't shown retention beyond
-            # what /unload reclaims.
-            self.repo.record_event(
-                job_id, "stage_started",
-                "Unloading Wan video model to free VRAM for the next job…",
-                stage_name="wan_model_unload",
-            )
-            started = time.monotonic()
-            wan_unloaded = await unload_wan(self.config.settings.wan_base_url)
-            elapsed = time.monotonic() - started
-            self.repo.record_event(
-                job_id, "stage_completed",
-                f"Wan video model {'unloaded' if wan_unloaded else 'was already idle/unreachable'} "
-                f"(took {elapsed:.1f}s)",
-                stage_name="wan_model_unload",
-            )
+            cleanup_target = self._video_cleanup_target(req)
+            if cleanup_target is not None:
+                stage_name, label, base_url = cleanup_target
+                self.repo.record_event(
+                    job_id, "stage_started",
+                    f"Unloading {label} to free VRAM for the next job…",
+                    stage_name=stage_name,
+                )
+                started = time.monotonic()
+                unloaded = await unload_wan(base_url)
+                elapsed = time.monotonic() - started
+                self.repo.record_event(
+                    job_id, "stage_completed",
+                    f"{label} {'unloaded' if unloaded else 'was already idle/unreachable'} "
+                    f"(took {elapsed:.1f}s)",
+                    stage_name=stage_name,
+                )
 
     async def _execute_pipeline(self, action: DashboardQueueItem) -> None:
         """Dispatch to the right workflow function based on job phase."""
@@ -233,6 +230,20 @@ class DashboardWorker:
             await self._run_lora_training(req, job_id)
         else:
             await self._run_pipeline(req, job_id)
+
+    def _video_cleanup_target(
+        self, req: CreateDashboardJobRequest
+    ) -> tuple[str, str, str] | None:
+        settings = self._config_for_job(req).settings
+        if settings.video_adapter == "wan_lightx2v":
+            return (
+                "wan_lightx2v_model_unload",
+                "LightX2V Wan video model",
+                settings.wan_lightx2v_base_url,
+            )
+        if settings.video_adapter == "wan":
+            return ("wan_model_unload", "Wan video model", settings.wan_base_url)
+        return None
 
     async def _run_noop(self, req: CreateDashboardJobRequest, job_id: str) -> None:
         from core.workflow import run_noop_job

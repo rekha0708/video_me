@@ -424,6 +424,7 @@
     {% set has_payload = ev.payload and ev.payload | length > 0 %}
     {% set is_error = (ev.level.value if ev.level else 'info') == 'error' %}
     <div class="ev-row{% if has_payload %} ev-has-detail{% endif %}"
+         data-event-id="{{ ev.event_id }}"
          {% if has_payload %}onclick="toggleEvDetail(this)"{% endif %}>
       <span class="ev-time">{{ ev.created_at | dashboard_time }}</span>
       <span class="ev-level ev-level-{{ ev.level.value if ev.level else 'info' }}">
