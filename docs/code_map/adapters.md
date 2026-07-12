@@ -16,9 +16,11 @@
 | fetch_media | `YtDlpAdapter` | `adapters/fetch_media/ytdlp_adapter.py` |
 | generate_video | `LtxAdapter` | `adapters/generate_video/ltx_adapter.py` |
 | generate_video | `WanAdapter` | `adapters/generate_video/wan_adapter.py` |
+| generate_video | `WanLightX2VAdapter` | `adapters/generate_video/wan_lightx2v_adapter.py` |
 | generate_video | `WanS2VAdapter` | `adapters/generate_video/wan_s2v_adapter.py` |
 | lip_sync | `LatentSyncAdapter` | `adapters/lip_sync/latentsync_adapter.py` |
 | lip_sync | `LipSyncAdapter` | `adapters/lip_sync/lip_sync_adapter.py` |
+| lip_sync | `NoopLipSyncAdapter` | `adapters/lip_sync/noop_adapter.py` |
 | plan_shots | `LlmPlanShotsAdapter` | `adapters/plan_shots/llm_adapter.py` |
 | publish | `ManualPublishAdapter` | `adapters/publish/manual_adapter.py` |
 | render_character | `ComfyUIFluxAdapter` | `adapters/render_character/comfyui_flux_adapter.py` |
@@ -280,6 +282,21 @@ Video-generation adapters.
   - `async _call_wan(self, image_path: Path, prompt: str, duration_sec: float) -> bytes` — POST to the Wan service; return raw MP4 bytes.
   - `_save_clip(self, mp4_bytes: bytes, out_dir: Path) -> Path` — Write MP4 bytes to out_dir/clip.mp4 and return the path.
 
+### `adapters/generate_video/wan_lightx2v_adapter.py`
+
+- **class `WanLightX2VAdapter(GenerateVideo)`** — Experimental Wan2.2 I2V adapter backed by LightX2V's 4-step distill LoRA path.
+  - `__init__(self, work_dir: Path, base_url: str='http://localhost:8032', fps: int=_DEFAULT_FPS) -> None`
+  - `async health(self) -> HealthStatus`
+  - `async load(self) -> None`
+  - `async unload(self) -> bool`
+  - `async wait_until_loaded(self, timeout_sec: float, poll_sec: float=10.0) -> None`
+  - `async estimate_cost(self, req: VideoRequest) -> CostEstimate`
+  - `async run(self, req: VideoRequest) -> VideoClip`
+  - `_build_prompt(self, action: str, setting: str='', style_suffix: str='') -> str`
+  - `async _call_lightx2v(self, *, image_path: Path, prompt: str, duration_sec: float, fps: int, infer_frames: int, shot_id: str) -> bytes`
+  - `_save_clip(self, mp4_bytes: bytes, out_dir: Path) -> Path`
+- `_infer_frames_for_duration(duration_sec: float, fps: int) -> int`
+
 ### `adapters/generate_video/wan_s2v_adapter.py`
 
 - **class `WanS2VAdapter(GenerateVideo)`** — generate_video adapter: Wan2.2 Speech-to-Video via a thin local HTTP wrapper.
@@ -321,6 +338,15 @@ Lip-sync adapters.
   - `async _call_lipsync(self, video_path: Path, audio_path: Path, shot_id: str) -> bytes` — POST to the lip-sync service; return raw MP4 bytes.
   - `_save_clip(self, mp4_bytes: bytes, out_dir: Path) -> Path` — Write synced MP4 bytes to out_dir/synced.mp4 and return the path.
   - `_audio_duration(self, audio_path: Path) -> float` — Read duration from the WAV header; return 0.0 if unreadable.
+
+### `adapters/lip_sync/noop_adapter.py`
+
+- **class `NoopLipSyncAdapter(LipSync)`** — Fast path for jobs where mouth alignment is intentionally skipped.
+  - `__init__(self, work_dir: Path) -> None`
+  - `async health(self) -> HealthStatus`
+  - `async estimate_cost(self, req: LipSyncRequest) -> CostEstimate`
+  - `async run(self, req: LipSyncRequest) -> VideoClip`
+  - `_audio_duration(self, path: Path) -> float`
 
 ### `adapters/plan_shots/__init__.py`
 

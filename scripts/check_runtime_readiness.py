@@ -188,11 +188,20 @@ def _service_urls(settings: Settings) -> list[tuple[str, str, bool]]:
             urls.append(("ComfyUI (LTX video)", comfy_url, True))
     elif settings.video_adapter == "wan_s2v":
         urls.append(("Wan2.2 Speech-to-Video", _join_url(settings.wan_s2v_base_url, "health"), True))
-    elif settings.video_adapter == "wan":
-        urls.append(("Wan image-to-video (fallback)", _join_url(settings.wan_base_url, "health"), True))
+    elif settings.video_adapter in {"wan", "wan_lightx2v"}:
+        if settings.video_adapter == "wan_lightx2v":
+            urls.append(
+                (
+                    "LightX2V Wan image-to-video (experimental)",
+                    _join_url(settings.wan_lightx2v_base_url, "health"),
+                    True,
+                )
+            )
+        else:
+            urls.append(("Wan image-to-video (fallback)", _join_url(settings.wan_base_url, "health"), True))
         if settings.lipsync_adapter == "latentsync":
             urls.append(("LatentSync lip-sync", _join_url(settings.latentsync_base_url, "health"), True))
-        else:
+        elif settings.lipsync_adapter == "musetalk":
             base_url = getattr(settings, "musetalk_base_url", None) or settings.lipsync_base_url
             urls.append(("MuseTalk lip-sync (fallback)", _join_url(base_url, "health"), True))
 

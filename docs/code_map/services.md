@@ -205,6 +205,23 @@ MuseTalk lip-sync HTTP service wrapper.
 - `async lipsync(video: UploadFile=File(...), audio: UploadFile=File(...), shot_id: str=Form(...)) -> Response`
 - `_convert_to_mp4(avi: Path, out: Path) -> Path`
 
+### `services/wan_lightx2v_server.py`
+
+LightX2V Wan2.2 I2V HTTP service.
+
+- `_lora_paths() -> tuple[Path, Path]`
+- `_check_setup() -> None`
+- `_config_payload(num_frames: int, fps: int) -> dict`
+- `_write_config(num_frames: int, fps: int) -> Path`
+- `_load_pipeline() -> None`
+- `_unload_pipeline() -> None`
+- `async lifespan(app: FastAPI)`
+- `health() -> JSONResponse`
+- `async load() -> JSONResponse`
+- `async unload() -> JSONResponse`
+- `_generate(image_path: Path, prompt: str, output_path: Path, infer_frames: int, fps: int) -> None`
+- `async generate(image: UploadFile=File(...), prompt: str=Form(...), duration_sec: float=Form(4.0), fps: int=Form(16), infer_frames: int=Form(0), shot_id: str=Form('shot')) -> Response`
+
 ### `services/wan_s2v_server.py`
 
 Wan2.2 Speech-to-Video HTTP service wrapper.

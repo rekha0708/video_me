@@ -58,9 +58,10 @@
 - `render_adapter: Literal['a1111', 'comfyui_flux', 'musubi_flux']` = `'musubi_flux'`
 - `sd_base_url: str` = `'http://localhost:7860'`
 - `comfyui_base_url: str` = `'http://localhost:8188'`
-- `video_adapter: Literal['wan_s2v', 'wan', 'ltx']` = `'wan_s2v'`
+- `video_adapter: Literal['wan_s2v', 'wan', 'wan_lightx2v', 'ltx']` = `'wan_s2v'`
 - `wan_base_url: str` = `'http://localhost:8030'`
 - `wan_s2v_base_url: str` = `'http://localhost:8031'`
+- `wan_lightx2v_base_url: str` = `'http://localhost:8032'`
 - `ltx_base_url: str` = `'http://localhost:8188'`
 - `wan_load_gap_sec: int` = `30`
 - `wan_load_timeout_sec: int` = `1800`
@@ -73,7 +74,7 @@
 - `fish_s2_speech_dir: str` = `'/workspace/fish-speech'`
 - `fish_s2_log_path: str` = `'/workspace/logs/fish_s2.log'`
 - `target_language: str` = `'en'`
-- `lipsync_adapter: Literal['latentsync', 'musetalk']` = `'latentsync'`
+- `lipsync_adapter: Literal['latentsync', 'musetalk', 'none']` = `'latentsync'`
 - `lipsync_base_url: str` = `'http://localhost:8040'`
 - `musetalk_base_url: str` = `'http://localhost:8040'`
 - `latentsync_base_url: str` = `'http://localhost:8041'`
@@ -481,8 +482,8 @@ LLM-authored chart/diagram panel composited over the upper third of the shot.
 - `whisper_language: str | None` = `None`
 - `whisper_isolate_vocals: bool | None` = `None`
 - `render_adapter: Literal['a1111', 'comfyui_flux', 'musubi_flux'] | None` = `None`
-- `video_adapter: Literal['wan_s2v', 'wan', 'ltx'] | None` = `None`
-- `lipsync_adapter: Literal['latentsync', 'musetalk'] | None` = `None`
+- `video_adapter: Literal['wan_s2v', 'wan', 'wan_lightx2v', 'ltx'] | None` = `None`
+- `lipsync_adapter: Literal['latentsync', 'musetalk', 'none'] | None` = `None`
 - `tts_adapter: Literal['chatterbox', 'fish_s2'] | None` = `None`
 - `image_candidates: int | None` = `Field(default=None, ge=1, le=10)`
 - `max_shot_duration_sec: float | None` = `Field(default=None, ge=2.0, le=10.0)`

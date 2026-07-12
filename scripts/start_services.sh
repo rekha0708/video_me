@@ -11,6 +11,7 @@
 #   AUTOMATIC1111 (port 7860)  — SD 1.5 render_character fallback (RENDER_ADAPTER=a1111)
 #   ComfyUI       (port 8188)  — LTX-2.3 legacy video gen / Flux fallback
 #   Wan 2.2 I2V   (port 8030)  — image-to-video fallback (VIDEO_ADAPTER=wan)
+#   LightX2V I2V  (port 8032)  — experimental 4-step Wan I2V fast path
 #   LatentSync    (port 8041)  — lip-sync repair for Wan I2V
 #   MuseTalk      (port 8040)  — legacy lip-sync fallback
 #   Chatterbox    (port 8020)  — EN-only TTS fallback (TTS_ADAPTER=chatterbox)
@@ -158,6 +159,7 @@ NEED_FISH_S2=0
 NEED_CHATTERBOX=0
 NEED_WAN_S2V=0
 NEED_WAN_I2V=0
+NEED_WAN_LIGHTX2V=0
 NEED_LATENTSYNC=0
 NEED_MUSETALK=0
 
@@ -173,7 +175,15 @@ case "$VIDEO_ADAPTER" in
     NEED_WAN_I2V=1
     if [[ "$LIPSYNC_ADAPTER" == "latentsync" ]]; then
       NEED_LATENTSYNC=1
-    else
+    elif [[ "$LIPSYNC_ADAPTER" == "musetalk" ]]; then
+      NEED_MUSETALK=1
+    fi
+    ;;
+  wan_lightx2v)
+    NEED_WAN_LIGHTX2V=1
+    if [[ "$LIPSYNC_ADAPTER" == "latentsync" ]]; then
+      NEED_LATENTSYNC=1
+    elif [[ "$LIPSYNC_ADAPTER" == "musetalk" ]]; then
       NEED_MUSETALK=1
     fi
     ;;
@@ -389,6 +399,27 @@ else
   ok "Wan2.2 I2V not selected by current video adapter — skipping"
 fi
 
+# ── LightX2V Wan 2.2 I2V (experimental fast visual-motion path) ───────────────
+if [[ "$NEED_WAN_LIGHTX2V" == "1" ]]; then
+  log "LightX2V Wan2.2 image-to-video (port 8032, VIDEO_ADAPTER=wan_lightx2v)"
+  if [[ ! -d "$WORKSPACE/.venv_lightx2v" ]]; then
+    warn "LightX2V venv not found — run setup_gpu.sh --with-lightx2v first"
+  elif curl -sf http://localhost:8032/health >/dev/null 2>&1; then
+    ok "LightX2V Wan I2V already responding"
+  else
+    cd "$ROOT_DIR"
+    LIGHTX2V_DIR="$WORKSPACE/LightX2V" \
+    LIGHTX2V_I2V_MODEL_DIR="$WORKSPACE/Wan2.2-I2V-A14B" \
+    LIGHTX2V_I2V_LORA_DIR="$WORKSPACE/Wan2.2-Distill-Loras" \
+    launch_with_self_heal "LightX2V Wan I2V" "$LOG_DIR/lightx2v_wan.log" "$WORKSPACE/.venv_lightx2v/bin/pip" -- \
+      nohup "$WORKSPACE/.venv_lightx2v/bin/uvicorn" services.wan_lightx2v_server:app \
+      --host 0.0.0.0 --port 8032
+    ok "LightX2V Wan I2V starting (log: $LOG_DIR/lightx2v_wan.log)"
+  fi
+else
+  ok "LightX2V Wan I2V not selected by current video adapter — skipping"
+fi
+
 # ── LatentSync (preferred repair for Wan I2V) ─────────────────────────────────
 if [[ "$NEED_LATENTSYNC" == "1" ]]; then
   log "LatentSync lip-sync (port 8041, LIPSYNC_ADAPTER=latentsync)"
@@ -444,6 +475,9 @@ if [[ "$NEED_WAN_S2V" == "1" ]]; then
 fi
 if [[ "$NEED_WAN_I2V" == "1" ]]; then
   wait_for "Wan2.2 I2V"   "http://localhost:8030/health"             20 || FAILED=1
+fi
+if [[ "$NEED_WAN_LIGHTX2V" == "1" ]]; then
+  wait_for "LightX2V Wan I2V" "http://localhost:8032/health"          20 || FAILED=1
 fi
 if [[ "$NEED_LATENTSYNC" == "1" ]]; then
   wait_for "LatentSync"   "http://localhost:8041/health"             20 || FAILED=1

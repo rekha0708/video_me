@@ -16,8 +16,9 @@ Complete list of all TCP ports used by the video_me pipeline services and web UI
 | **8020** | Chatterbox TTS | HTTP | ⚠️ Fallback | Voice synthesis (EN only, `TTS_ADAPTER=chatterbox`) |
 | **7860** | AUTOMATIC1111 | HTTP | ⚠️ Fallback | SD 1.5 image gen (`RENDER_ADAPTER=a1111`) |
 | **8030** | Wan 2.2 I2V | HTTP | ⚠️ Fallback | Image-to-video (`VIDEO_ADAPTER=wan`) |
-| **8041** | LatentSync | HTTP | ⚠️ Fallback | Preferred lip-sync repair for Wan I2V (`LIPSYNC_ADAPTER=latentsync`) |
-| **8040** | MuseTalk | HTTP | ⚠️ Fallback | Legacy lip-sync repair for Wan I2V (`LIPSYNC_ADAPTER=musetalk`) |
+| **8032** | LightX2V Wan I2V | HTTP | ⚠️ Experimental | 4-step Wan I2V fast path (`VIDEO_ADAPTER=wan_lightx2v`) |
+| **8041** | LatentSync | HTTP | ⚠️ Fallback | Preferred lip-sync repair for non-native video (`LIPSYNC_ADAPTER=latentsync`) |
+| **8040** | MuseTalk | HTTP | ⚠️ Fallback | Legacy lip-sync repair for non-native video (`LIPSYNC_ADAPTER=musetalk`) |
 
 ---
 
@@ -54,8 +55,9 @@ sudo ufw allow 8765/tcp comment "Human approval UI"
 7860    # AUTOMATIC1111 (if RENDER_ADAPTER=a1111)
 8188    # ComfyUI (if VIDEO_ADAPTER=ltx or RENDER_ADAPTER=comfyui_flux)
 8030    # Wan 2.2 server (if VIDEO_ADAPTER=wan)
-8041    # LatentSync (if VIDEO_ADAPTER=wan and LIPSYNC_ADAPTER=latentsync)
-8040    # MuseTalk (if VIDEO_ADAPTER=wan and LIPSYNC_ADAPTER=musetalk)
+8032    # LightX2V Wan I2V (if VIDEO_ADAPTER=wan_lightx2v)
+8041    # LatentSync (if LIPSYNC_ADAPTER=latentsync with wan/wan_lightx2v)
+8040    # MuseTalk (if LIPSYNC_ADAPTER=musetalk with wan/wan_lightx2v)
 ```
 
 ### **When to Use Fallback Ports:**
@@ -63,6 +65,7 @@ sudo ufw allow 8765/tcp comment "Human approval UI"
 - **7860 (A1111):** SD 1.5 fallback if Flux 2.0 has issues
 - **8188 (ComfyUI):** Legacy LTX video path or `comfyui_flux` fallback
 - **8030 + 8041 (Wan I2V + LatentSync):** Comparison/repair path when S2V is not desired
+- **8032 (LightX2V Wan I2V):** Experimental fastest visual-motion path; pair with `LIPSYNC_ADAPTER=none` when mouth repair is not important
 - **8040 (MuseTalk):** Faster legacy repair fallback, usually weaker for singing
 
 ---
@@ -171,19 +174,29 @@ sudo ufw allow 8765/tcp comment "Human approval UI"
 
 ---
 
+### **Port 8032 — LightX2V Wan 2.2 I2V (Experimental Fast Path)**
+- **Service:** LightX2V Wan2.2 image-to-video HTTP API
+- **Model:** Wan2.2-I2V-A14B base + LightX2V 4-step high/low-noise distill LoRAs
+- **Used by:** `generate_video` (if `VIDEO_ME_VIDEO_ADAPTER=wan_lightx2v`)
+- **Health check:** `GET http://localhost:8032/health`
+- **Start command:** `uvicorn services.wan_lightx2v_server:app --host 0.0.0.0 --port 8032`
+- **Note:** Visual-motion path only. Use `VIDEO_ME_LIPSYNC_ADAPTER=none` for max throughput, or LatentSync/MuseTalk when mouth repair matters.
+
+---
+
 ### **Port 8041 — LatentSync (Fallback Repair)**
 - **Service:** LatentSync lip-sync HTTP API
-- **Used by:** `lip_sync` if `VIDEO_ME_VIDEO_ADAPTER=wan` and `VIDEO_ME_LIPSYNC_ADAPTER=latentsync`
+- **Used by:** `lip_sync` if `VIDEO_ME_LIPSYNC_ADAPTER=latentsync` with `wan` or `wan_lightx2v`
 - **Health check:** `GET http://localhost:8041/health`
 - **VRAM:** ~18 GB for LatentSync 1.6 inference
 - **Start command:** `uvicorn services.latentsync_server:app --host 0.0.0.0 --port 8041`
-- **Note:** Preferred repair adapter for Wan I2V; not used by Wan S2V.
+- **Note:** Preferred repair adapter for non-native I2V paths; not used by Wan S2V.
 
 ---
 
 ### **Port 8040 — MuseTalk (Fallback)**
 - **Service:** MuseTalk lip-sync HTTP API
-- **Used by:** `lip_sync` (if `VIDEO_ADAPTER=wan` and `LIPSYNC_ADAPTER=musetalk`)
+- **Used by:** `lip_sync` (if `VIDEO_ME_LIPSYNC_ADAPTER=musetalk` with `wan` or `wan_lightx2v`)
 - **Health check:** `GET http://localhost:8040/health`
 - **VRAM:** ~8 GB
 - **Start command:** `uvicorn services.musetalk_server:app --host 0.0.0.0 --port 8040`
@@ -199,6 +212,7 @@ sudo ufw allow 8765/tcp comment "Human approval UI"
 VIDEO_ME_APPROVAL_PORT=8765              # Human approval UI
 VIDEO_ME_LLM_BASE_URL=http://localhost:11434/v1
 VIDEO_ME_WAN_S2V_BASE_URL=http://localhost:8031
+VIDEO_ME_WAN_LIGHTX2V_BASE_URL=http://localhost:8032 # LightX2V Wan I2V fast path
 VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188
 VIDEO_ME_FISH_S2_BASE_URL=http://localhost:8025
 VIDEO_ME_TTS_BASE_URL=http://localhost:8020        # Chatterbox fallback
@@ -246,7 +260,7 @@ services:
 
 ```bash
 # Check which ports are listening
-netstat -tlnp | grep -E '(11434|8031|8025|8765|8188|8020|7860|8030|8041|8040)'
+netstat -tlnp | grep -E '(11434|8031|8025|8765|8188|8020|7860|8030|8032|8041|8040)'
 
 # Or with lsof
 lsof -i :11434  # Ollama
@@ -291,6 +305,7 @@ Services have no built-in authentication. Use firewall rules or reverse proxy wi
 ⚠️ 7860   # A1111 (if RENDER_ADAPTER=a1111)
 ⚠️ 8188   # ComfyUI (if VIDEO_ADAPTER=ltx or RENDER_ADAPTER=comfyui_flux)
 ⚠️ 8030   # Wan I2V (if VIDEO_ADAPTER=wan)
+⚠️ 8032   # LightX2V Wan I2V (if VIDEO_ADAPTER=wan_lightx2v)
 ⚠️ 8041   # LatentSync (if LIPSYNC_ADAPTER=latentsync)
 ⚠️ 8040   # MuseTalk (if LIPSYNC_ADAPTER=musetalk)
 ```

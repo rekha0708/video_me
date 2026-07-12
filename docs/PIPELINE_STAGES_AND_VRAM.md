@@ -2,7 +2,7 @@
 
 End-to-end reference for the **default stack** (musubi Flux image + Wan2.2 S2V
 video + Fish S2 TTS), on the G200 (143 GB). Kept in sync with `core/workflow.py`
-and `core/config.py`. Last updated 2026-07-10.
+and `core/config.py`. Last updated 2026-07-12.
 
 One model does all reasoning **and** vision: **qwen3.6:35b** (~30 GB, natively
 multimodal, resident in Ollama). Every LLM/VLM stage below shares that one
@@ -33,7 +33,8 @@ There are no per-stage "agents" — it's a single async pipeline process
 | 11b | voice_model_unload | Fish Audio S2 | frees ~20 GB | Wan S2V/LatentSync request this before video/repair to avoid VRAM contention |
 | 12 | generate_video (per shot) | **Wan2.2-S2V-14B** :8031 *(default)* | ~80 GB class | i2v from rendered image + audio; **native audio-conditioned singing sync**; lip_sync skipped |
 | 12b | generate_video *(fallback)* | **Wan 2.2 I2V** :8030 | ~52 GB | silent i2v; deferred-loaded; then LatentSync/MuseTalk repair |
-| 12c | lip_sync *(fallback)* | **LatentSync** :8041 | ~18 GB | preferred repair for Wan I2V; MuseTalk :8040 remains a faster legacy fallback |
+| 12c | generate_video *(experimental)* | **LightX2V Wan I2V** :8032 | GPU-bound, lower step count | Wan2.2-I2V-A14B + 4-step LightX2V LoRAs; visual-motion speed path |
+| 12d | lip_sync *(fallback/optional)* | **LatentSync** :8041 | ~18 GB | preferred repair for non-native I2V; MuseTalk :8040 remains a faster legacy fallback; `lipsync_adapter=none` intentionally skips repair |
 | 13 | assemble_video | ffmpeg (CPU) | 0 | concat, scale 1080×1920, captions, AI-disclosure label |
 | 14 | critique (video, Phase 2) | qwen3.6:35b | 30 | rubric on sampled output frames → pass/regenerate/reject |
 | 15 | publish | file copy (CPU) | 0 | → `review/<ts>_<lang>_<stem>/` + metadata.json |
@@ -58,8 +59,9 @@ loading. Wan is unloaded during render and loaded only after image approval.
 | musubi-tuner (Flux) | — (subprocess) | ✅ default |
 | ComfyUI (LTX video) | 8188 | ⚠️ `VIDEO_ME_VIDEO_ADAPTER=ltx` |
 | Wan 2.2 I2V | 8030 | ⚠️ `VIDEO_ME_VIDEO_ADAPTER=wan` |
-| LatentSync | 8041 | ⚠️ `VIDEO_ME_VIDEO_ADAPTER=wan`, `VIDEO_ME_LIPSYNC_ADAPTER=latentsync` |
-| MuseTalk | 8040 | ⚠️ `VIDEO_ME_LIPSYNC_ADAPTER=musetalk` |
+| LightX2V Wan I2V | 8032 | ⚠️ `VIDEO_ME_VIDEO_ADAPTER=wan_lightx2v` |
+| LatentSync | 8041 | ⚠️ `VIDEO_ME_LIPSYNC_ADAPTER=latentsync` with `wan`/`wan_lightx2v` |
+| MuseTalk | 8040 | ⚠️ `VIDEO_ME_LIPSYNC_ADAPTER=musetalk` with `wan`/`wan_lightx2v` |
 | Chatterbox TTS | 8020 | ⚠️ `TTS_ADAPTER=chatterbox` |
 | AUTOMATIC1111 | 7860 | ⚠️ `RENDER_ADAPTER=a1111` |
 
@@ -78,5 +80,7 @@ Start everything + health-check: `bash scripts/start_services.sh`.
   rendered; a second character does not appear. Not handled today.
 - **Wan I2V `/unload` vs in-flight inference**: unload waits out inference; the
   adapter's 120 s timeout raises rather than OOM the next render.
+- **LightX2V fast path**: `LIGHTX2V_I2V_OFFLOAD_MODEL=false` is fastest and
+  expects enough VRAM; set it true only when the LightX2V I2V service OOMs.
 - **S2V requires audio before video**: `WanS2VAdapter` raises if `audio_uri`
   is missing, because the model conditions video length and mouth motion on audio.

@@ -240,8 +240,9 @@ and `scripts.check_runtime_readiness`.
 | Chatterbox TTS | 8020 | Voice synthesis (EN only, fallback) | ⚠️ Only if `TTS_ADAPTER=chatterbox` |
 | AUTOMATIC1111 | 7860 | SD 1.5 image gen | ⚠️ Only if `RENDER_ADAPTER=a1111` |
 | Wan 2.2 I2V | 8030 | Image-to-video | ⚠️ Only if `VIDEO_ADAPTER=wan` |
-| LatentSync | 8041 | Lip-sync repair for Wan I2V | ⚠️ Only if `VIDEO_ADAPTER=wan` + `LIPSYNC_ADAPTER=latentsync` |
-| MuseTalk | 8040 | Legacy lip-sync repair | ⚠️ Only if `VIDEO_ADAPTER=wan` + `LIPSYNC_ADAPTER=musetalk` |
+| LightX2V Wan I2V | 8032 | 4-step experimental Wan I2V fast path | ⚠️ Only if `VIDEO_ADAPTER=wan_lightx2v` |
+| LatentSync | 8041 | Lip-sync repair for non-native video | ⚠️ Only if `LIPSYNC_ADAPTER=latentsync` with `wan`/`wan_lightx2v` |
+| MuseTalk | 8040 | Legacy lip-sync repair | ⚠️ Only if `LIPSYNC_ADAPTER=musetalk` with `wan`/`wan_lightx2v` |
 
 > **Default singing stack needs 3 services: Ollama + Wan2.2 S2V + Fish Audio S2.**
 
@@ -329,6 +330,8 @@ VIDEO_ME_APPROVAL_TIMEOUT_HOURS=24
 Switch adapters with env vars — no code change needed:
 ```bash
 VIDEO_ME_RENDER_ADAPTER=a1111        # fall back to AUTOMATIC1111 + SD 1.5
+VIDEO_ME_VIDEO_ADAPTER=wan_lightx2v  # experimental LightX2V Wan 2.2 I2V fast path
+VIDEO_ME_LIPSYNC_ADAPTER=none        # fastest visual run; no mouth repair
 VIDEO_ME_VIDEO_ADAPTER=wan           # Wan 2.2 I2V + lip-sync repair
 VIDEO_ME_LIPSYNC_ADAPTER=latentsync  # preferred repair for Wan I2V; or: musetalk
 VIDEO_ME_VIDEO_ADAPTER=ltx           # legacy LTX path via ComfyUI
@@ -360,18 +363,26 @@ VIDEO_ME_TARGET_LANGUAGE=en            # en | hi | both
 
 # Adapter selection (default: musubi_flux + wan_s2v + fish_s2)
 VIDEO_ME_RENDER_ADAPTER=musubi_flux    # or: comfyui_flux (needs BFL cloud API), a1111
-VIDEO_ME_VIDEO_ADAPTER=wan_s2v         # or: wan, ltx
+VIDEO_ME_VIDEO_ADAPTER=wan_s2v         # or: wan_lightx2v, wan, ltx
 VIDEO_ME_TTS_ADAPTER=fish_s2           # or: chatterbox
-VIDEO_ME_LIPSYNC_ADAPTER=latentsync    # repair for wan I2V; or: musetalk
+VIDEO_ME_LIPSYNC_ADAPTER=latentsync    # repair for non-native video; or: none, musetalk
 
 # Service URLs
 VIDEO_ME_WAN_S2V_BASE_URL=http://localhost:8031   # Wan2.2 S2V default video
+VIDEO_ME_WAN_LIGHTX2V_BASE_URL=http://localhost:8032 # LightX2V Wan I2V fast path
 VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188   # ComfyUI legacy LTX / comfyui_flux fallback
 VIDEO_ME_FISH_S2_BASE_URL=http://localhost:8025   # Fish Audio S2 (EN + HI TTS)
+
+# Fast video/offload knobs
+WAN_S2V_OFFLOAD_MODEL=false
+WAN_I2V_OFFLOAD_MODEL=false
+LIGHTX2V_I2V_OFFLOAD_MODEL=false
+LIGHTX2V_I2V_STEPS=4
+LIGHTX2V_I2V_ATTN_MODE=sage_attn2
 VIDEO_ME_TTS_BASE_URL=http://localhost:8020        # Chatterbox TTS (fallback)
 VIDEO_ME_SD_BASE_URL=http://localhost:7860         # A1111 (fallback only)
 VIDEO_ME_WAN_BASE_URL=http://localhost:8030        # Wan 2.2 I2V (fallback only)
-VIDEO_ME_LATENTSYNC_BASE_URL=http://localhost:8041 # LatentSync repair (Wan I2V)
+VIDEO_ME_LATENTSYNC_BASE_URL=http://localhost:8041 # LatentSync repair (non-native I2V)
 VIDEO_ME_MUSETALK_BASE_URL=http://localhost:8040   # MuseTalk repair fallback
 VIDEO_ME_LIPSYNC_BASE_URL=http://localhost:8040    # legacy alias for MuseTalk
 

@@ -2,13 +2,17 @@
 
 This project now treats **Wan2.2 S2V** as the main singing-video path.
 Use **Wan2.2 I2V + LatentSync** only as a fallback/comparison path when you
-want to generate visual motion first and repair lips afterward.
+want to generate visual motion first and repair lips afterward. Use the
+experimental **LightX2V Wan I2V** path when maximum visual generation rate is
+more important than native mouth sync.
 
 Official references:
 - Wan2.2 README: https://github.com/Wan-Video/Wan2.2
 - Wan2.2 S2V weights: https://huggingface.co/Wan-AI/Wan2.2-S2V-14B
 - LatentSync README: https://github.com/bytedance/LatentSync
 - LatentSync 1.6 weights: https://huggingface.co/ByteDance/LatentSync-1.6
+- LightX2V README: https://github.com/ModelTC/LightX2V
+- LightX2V Wan2.2 distill LoRAs: https://huggingface.co/lightx2v/Wan2.2-Distill-Loras
 
 ## Recommendation
 
@@ -38,6 +42,19 @@ LatentSync. It can improve ordinary speech clips, but it is less ideal than
 S2V for singing because repair happens after the motion has already been
 generated.
 
+For fastest visual-motion experiments, choose:
+
+```bash
+VIDEO_ME_VIDEO_ADAPTER=wan_lightx2v
+VIDEO_ME_LIPSYNC_ADAPTER=none
+VIDEO_ME_WAN_LIGHTX2V_BASE_URL=http://localhost:8032
+LIGHTX2V_I2V_OFFLOAD_MODEL=false
+```
+
+That path uses Wan2.2-I2V-A14B with LightX2V's 4-step I2V distill LoRAs and
+skips the lip-sync repair stage. Switch `VIDEO_ME_LIPSYNC_ADAPTER` back to
+`latentsync` if mouth alignment matters for a comparison run.
+
 ## One-command setup
 
 Default singing stack:
@@ -52,6 +69,12 @@ Add Wan I2V + LatentSync fallback:
 
 ```bash
 bash scripts/setup_gpu.sh --with-wan-i2v --with-latentsync
+```
+
+Add LightX2V Wan I2V fast path:
+
+```bash
+bash scripts/setup_gpu.sh --with-lightx2v
 ```
 
 Add the legacy MuseTalk repair fallback too:
@@ -127,6 +150,7 @@ In the new-job dashboard:
 
 - **Video Model → Wan 2.2 S2V** for the main singing path.
 - **Video Model → Wan 2.2 I2V** plus **Lip-sync Repair → LatentSync** for fallback comparisons.
+- **Video Model → Wan 2.2 I2V LightX2V** plus **Lip-sync Repair → Skip repair** for the fastest visual-only run.
 - **Lip-sync Repair → MuseTalk** only for legacy/fast repair checks.
 
 Retrying a completed or failed job can also override `video_adapter` and

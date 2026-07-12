@@ -805,6 +805,10 @@ python run_pipeline.py --resume-job <ID>          # full resume
 
 ### Wan resident model — GPU performance fix
 
+> 2026-07-12 update: official Wan I2V offload is now env-controlled through
+> `WAN_I2V_OFFLOAD_MODEL` and defaults to `false` for maximum throughput on
+> high-VRAM GPUs. Set it to `true` if the official Wan I2V path OOMs.
+
 **Problem**: `wan_server.py` spawned `generate.py` as a subprocess every shot:
 - 4–5 min cold model reload from disk per shot
 - `offload_model=True` default (Wan's single-GPU default): DiT layers shuffled between CPU/GPU

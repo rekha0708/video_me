@@ -39,9 +39,10 @@
 | `VIDEO_ME_RENDER_ADAPTER` | `Literal['a1111', 'comfyui_flux', 'musubi_flux']` | `'musubi_flux'` |
 | `VIDEO_ME_SD_BASE_URL` | `str` | `'http://localhost:7860'` |
 | `VIDEO_ME_COMFYUI_BASE_URL` | `str` | `'http://localhost:8188'` |
-| `VIDEO_ME_VIDEO_ADAPTER` | `Literal['wan_s2v', 'wan', 'ltx']` | `'wan_s2v'` |
+| `VIDEO_ME_VIDEO_ADAPTER` | `Literal['wan_s2v', 'wan', 'wan_lightx2v', 'ltx']` | `'wan_s2v'` |
 | `VIDEO_ME_WAN_BASE_URL` | `str` | `'http://localhost:8030'` |
 | `VIDEO_ME_WAN_S2V_BASE_URL` | `str` | `'http://localhost:8031'` |
+| `VIDEO_ME_WAN_LIGHTX2V_BASE_URL` | `str` | `'http://localhost:8032'` |
 | `VIDEO_ME_LTX_BASE_URL` | `str` | `'http://localhost:8188'` |
 | `VIDEO_ME_WAN_LOAD_GAP_SEC` | `int` | `30` |
 | `VIDEO_ME_WAN_LOAD_TIMEOUT_SEC` | `int` | `1800` |
@@ -54,7 +55,7 @@
 | `VIDEO_ME_FISH_S2_SPEECH_DIR` | `str` | `'/workspace/fish-speech'` |
 | `VIDEO_ME_FISH_S2_LOG_PATH` | `str` | `'/workspace/logs/fish_s2.log'` |
 | `VIDEO_ME_TARGET_LANGUAGE` | `str` | `'en'` |
-| `VIDEO_ME_LIPSYNC_ADAPTER` | `Literal['latentsync', 'musetalk']` | `'latentsync'` |
+| `VIDEO_ME_LIPSYNC_ADAPTER` | `Literal['latentsync', 'musetalk', 'none']` | `'latentsync'` |
 | `VIDEO_ME_LIPSYNC_BASE_URL` | `str` | `'http://localhost:8040'` |
 | `VIDEO_ME_MUSETALK_BASE_URL` | `str` | `'http://localhost:8040'` |
 | `VIDEO_ME_LATENTSYNC_BASE_URL` | `str` | `'http://localhost:8041'` |

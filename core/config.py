@@ -51,10 +51,11 @@ class Settings(BaseSettings):
     sd_base_url: str = "http://localhost:7860"       # AUTOMATIC1111 (kept for fallback)
     comfyui_base_url: str = "http://localhost:8188"  # ComfyUI (legacy LTX + comfyui_flux fallback)
 
-    # --- generate_video backend ("wan_s2v", "wan", or legacy "ltx") ---
-    video_adapter: Literal["wan_s2v", "wan", "ltx"] = "wan_s2v"
+    # --- generate_video backend ("wan_s2v", "wan", "wan_lightx2v", or legacy "ltx") ---
+    video_adapter: Literal["wan_s2v", "wan", "wan_lightx2v", "ltx"] = "wan_s2v"
     wan_base_url: str = "http://localhost:8030"      # Wan 2.2 deferred-load server (fallback)
     wan_s2v_base_url: str = "http://localhost:8031"  # Wan 2.2 Speech-to-Video server (singing/default)
+    wan_lightx2v_base_url: str = "http://localhost:8032"  # LightX2V 4-step Wan I2V (experimental)
     ltx_base_url: str = "http://localhost:8188"      # LTX-Video 2.3 via ComfyUI (legacy)
     # Wan deferred-loading sequence (core/gpu_sequencer.py): gap between unloading
     # the render-phase models and loading Wan, and the readiness-poll ceiling.
@@ -98,8 +99,8 @@ class Settings(BaseSettings):
     # --- language selection ---
     target_language: str = "en"  # "en" | "hi" | "both"
 
-    # --- lip-sync repair backend for non-native video adapters ("latentsync" or "musetalk") ---
-    lipsync_adapter: Literal["latentsync", "musetalk"] = "latentsync"
+    # --- lip-sync repair backend for non-native video adapters ("latentsync", "musetalk", or "none") ---
+    lipsync_adapter: Literal["latentsync", "musetalk", "none"] = "latentsync"
     lipsync_base_url: str = "http://localhost:8040"   # legacy alias for MuseTalk
     musetalk_base_url: str = "http://localhost:8040"
     latentsync_base_url: str = "http://localhost:8041"

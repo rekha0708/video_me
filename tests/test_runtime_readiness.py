@@ -149,6 +149,24 @@ def test_wan_i2v_can_use_musetalk_service_url() -> None:
     assert "MuseTalk lip-sync (fallback)" in names
 
 
+def test_lightx2v_i2v_can_skip_repair_service_url() -> None:
+    urls = _service_urls(Settings(video_adapter="wan_lightx2v", lipsync_adapter="none"))
+    names = [name for name, _, _ in urls]
+
+    assert "LightX2V Wan image-to-video (experimental)" in names
+    assert not any("LatentSync" in name for name in names)
+    assert not any("MuseTalk" in name for name in names)
+
+
+def test_lightx2v_i2v_can_use_selected_repair_service_url() -> None:
+    urls = _service_urls(Settings(video_adapter="wan_lightx2v", lipsync_adapter="latentsync"))
+    names = [name for name, _, _ in urls]
+
+    assert "LightX2V Wan image-to-video (experimental)" in names
+    assert "LatentSync lip-sync" in names
+    assert not any("MuseTalk" in name for name in names)
+
+
 def test_a1111_render_adapter_adds_a1111_service_url() -> None:
     urls = _service_urls(Settings(render_adapter="a1111", video_adapter="ltx"))
     names = [name for name, _, _ in urls]

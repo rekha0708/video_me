@@ -23,13 +23,17 @@ API contract:
                     load first — standalone use keeps working, paying the 4–5 min
                     load on the first request instead of at server boot.
 
-Model notes (unchanged from the resident edition):
-  - t5_cpu=True → T5 text encoder stays on CPU (runs once per inference, saves ~11 GB VRAM)
-  - offload_model=True in generate: both DiTs (108 GB) can never be in VRAM together
+Model notes:
+  - t5_cpu=True -> T5 text encoder stays on CPU (runs once per inference, saves ~11 GB VRAM)
+  - WAN_I2V_OFFLOAD_MODEL controls Wan's generate-time DiT offload. It defaults
+    to false for maximum throughput on high-VRAM GPUs; set it true on smaller
+    GPUs if the official Wan I2V path OOMs.
 
 Environment variables:
-  WAN_DIR        Path to the cloned Wan2.2 repo (default: /workspace/Wan2.2)
-  WAN_MODEL_DIR  Path to the downloaded I2V model (default: /workspace/Wan2.2-I2V-A14B)
+  WAN_DIR                 Path to the cloned Wan2.2 repo (default: /workspace/Wan2.2)
+  WAN_MODEL_DIR           Path to the downloaded I2V model (default: /workspace/Wan2.2-I2V-A14B)
+  WAN_I2V_OFFLOAD_MODEL   Pass-through for generate(..., offload_model=...)
+                          (default: false)
 
 Run (from /workspace/video_me):
   uvicorn services.wan_server:app --host 0.0.0.0 --port 8030
@@ -54,6 +58,9 @@ logger = logging.getLogger(__name__)
 
 WAN_DIR = Path(os.getenv("WAN_DIR", "/workspace/Wan2.2"))
 WAN_MODEL_DIR = Path(os.getenv("WAN_MODEL_DIR", "/workspace/Wan2.2-I2V-A14B"))
+WAN_I2V_OFFLOAD_MODEL = os.getenv("WAN_I2V_OFFLOAD_MODEL", "false").strip().lower() in (
+    "1", "true", "yes",
+)
 
 # 480p landscape — matches old _DEFAULT_SIZE = "832*480"
 _MAX_AREA = 832 * 480
@@ -92,9 +99,6 @@ def _load_pipeline() -> None:
             device_id=0,
             t5_cpu=True,   # T5 on CPU: saves ~11 GB VRAM; runs once per inference
             # init_on_cpu=True (default): both 54 GB DiT models start in CPU RAM.
-            # offload_model=True (in generate): swaps one DiT to GPU per denoising step.
-            # Both DiTs together (108 GB) + other services (7 GB) > 80 GB, so they
-            # can never both be in VRAM simultaneously — offloading is unavoidable.
             # The benefit of this resident approach vs subprocess: no 4-5 min disk
             # reload per shot; model stays in CPU RAM between calls.
         )
@@ -194,7 +198,7 @@ def _inference(pil_image, prompt: str, num_frames: int, fps: int) -> bytes:
             sampling_steps=40,
             guide_scale=5.0,
             seed=-1,
-            offload_model=True,   # required: both DiTs (108 GB) > 80 GB VRAM; one at a time
+            offload_model=WAN_I2V_OFFLOAD_MODEL,
         )
 
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:

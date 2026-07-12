@@ -53,10 +53,12 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `adapters/generate_video/__init__.py` — Video-generation adapters.
 - `adapters/generate_video/ltx_adapter.py` — (no module docstring)
 - `adapters/generate_video/wan_adapter.py` — (no module docstring)
+- `adapters/generate_video/wan_lightx2v_adapter.py` — (no module docstring)
 - `adapters/generate_video/wan_s2v_adapter.py` — (no module docstring)
 - `adapters/lip_sync/__init__.py` — Lip-sync adapters.
 - `adapters/lip_sync/latentsync_adapter.py` — (no module docstring)
 - `adapters/lip_sync/lip_sync_adapter.py` — (no module docstring)
+- `adapters/lip_sync/noop_adapter.py` — (no module docstring)
 - `adapters/plan_shots/__init__.py` — Shot-planning adapters.
 - `adapters/plan_shots/llm_adapter.py` — (no module docstring)
 - `adapters/publish/__init__.py` — Publishing adapters.
@@ -92,6 +94,7 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `services/latentsync_server.py` — LatentSync lip-sync HTTP service wrapper.
 - `services/musetalk_compat/sitecustomize.py` — PyTorch 2.6+ changed torch.load's weights_only default from False to True,
 - `services/musetalk_server.py` — MuseTalk lip-sync HTTP service wrapper.
+- `services/wan_lightx2v_server.py` — LightX2V Wan2.2 I2V HTTP service.
 - `services/wan_s2v_server.py` — Wan2.2 Speech-to-Video HTTP service wrapper.
 - `services/wan_server.py` — Wan2.2 image-to-video HTTP service — deferred-loading edition.
 

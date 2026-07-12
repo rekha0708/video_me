@@ -226,6 +226,13 @@ def _make_video_adapter(s, work_dir: Path):
             base_url=s.wan_s2v_base_url,
             fps=s.wan_s2v_fps,
         )
+    if s.video_adapter == "wan_lightx2v":
+        from adapters.generate_video.wan_lightx2v_adapter import WanLightX2VAdapter
+        return WanLightX2VAdapter(
+            work_dir=work_dir / "video" / "wan_lightx2v",
+            base_url=s.wan_lightx2v_base_url,
+            fps=s.wan_s2v_fps,
+        )
     from adapters.generate_video.wan_adapter import WanAdapter
     return WanAdapter(work_dir=work_dir / "video" / "wan", base_url=s.wan_base_url)
 
@@ -233,6 +240,9 @@ def _make_video_adapter(s, work_dir: Path):
 def _make_lipsync_adapter(s, work_dir: Path):
     """Select lip_sync repair adapter for video backends without native sync."""
     namespace = f"{s.video_adapter}_{s.lipsync_adapter}"
+    if s.lipsync_adapter == "none":
+        from adapters.lip_sync.noop_adapter import NoopLipSyncAdapter
+        return NoopLipSyncAdapter(work_dir=work_dir / "synced" / namespace)
     if s.lipsync_adapter == "latentsync":
         from adapters.lip_sync.latentsync_adapter import LatentSyncAdapter
         return LatentSyncAdapter(

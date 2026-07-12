@@ -21,6 +21,7 @@ SKIP_A1111=1
 SKIP_CHATTERBOX=1
 SKIP_WAN=0
 SKIP_WAN_I2V=1
+SKIP_LIGHTX2V=1
 SKIP_LATENTSYNC=0
 SKIP_MUSETALK=1
 SKIP_DEMUCS=1
@@ -60,11 +61,12 @@ Full GPU-machine setup for video_me on RunPod (or any Ubuntu+CUDA box):
   9. Write .env with GPU-correct settings
   10. Run runtime readiness check
 
-  Fallback services (opt-in only, not installed by default):
+  Optional/fallback services:
     --with-a1111        AUTOMATIC1111 + SD 1.5  (RENDER_ADAPTER=a1111)
     --with-chatterbox   Chatterbox TTS           (TTS_ADAPTER=chatterbox)
     --with-wan-i2v      Wan 2.2 I2V model        (VIDEO_ADAPTER=wan)
-    --with-latentsync   LatentSync repair        (LIPSYNC_ADAPTER=latentsync)
+    --with-lightx2v     LightX2V Wan I2V fast path (VIDEO_ADAPTER=wan_lightx2v)
+    --with-latentsync   LatentSync repair        (default install; explicit for clarity)
     --with-demucs       Demucs vocal isolation   (VIDEO_ME_WHISPER_ISOLATE_VOCALS=true)
     --with-musetalk     MuseTalk repair fallback (LIPSYNC_ADAPTER=musetalk)
     --with-ltx          Legacy LTX/ComfyUI video (VIDEO_ADAPTER=ltx)
@@ -91,11 +93,13 @@ Options:
   --skip-fish-s2            Skip Fish Audio S2 install (default TTS, port 8025)
   --skip-wan                Skip Wan2.2 S2V install (default video, port 8031)
   --skip-wan-i2v            Skip Wan2.2 I2V fallback weights
+  --skip-lightx2v           Skip LightX2V Wan I2V fast-path setup
   --skip-latentsync         Skip LatentSync fallback setup
   --with-a1111              Also install AUTOMATIC1111 (SD 1.5 render fallback, port 7860)
   --with-chatterbox         Also install Chatterbox TTS (EN-only fallback, port 8020)
   --with-wan-i2v            Also install Wan2.2 I2V weights (VIDEO_ADAPTER=wan)
-  --with-latentsync         Also install LatentSync repair (preferred for Wan I2V)
+  --with-lightx2v           Also install LightX2V + Wan2.2 I2V distill LoRAs
+  --with-latentsync         Install LatentSync repair (already default; preferred for Wan I2V)
   --with-musetalk           Also install MuseTalk repair (legacy Wan I2V fallback)
   --with-demucs             Also install Demucs vocal isolation (pre-Whisper stem separation, opt-in toggle for singing jobs)
   --with-ltx                Also install legacy LTX ComfyUI nodes + weights
@@ -117,6 +121,7 @@ Quick commands:
 
   # Full setup + fallback adapters:
   bash scripts/setup_gpu.sh --with-a1111 --with-chatterbox --with-wan-i2v --with-latentsync
+  bash scripts/setup_gpu.sh --with-lightx2v --with-latentsync
 
   # Dry-run to preview all steps:
   bash scripts/setup_gpu.sh --dry-run
@@ -161,6 +166,7 @@ while [[ $# -gt 0 ]]; do
     --with-a1111)         SKIP_A1111=0; shift ;;
     --with-chatterbox)    SKIP_CHATTERBOX=0; shift ;;
     --with-wan-i2v)       SKIP_WAN=0; SKIP_WAN_I2V=0; shift ;;
+    --with-lightx2v)      SKIP_WAN=0; SKIP_WAN_I2V=0; SKIP_LIGHTX2V=0; shift ;;
     --with-latentsync)    SKIP_LATENTSYNC=0; shift ;;
     --with-musetalk)      SKIP_MUSETALK=0; shift ;;
     --with-demucs)        SKIP_DEMUCS=0; shift ;;
@@ -170,6 +176,7 @@ while [[ $# -gt 0 ]]; do
     --skip-a1111)         SKIP_A1111=1; shift ;;
     --skip-wan)           SKIP_WAN=1; shift ;;
     --skip-wan-i2v)       SKIP_WAN_I2V=1; shift ;;
+    --skip-lightx2v)      SKIP_LIGHTX2V=1; shift ;;
     --skip-latentsync)    SKIP_LATENTSYNC=1; shift ;;
     --skip-musetalk)      SKIP_MUSETALK=1; shift ;;
     --skip-env-file)      SKIP_ENV_FILE=1; shift ;;
@@ -837,6 +844,67 @@ setup_wan() {
   fi
 }
 
+# ── Step 6c: LightX2V Wan 2.2 I2V acceleration ──────────────────────────────
+setup_lightx2v() {
+  log "Setting up LightX2V Wan2.2 I2V fast path (port 8032)"
+  local lightx2v_dir="$WORKSPACE/LightX2V"
+  local venv_dir="$WORKSPACE/.venv_lightx2v"
+  local wan_i2v_model_dir="$WORKSPACE/Wan2.2-I2V-A14B"
+  local lora_dir="$WORKSPACE/Wan2.2-Distill-Loras"
+  local high_lora="wan2.2_i2v_A14b_high_noise_lora_rank64_lightx2v_4step_1022.safetensors"
+  local low_lora="wan2.2_i2v_A14b_low_noise_lora_rank64_lightx2v_4step_1022.safetensors"
+
+  if [[ ! -d "$lightx2v_dir" ]]; then
+    run git clone https://github.com/ModelTC/LightX2V.git "$lightx2v_dir"
+  else
+    ok "LightX2V already cloned at $lightx2v_dir"
+    run git -C "$lightx2v_dir" pull --ff-only || warn "LightX2V git pull failed — continuing"
+  fi
+
+  if [[ ! -d "$venv_dir" ]]; then
+    log "Creating $venv_dir (system-site-packages for existing CUDA torch)"
+    run python3 -m venv --system-site-packages "$venv_dir"
+  else
+    ok "LightX2V venv already exists at $venv_dir"
+  fi
+
+  local pip="$venv_dir/bin/pip"
+  run "$pip" install --upgrade pip
+  run "$pip" install -v "$lightx2v_dir" fastapi uvicorn python-multipart \
+      "huggingface_hub>=0.30.0,<1.0" || warn "Some LightX2V deps may have failed"
+
+  # LightX2V's fastest public Wan2.2 I2V configs use SageAttention. This is an
+  # acceleration dependency, not correctness-critical for setup, so keep going
+  # and let LIGHTX2V_I2V_ATTN_MODE be changed if the build is unsupported.
+  run "$pip" install sageattention || warn "sageattention install failed — set LIGHTX2V_I2V_ATTN_MODE to a supported installed attention backend"
+
+  if [[ ! -d "$wan_i2v_model_dir" ]] || [[ -z "$(ls -A "$wan_i2v_model_dir" 2>/dev/null)" ]]; then
+    log "Downloading Wan2.2-I2V-A14B base model for LightX2V LoRA inference (~30 GB)"
+    if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$wan_i2v_model_dir"; fi
+    run env HF_HUB_ENABLE_HF_TRANSFER=0 ${HF_TOKEN:+HF_TOKEN="$HF_TOKEN"} \
+        hf download Wan-AI/Wan2.2-I2V-A14B --local-dir "$wan_i2v_model_dir"
+    ok "Wan2.2-I2V-A14B downloaded to $wan_i2v_model_dir"
+  else
+    ok "Wan2.2-I2V base model already at $wan_i2v_model_dir"
+  fi
+
+  if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$lora_dir"; fi
+  if [[ ! -f "$lora_dir/$high_lora" ]]; then
+    log "Downloading LightX2V high-noise Wan2.2 I2V distill LoRA"
+    run env HF_HUB_ENABLE_HF_TRANSFER=0 ${HF_TOKEN:+HF_TOKEN="$HF_TOKEN"} \
+        hf download lightx2v/Wan2.2-Distill-Loras "$high_lora" --local-dir "$lora_dir"
+  else
+    ok "LightX2V high-noise LoRA already at $lora_dir/$high_lora"
+  fi
+  if [[ ! -f "$lora_dir/$low_lora" ]]; then
+    log "Downloading LightX2V low-noise Wan2.2 I2V distill LoRA"
+    run env HF_HUB_ENABLE_HF_TRANSFER=0 ${HF_TOKEN:+HF_TOKEN="$HF_TOKEN"} \
+        hf download lightx2v/Wan2.2-Distill-Loras "$low_lora" --local-dir "$lora_dir"
+  else
+    ok "LightX2V low-noise LoRA already at $lora_dir/$low_lora"
+  fi
+}
+
 # ── Step 6b2: Demucs vocal isolation ─────────────────────────────────────────
 setup_demucs() {
   log "Setting up Demucs vocal isolation (pre-Whisper stem separation)"
@@ -1066,13 +1134,21 @@ VIDEO_ME_CRITIQUE_BASE_URL=http://localhost:11434/v1
 VIDEO_ME_RENDER_ADAPTER=musubi_flux
 VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188
 
-# Video: Wan2.2 S2V image+audio singing video (default) | wan I2V | ltx legacy
+# Video: Wan2.2 S2V image+audio singing video (default) | wan_lightx2v fast I2V | wan I2V | ltx legacy
 VIDEO_ME_VIDEO_ADAPTER=wan_s2v
 VIDEO_ME_WAN_S2V_BASE_URL=http://localhost:8031
+VIDEO_ME_WAN_LIGHTX2V_BASE_URL=http://localhost:8032
 VIDEO_ME_WAN_S2V_FPS=16
+WAN_S2V_OFFLOAD_MODEL=false
+WAN_I2V_OFFLOAD_MODEL=false
+LIGHTX2V_I2V_OFFLOAD_MODEL=false
+LIGHTX2V_I2V_WIDTH=400
+LIGHTX2V_I2V_HEIGHT=704
+LIGHTX2V_I2V_STEPS=4
+LIGHTX2V_I2V_ATTN_MODE=sage_attn2
 
 # Video/lip-sync QA policy. Wan S2V is native audio-conditioned video, so the
-# lip-sync repair policy applies only when VIDEO_ME_VIDEO_ADAPTER=wan.
+# lip-sync repair policy applies only when VIDEO_ME_VIDEO_ADAPTER is non-native.
 VIDEO_ME_MAX_SHOT_DURATION_SEC=8.0
 VIDEO_ME_LIPSYNC_FAILURE_POLICY=fallback_raw
 VIDEO_ME_LIPSYNC_MAX_RETRIES=0
@@ -1175,6 +1251,10 @@ fi
 
 if [[ "$SKIP_WAN" == "0" ]]; then
   setup_wan
+fi
+
+if [[ "$SKIP_LIGHTX2V" == "0" ]]; then
+  setup_lightx2v
 fi
 
 # Fallback adapters (opt-in via --with-*)
