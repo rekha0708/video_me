@@ -997,7 +997,10 @@ setup_video_enhance() {
     log "Downloading RIFE pretrained HD model zip"
     local rife_zip="$WORKSPACE/RIFE_trained_model_v3.6.zip"
     local rife_tmp="$WORKSPACE/rife_model_extract"
-    run "$venv_dir/bin/gdown" --id "1APIzVeI-4ZZCEuIRE1m6WYfSCaOsi_7_" -O "$rife_zip"
+    # Newer gdown releases removed/changed the old `--id <file_id>` form.
+    # Use a positional Google Drive URL so the same command works across gdown
+    # versions.
+    run "$venv_dir/bin/gdown" "https://drive.google.com/uc?id=1APIzVeI-4ZZCEuIRE1m6WYfSCaOsi_7_" -O "$rife_zip"
     if [[ "$DRY_RUN" == "0" ]]; then
       rm -rf "$rife_tmp"
       mkdir -p "$rife_tmp"
