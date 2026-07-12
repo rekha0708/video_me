@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 
 WAN_DIR = Path(os.getenv("WAN_DIR", "/workspace/Wan2.2"))
 WAN_S2V_MODEL_DIR = Path(os.getenv("WAN_S2V_MODEL_DIR", "/workspace/Wan2.2-S2V-14B"))
-WAN_S2V_SIZE = os.getenv("WAN_S2V_SIZE", "1024*704")
+WAN_S2V_SIZE = os.getenv("WAN_S2V_SIZE", "720*1280") # gram needs 9:16 aspect ratio, so 720 × 1280 is the largest 9:16 wan2.2 supports. 1024 × 704 is the largest 16:9 wan2.2 supports, but gram is 9:16, so we use 720 × 1280.
 WAN_S2V_INFER_FRAMES = int(os.getenv("WAN_S2V_INFER_FRAMES", "80"))
 WAN_S2V_FPS = int(os.getenv("WAN_S2V_FPS", "16"))
 WAN_S2V_TIMEOUT_SEC = int(os.getenv("WAN_S2V_TIMEOUT_SEC", "3600"))
