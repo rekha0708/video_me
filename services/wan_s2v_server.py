@@ -21,6 +21,26 @@ Environment variables:
   WAN_S2V_FPS         FPS used to derive infer_frames when request omits it
                       (default: 16)
   WAN_S2V_TIMEOUT_SEC Subprocess timeout (default: 3600)
+  WAN_S2V_OFFLOAD_MODEL
+                      Pass-through for generate.py's --offload_model — shuttles
+                      the model to CPU after every forward pass to cut GPU
+                      memory use, at a real speed cost (default: false; this
+                      wrapper is sized for a single high-VRAM GPU where the
+                      14B model comfortably stays resident — set true on a
+                      smaller/shared GPU that needs the memory back)
+  WAN_S2V_SAMPLE_STEPS
+                      Pass-through for generate.py's --sample_steps. Unset by
+                      default, which falls through to Wan's own s2v_14B config
+                      default (40) rather than us guessing a number. This is
+                      the fallback speed lever if disabling --offload_model
+                      alone isn't enough: no Lightning/distillation LoRA
+                      exists for S2V-14B as of 2026-07 (only the MoE
+                      T2V-A14B/I2V-A14B variants have one — S2V is a dense,
+                      differently-shaped model), so cutting steps directly is
+                      the only remaining knob, at a real quality/motion-
+                      coherence cost Wan's own docs acknowledge. Revisit this
+                      note if lightx2v or Wan-AI ever ship a native S2V
+                      distillation LoRA.
 """
 
 from __future__ import annotations
@@ -44,6 +64,10 @@ WAN_S2V_SIZE = os.getenv("WAN_S2V_SIZE", "1024*704")
 WAN_S2V_INFER_FRAMES = int(os.getenv("WAN_S2V_INFER_FRAMES", "80"))
 WAN_S2V_FPS = int(os.getenv("WAN_S2V_FPS", "16"))
 WAN_S2V_TIMEOUT_SEC = int(os.getenv("WAN_S2V_TIMEOUT_SEC", "3600"))
+WAN_S2V_OFFLOAD_MODEL = os.getenv("WAN_S2V_OFFLOAD_MODEL", "false").strip().lower() in (
+    "1", "true", "yes",
+)
+WAN_S2V_SAMPLE_STEPS = os.getenv("WAN_S2V_SAMPLE_STEPS", "").strip()
 
 
 def _infer_frames_for_duration(duration_sec: float, fps: int) -> int:
@@ -119,7 +143,7 @@ async def generate(
             "--ckpt_dir",
             str(WAN_S2V_MODEL_DIR),
             "--offload_model",
-            "True",
+            str(WAN_S2V_OFFLOAD_MODEL),
             "--convert_model_dtype",
             "--prompt",
             prompt,
@@ -132,6 +156,8 @@ async def generate(
             "--save_file",
             str(output_path),
         ]
+        if WAN_S2V_SAMPLE_STEPS:
+            cmd += ["--sample_steps", WAN_S2V_SAMPLE_STEPS]
 
         env = os.environ.copy()
         env["PYTHONPATH"] = str(WAN_DIR) + os.pathsep + env.get("PYTHONPATH", "")
