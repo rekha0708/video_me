@@ -55,6 +55,12 @@ The dashboard exposes a backend selector:
 - `latent_rife`
 - `latent_film`
 
+`setup_gpu.sh` installs the Real-ESRGAN/RIFE/FILM backend assets by default in
+the test GPU environment. These backends are still not resident services: they
+run as short-lived subprocesses only during the `video_enhance` stage, so simply
+installing them does not keep VRAM occupied. Use `--skip-video-enhance` only for
+minimal/fast setup runs.
+
 `realesrgan_rife` is the intended first AI throughput benchmark:
 
 1. Real-ESRGAN video restoration.

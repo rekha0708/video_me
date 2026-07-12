@@ -22,7 +22,7 @@ SKIP_CHATTERBOX=1
 SKIP_WAN=0
 SKIP_WAN_I2V=1
 SKIP_LIGHTX2V=1
-SKIP_VIDEO_ENHANCE=1
+SKIP_VIDEO_ENHANCE=0
 SKIP_LATENTSYNC=0
 SKIP_MUSETALK=1
 SKIP_DEMUCS=1
@@ -59,15 +59,15 @@ Full GPU-machine setup for video_me on RunPod (or any Ubuntu+CUDA box):
   6. Clone + set up ComfyUI model dirs (Flux 2.0 Dev image weights)
   7. Clone + set up Fish Audio S2 TTS (EN + HI, port 8025)
   8. Clone + set up Wan2.2 S2V (singing video, port 8031)
-  9. Write .env with GPU-correct settings
-  10. Run runtime readiness check
+  9. Clone + set up AI video enhancement backends (Real-ESRGAN + RIFE/FILM subprocesses)
+  10. Write .env with GPU-correct settings
+  11. Run runtime readiness check
 
   Optional/fallback services:
     --with-a1111        AUTOMATIC1111 + SD 1.5  (RENDER_ADAPTER=a1111)
     --with-chatterbox   Chatterbox TTS           (TTS_ADAPTER=chatterbox)
     --with-wan-i2v      Wan 2.2 I2V model        (VIDEO_ADAPTER=wan)
     --with-lightx2v     LightX2V Wan I2V fast path (VIDEO_ADAPTER=wan_lightx2v)
-    --with-video-enhance Real-ESRGAN + RIFE/FILM AI video enhancement backends
     --with-latentsync   LatentSync repair        (default install; explicit for clarity)
     --with-demucs       Demucs vocal isolation   (VIDEO_ME_WHISPER_ISOLATE_VOCALS=true)
     --with-musetalk     MuseTalk repair fallback (LIPSYNC_ADAPTER=musetalk)
@@ -96,13 +96,13 @@ Options:
   --skip-wan                Skip Wan2.2 S2V install (default video, port 8031)
   --skip-wan-i2v            Skip Wan2.2 I2V fallback weights
   --skip-lightx2v           Skip LightX2V Wan I2V fast-path setup
-  --skip-video-enhance      Skip AI video enhance setup [default]
+  --skip-video-enhance      Skip AI video enhance setup (installed by default)
   --skip-latentsync         Skip LatentSync fallback setup
   --with-a1111              Also install AUTOMATIC1111 (SD 1.5 render fallback, port 7860)
   --with-chatterbox         Also install Chatterbox TTS (EN-only fallback, port 8020)
   --with-wan-i2v            Also install Wan2.2 I2V weights (VIDEO_ADAPTER=wan)
   --with-lightx2v           Also install LightX2V + Wan2.2 I2V distill LoRAs
-  --with-video-enhance      Also install Real-ESRGAN, RIFE, FILM wrappers/weights
+  --with-video-enhance      Back-compat no-op; AI enhance installs by default
   --with-latentsync         Install LatentSync repair (already default; preferred for Wan I2V)
   --with-musetalk           Also install MuseTalk repair (legacy Wan I2V fallback)
   --with-demucs             Also install Demucs vocal isolation (pre-Whisper stem separation, opt-in toggle for singing jobs)
