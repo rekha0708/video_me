@@ -116,6 +116,10 @@ Integration shape:
   FFmpeg normalization step.
 - Health requires a local `train_log/*.pkl` model. Runtime jobs do not download
   RIFE weights.
+- Setup does not install RIFE's upstream `requirements.txt` directly because it
+  pins `numpy<=1.23.5`, which fails on Python 3.12. The setup script installs a
+  compatible modern runtime dependency set instead and inherits CUDA torch from
+  the base image.
 
 ### FILM Interpolation
 

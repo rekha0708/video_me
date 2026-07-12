@@ -934,7 +934,7 @@ setup_video_enhance() {
 
   local pip="$venv_dir/bin/pip"
   run "$pip" install --upgrade pip setuptools wheel
-  run "$pip" install gdown opencv-python tqdm numpy ffmpeg-python moviepy "imageio[ffmpeg]" scikit-video || \
+  run "$pip" install gdown opencv-python tqdm "numpy>=1.26,<2.3" ffmpeg-python moviepy "imageio[ffmpeg]" scikit-video || \
       warn "Some shared video enhance deps may have failed"
 
   if [[ ! -d "$realesrgan_dir" ]]; then
@@ -984,7 +984,12 @@ setup_video_enhance() {
       warn "$rife_dir is not a git checkout — continuing with existing files"
     fi
   fi
-  run "$pip" install -r "$rife_dir/requirements.txt" || warn "Some RIFE deps may have failed"
+  # RIFE's upstream requirements.txt pins numpy<=1.23.5. That version has no
+  # Python 3.12 wheel and fails during source-build setup with pkgutil.ImpImporter
+  # removed. Keep RIFE on the modern shared video deps instead; torch is inherited
+  # from the CUDA base image through --system-site-packages.
+  run "$pip" install opencv-python tqdm "numpy>=1.26,<2.3" ffmpeg-python moviepy "imageio[ffmpeg]" scikit-video || \
+      warn "Some RIFE runtime deps may have failed"
   if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$rife_dir/train_log"; fi
   if compgen -G "$rife_dir/train_log/*.pkl" >/dev/null; then
     ok "RIFE model weights already present in $rife_dir/train_log"
