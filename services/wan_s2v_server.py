@@ -53,6 +53,14 @@ Environment variables:
   WAN_S2V_SHIFT       Pass-through for generate()'s shift (noise schedule).
                       Default 3.0 — Wan's own docstring recommends 3.0 for
                       480p generation (vs the 5.0 default tuned for 720p+).
+
+FlashAttention-3: Wan2.2's wan/modules/attention.py auto-detects FA3 via
+`import flash_attn_interface` (falls back to flash-attn 2, then SDPA) with no
+config on our side — this module just re-checks the same import so /health
+and the load log can report whether it's actually active in this process's
+venv. Install lives at /workspace/flash-attention/hopper (built for both
+sm80 and sm90; only sm90/Hopper is needed on this pod's H200) and is
+installed into .venv_wan via `python setup.py install` there.
 """
 
 from __future__ import annotations
@@ -72,9 +80,15 @@ from fastapi.responses import JSONResponse, Response
 
 logger = logging.getLogger(__name__)
 
+try:
+    import flash_attn_interface  # noqa: F401  (Wan2.2's own attention.py detects this same module)
+    FLASH_ATTN_3_AVAILABLE = True
+except ModuleNotFoundError:
+    FLASH_ATTN_3_AVAILABLE = False
+
 WAN_DIR = Path(os.getenv("WAN_DIR", "/workspace/Wan2.2"))
 WAN_S2V_MODEL_DIR = Path(os.getenv("WAN_S2V_MODEL_DIR", "/workspace/Wan2.2-S2V-14B"))
-WAN_S2V_SIZE = os.getenv("WAN_S2V_SIZE", "480*832")  # gram needs 9:16 aspect ratio. 480 × 832 is the 480p 9:16 preset s2v-14B supports — dropped from 720 × 1280 (2026-07-13) to cut per-shot generation time; raise back to 720*1280 (or 704*1280) once FA3 + resident-model loading are proven and per-shot cost is back under control.
+WAN_S2V_SIZE = os.getenv("WAN_S2V_SIZE", "480*832")  # gram needs 9:16 aspect ratio. 480 × 832 is the 480p 9:16 preset s2v-14B supports — dropped from 720 × 1280 (2026-07-13) to cut per-shot generation time; raise back to 720*1280 (or 704*1280) once per-shot cost with FA3 + resident-model loading (both true as of 2026-07-13) is measured and back under control.
 WAN_S2V_INFER_FRAMES = int(os.getenv("WAN_S2V_INFER_FRAMES", "80"))
 WAN_S2V_FPS = int(os.getenv("WAN_S2V_FPS", "16"))
 WAN_S2V_TIMEOUT_SEC = int(os.getenv("WAN_S2V_TIMEOUT_SEC", "3600"))
@@ -124,8 +138,8 @@ def _load_pipeline() -> None:
 
         cfg = WAN_CONFIGS["s2v-14B"]
         logger.info(
-            "Loading WanS2V (model=%s, size=%s, offload=%s)",
-            WAN_S2V_MODEL_DIR, WAN_S2V_SIZE, WAN_S2V_OFFLOAD_MODEL,
+            "Loading WanS2V (model=%s, size=%s, offload=%s, flash_attn_3=%s)",
+            WAN_S2V_MODEL_DIR, WAN_S2V_SIZE, WAN_S2V_OFFLOAD_MODEL, FLASH_ATTN_3_AVAILABLE,
         )
         pipe = wan.WanS2V(
             config=cfg,
@@ -193,6 +207,7 @@ def health() -> JSONResponse:
             "error": _pipeline_error or setup_error,
             "offload_model": WAN_S2V_OFFLOAD_MODEL,
             "size": WAN_S2V_SIZE,
+            "flash_attn_3": FLASH_ATTN_3_AVAILABLE,
         },
         status_code=200 if setup_error is None else 503,
     )
