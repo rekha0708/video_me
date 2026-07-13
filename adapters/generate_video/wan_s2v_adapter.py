@@ -32,6 +32,7 @@ class WanS2VAdapter(GenerateVideo):
     version = "1.0.0"
     native_lipsync: bool = True
     requires_voice_unloaded: bool = True
+    managed_vram = True
 
     def __init__(
         self,
@@ -61,6 +62,54 @@ class WanS2VAdapter(GenerateVideo):
                 status="down",
                 reason=f"Wan S2V service unreachable at {self._base_url}: {exc}",
             )
+
+    async def load(self) -> None:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(f"{self._base_url}/load")
+            resp.raise_for_status()
+
+    async def unload(self) -> bool:
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(f"{self._base_url}/unload")
+        except httpx.ConnectError:
+            logger.warning(
+                "Wan S2V service unreachable at %s; assuming no model resident",
+                self._base_url,
+            )
+            return False
+        if resp.status_code >= 400:
+            raise RuntimeError(
+                f"Wan S2V service at {self._base_url} refused to unload "
+                f"({resp.status_code}): {resp.text[:500]}"
+            )
+        return True
+
+    async def wait_until_loaded(self, timeout_sec: float, poll_sec: float = 10.0) -> None:
+        import asyncio
+        import time
+
+        import httpx
+
+        deadline = time.monotonic() + timeout_sec
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            while time.monotonic() < deadline:
+                resp = await client.get(f"{self._base_url}/health")
+                resp.raise_for_status()
+                body = resp.json()
+                if body.get("model_loaded"):
+                    return
+                if body.get("error"):
+                    raise RuntimeError(f"Wan S2V failed to load: {body['error']}")
+                await asyncio.sleep(poll_sec)
+        raise TimeoutError(
+            f"Wan S2V not loaded after {timeout_sec:.0f}s. "
+            "Check wan_s2v.log or raise VIDEO_ME_WAN_LOAD_TIMEOUT_SEC."
+        )
 
     async def estimate_cost(self, req: VideoRequest) -> CostEstimate:
         return CostEstimate(

@@ -238,11 +238,11 @@
         <option value="realesrgan_film">Real-ESRGAN + FILM</option>
         <option value="rife">RIFE only</option>
         <option value="film">FILM only</option>
-        <option value="latent_rife">Latent workflow + RIFE</option>
-        <option value="latent_film">Latent workflow + FILM</option>
+        <option value="latent_rife" disabled>Latent workflow + RIFE (not set up yet)</option>
+        <option value="latent_film" disabled>Latent workflow + FILM (not set up yet)</option>
       </select>
       <div class="form-hint">
-        Runs the separate video_enhance pipeline only for this job. AI backends require setup_gpu.sh --with-video-enhance; latent modes also require a validated ComfyUI workflow file.
+        Runs the separate video_enhance pipeline only for this job. AI backends require setup_gpu.sh --with-video-enhance. Latent modes are disabled until assets/comfyui_workflows/video_enhance_latent.json exists and is validated (see docs/VIDEO_ENHANCE_PIPELINE_PLAN.md).
       </div>
     </div>
 

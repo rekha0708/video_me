@@ -243,6 +243,8 @@ class DashboardWorker:
             )
         if settings.video_adapter == "wan":
             return ("wan_model_unload", "Wan video model", settings.wan_base_url)
+        if settings.video_adapter == "wan_s2v":
+            return ("wan_s2v_model_unload", "Wan S2V video model", settings.wan_s2v_base_url)
         return None
 
     async def _run_noop(self, req: CreateDashboardJobRequest, job_id: str) -> None:

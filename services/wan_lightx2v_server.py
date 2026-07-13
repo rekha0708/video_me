@@ -43,6 +43,7 @@ import random
 import sys
 import tempfile
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -110,6 +111,12 @@ def _config_payload(num_frames: int, fps: int) -> dict:
         "text_len": 512,
         "target_height": LIGHTX2V_I2V_HEIGHT,
         "target_width": LIGHTX2V_I2V_WIDTH,
+        # The runner's rope dispatch defaults to "flashinfer" when this key is
+        # absent (lightx2v/models/networks/wan/infer/transformer_infer.py),
+        # but flashinfer isn't installed in .venv_lightx2v — that path calls a
+        # None function and crashes every /generate. Force the pure-PyTorch
+        # rope implementation instead.
+        "rope_type": "torch",
         "self_attn_1_type": LIGHTX2V_I2V_ATTN_MODE,
         "cross_attn_1_type": LIGHTX2V_I2V_ATTN_MODE,
         "cross_attn_2_type": LIGHTX2V_I2V_ATTN_MODE,
@@ -166,11 +173,42 @@ def _load_pipeline() -> None:
             model_cls="wan2.2_moe_distill",
             task="i2v",
         )
+        # LightX2VPipeline.set_infer_config_json() shadows its own `config_json`
+        # parameter with the parsed dict, so `self.config_json` (the path) never
+        # gets set. auto_calc_config() relies on that attribute to re-read the
+        # JSON unfiltered and restore InputInfo-classified keys (target_video_length,
+        # target_width/height, fps) that set_args2config() strips out of `vars(self)`
+        # before that point. Without this, create_generator() raises
+        # KeyError('target_video_length').
+        pipe.config_json = str(config_path)
         pipe.create_generator(config_json=str(config_path))
         _pipeline = pipe
         _loaded_frames = LIGHTX2V_I2V_INFER_FRAMES
         _loaded_fps = LIGHTX2V_I2V_FPS
         logger.info("LightX2V Wan I2V ready")
+
+        # Temporary diagnostics (2026-07-13): narrowing down why steady-state
+        # VRAM (~130GB) runs far above the expected bf16 footprint (~54GB for
+        # both DiT experts). memory_allocated = live tensor data;
+        # memory_reserved = allocator's total claim from the driver (data +
+        # fragmentation/cached-but-free blocks). A big allocated/reserved gap
+        # points at allocator fragmentation; allocated alone being huge points
+        # at dtype/attention-backend fallback instead.
+        try:
+            import torch  # noqa: PLC0415
+
+            allocated_gb = torch.cuda.memory_allocated() / 1e9
+            reserved_gb = torch.cuda.memory_reserved() / 1e9
+            logger.info(
+                "LightX2V post-load CUDA memory: allocated=%.2fGB reserved=%.2fGB dtype_env=%s alloc_conf=%s",
+                allocated_gb,
+                reserved_gb,
+                os.getenv("DTYPE"),
+                os.getenv("PYTORCH_CUDA_ALLOC_CONF"),
+            )
+            logger.info("torch.cuda.memory_summary():\n%s", torch.cuda.memory_summary(abbreviated=False))
+        except Exception as diag_exc:  # pragma: no cover - diagnostics only
+            logger.warning("Could not collect CUDA memory diagnostics: %s", diag_exc)
     except Exception as exc:
         _pipeline_error = str(exc)
         logger.error("LightX2V Wan I2V failed to load: %s", exc, exc_info=True)
@@ -251,6 +289,25 @@ async def unload() -> JSONResponse:
     if _pipeline is not None:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _unload_pipeline)
+
+    # _unload_pipeline()'s gc.collect() + torch.cuda.empty_cache() is not
+    # enough to actually free the GPU: measured in production, a single
+    # load -> unload -> reload cycle in the SAME process went from a clean
+    # 67GB back up to 130GB+, even with explicit DTYPE=BF16 and
+    # PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True already set. Something
+    # inside lightx2v's own model/compiled-method caching keeps CUDA-side
+    # references alive past `_pipeline = None`, which is upstream code we
+    # don't control. The only reliable fix is a full process restart, so
+    # unload now re-execs this same process (identical argv + inherited env)
+    # instead of cleaning up in place — the next /load always starts from a
+    # fresh CUDA context. The brief window where the port is unbound during
+    # the handoff is the same "unreachable while (re)starting" gap callers
+    # already tolerate via their existing /health poll loop.
+    def _respawn() -> None:
+        time.sleep(0.5)  # let this response flush before we replace ourselves
+        os.execv(sys.argv[0], sys.argv)
+
+    threading.Thread(target=_respawn, daemon=False).start()
     return JSONResponse({"status": "ok", "model_loaded": False})
 
 
