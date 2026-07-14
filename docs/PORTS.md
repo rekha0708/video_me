@@ -17,6 +17,7 @@ Complete list of all TCP ports used by the video_me pipeline services and web UI
 | **7860** | AUTOMATIC1111 | HTTP | ⚠️ Fallback | SD 1.5 image gen (`RENDER_ADAPTER=a1111`) |
 | **8030** | Wan 2.2 I2V | HTTP | ⚠️ Fallback | Image-to-video (`VIDEO_ADAPTER=wan`) |
 | **8032** | LightX2V Wan I2V | HTTP | ⚠️ Experimental | 4-step Wan I2V fast path (`VIDEO_ADAPTER=wan_lightx2v`) |
+| **8033** | Wan 2.2 Animate | HTTP | ⚠️ Optional | Motion transfer / character replacement (`VIDEO_ADAPTER=wan_animate`) |
 | **8041** | LatentSync | HTTP | ⚠️ Fallback | Preferred lip-sync repair for non-native video (`LIPSYNC_ADAPTER=latentsync`) |
 | **8040** | MuseTalk | HTTP | ⚠️ Fallback | Legacy lip-sync repair for non-native video (`LIPSYNC_ADAPTER=musetalk`) |
 
@@ -56,6 +57,7 @@ sudo ufw allow 8765/tcp comment "Human approval UI"
 8188    # ComfyUI (if VIDEO_ADAPTER=ltx or RENDER_ADAPTER=comfyui_flux)
 8030    # Wan 2.2 server (if VIDEO_ADAPTER=wan)
 8032    # LightX2V Wan I2V (if VIDEO_ADAPTER=wan_lightx2v)
+8033    # Wan 2.2 Animate (if VIDEO_ADAPTER=wan_animate)
 8041    # LatentSync (if LIPSYNC_ADAPTER=latentsync with wan/wan_lightx2v)
 8040    # MuseTalk (if LIPSYNC_ADAPTER=musetalk with wan/wan_lightx2v)
 ```

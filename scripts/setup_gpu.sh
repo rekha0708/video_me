@@ -21,6 +21,8 @@ SKIP_A1111=1
 SKIP_CHATTERBOX=1
 SKIP_WAN=0
 SKIP_WAN_I2V=1
+SKIP_WAN_ANIMATE=1
+SKIP_WAN_ANIMATE_FLUX=1
 SKIP_LIGHTX2V=1
 SKIP_VIDEO_ENHANCE=0
 SKIP_LATENTSYNC=0
@@ -69,6 +71,7 @@ Full GPU-machine setup for video_me on RunPod (or any Ubuntu+CUDA box):
     --with-chatterbox   Chatterbox TTS           (TTS_ADAPTER=chatterbox)
     --with-wan-i2v      Wan 2.2 I2V model        (VIDEO_ADAPTER=wan)
     --with-lightx2v     LightX2V Wan I2V fast path (VIDEO_ADAPTER=wan_lightx2v)
+    --with-wan-animate  Wan 2.2 Animate motion transfer + replacement (port 8033)
     --with-latentsync   LatentSync repair        (default install; explicit for clarity)
     --with-demucs       Demucs vocal isolation   (VIDEO_ME_WHISPER_ISOLATE_VOCALS=true)
     --with-musetalk     MuseTalk repair fallback (LIPSYNC_ADAPTER=musetalk)
@@ -105,6 +108,9 @@ Options:
   --with-chatterbox         Also install Chatterbox TTS (EN-only fallback, port 8020)
   --with-wan-i2v            Also install Wan2.2 I2V weights (VIDEO_ADAPTER=wan)
   --with-lightx2v           Also install LightX2V + Wan2.2 I2V distill LoRAs
+  --with-wan-animate        Install Wan2.2-Animate-14B and GPU preprocessors
+  --with-wan-animate-flux-retarget
+                            Also download optional FLUX.1-Kontext-dev retarget model
   --with-video-enhance      Back-compat no-op; AI enhance installs by default
   --with-latentsync         Install LatentSync repair (already default; preferred for Wan I2V)
   --with-musetalk           Also install MuseTalk repair (legacy Wan I2V fallback)
@@ -178,6 +184,8 @@ while [[ $# -gt 0 ]]; do
     --with-chatterbox)    SKIP_CHATTERBOX=0; shift ;;
     --with-wan-i2v)       SKIP_WAN=0; SKIP_WAN_I2V=0; shift ;;
     --with-lightx2v)      SKIP_WAN=0; SKIP_WAN_I2V=0; SKIP_LIGHTX2V=0; shift ;;
+    --with-wan-animate)   SKIP_WAN=0; SKIP_WAN_ANIMATE=0; shift ;;
+    --with-wan-animate-flux-retarget) SKIP_WAN=0; SKIP_WAN_ANIMATE=0; SKIP_WAN_ANIMATE_FLUX=0; shift ;;
     --with-video-enhance) SKIP_VIDEO_ENHANCE=0; shift ;;
     --with-latentsync)    SKIP_LATENTSYNC=0; shift ;;
     --with-musetalk)      SKIP_MUSETALK=0; shift ;;
@@ -189,6 +197,7 @@ while [[ $# -gt 0 ]]; do
     --skip-wan)           SKIP_WAN=1; shift ;;
     --skip-wan-i2v)       SKIP_WAN_I2V=1; shift ;;
     --skip-lightx2v)      SKIP_LIGHTX2V=1; shift ;;
+    --skip-wan-animate)   SKIP_WAN_ANIMATE=1; shift ;;
     --skip-video-enhance) SKIP_VIDEO_ENHANCE=1; shift ;;
     --skip-latentsync)    SKIP_LATENTSYNC=1; shift ;;
     --skip-musetalk)      SKIP_MUSETALK=1; shift ;;
@@ -825,13 +834,32 @@ setup_wan() {
     fi
   fi
 
-  # flash_attn — compile from source using system CUDA headers
+  # FlashAttention-2 fallback — compile from source using system CUDA headers.
   if ! "$venv_dir/bin/python" -c "import flash_attn" 2>/dev/null; then
-    log "Building flash_attn (~10-15 min, CUDA compilation)"
+    log "Building FlashAttention-2 fallback (~10-15 min, CUDA compilation)"
     run "$pip" install flash-attn --no-build-isolation || \
         warn "flash_attn build failed — Wan2.2 will run without flash attention (slower)"
   else
-    ok "flash_attn already installed"
+    ok "FlashAttention-2 fallback already installed"
+  fi
+
+  # Exact upstream distribution: flash-attn-3. Its Wan-facing import name is
+  # flash_attn_interface, which Wan2.2 auto-detects and prefers over FA2.
+  # Build only the Hopper sm_90a kernels (H100/H200, compute capability 9.0),
+  # then execute a small BF16 kernel so an import-only/incorrect-arch install
+  # cannot pass setup unnoticed.
+  local fa3_sm90_check
+  fa3_sm90_check='import torch, flash_attn_interface as fa3; assert torch.cuda.get_device_capability() == (9, 0), f"expected Hopper sm_90a, got {torch.cuda.get_device_capability()}"; q = torch.randn((1, 128, 8, 64), device="cuda", dtype=torch.bfloat16); fa3.flash_attn_func(q, q, q)'
+  if ! "$venv_dir/bin/python" -c "$fa3_sm90_check" 2>/dev/null; then
+    log "Building FlashAttention-3 for Hopper sm_90a from Dao-AILab's official package"
+    run env FLASHATTENTION_DISABLE_SM80=TRUE "$pip" install --force-reinstall --no-deps --no-build-isolation \
+        "flash-attn-3 @ git+https://github.com/Dao-AILab/flash-attention.git@v2.8.3.post1#subdirectory=hopper" || \
+        warn "flash-attn-3 build failed — Wan services require FA3 by default; set WAN_REQUIRE_FLASH_ATTN_3=false only to allow fallback"
+  fi
+  if "$venv_dir/bin/python" -c "$fa3_sm90_check" 2>/dev/null; then
+    ok "FlashAttention-3 verified with a BF16 kernel on Hopper sm_90a"
+  else
+    warn "FlashAttention-3 sm_90a verification failed — Wan I2V/S2V will refuse to load while WAN_REQUIRE_FLASH_ATTN_3=true"
   fi
 
   if [[ ! -d "$wan_s2v_model_dir" ]] || [[ -z "$(ls -A "$wan_s2v_model_dir" 2>/dev/null)" ]]; then
@@ -857,7 +885,83 @@ setup_wan() {
   fi
 }
 
-# ── Step 6c: LightX2V Wan 2.2 I2V acceleration ──────────────────────────────
+# ── Step 6c: Wan 2.2 Animate ────────────────────────────────────────────────
+setup_wan_animate() {
+  log "Setting up Wan2.2 Animate (port 8033)"
+  local wan_dir="$WORKSPACE/Wan2.2"
+  local model_dir="$WORKSPACE/Wan2.2-Animate-14B"
+  local venv_dir="$WORKSPACE/.venv_wan_animate"
+
+  if [[ ! -d "$wan_dir" ]]; then
+    run git clone https://github.com/Wan-Video/Wan2.2.git "$wan_dir"
+  fi
+  if [[ ! -d "$venv_dir" ]]; then
+    run python3 -m venv --system-site-packages "$venv_dir"
+  fi
+  local pip="$venv_dir/bin/pip"
+  run "$pip" install --upgrade pip
+  # Upstream requirements_animate.txt names CPU-only onnxruntime even though
+  # pose2d.py requests CUDAExecutionProvider. Install the GPU distribution and
+  # explicitly remove the CPU distribution to prevent silent CPU fallback.
+  run "$pip" uninstall -y onnxruntime || true
+  run "$pip" install \
+      opencv-python "numpy>=2.0,<2.3" decord peft "diffusers>=0.31.0" \
+      "transformers>=4.49.0,<=4.51.3" accelerate pandas matplotlib loguru \
+      sentencepiece moviepy fastapi uvicorn python-multipart \
+      "huggingface_hub>=0.30.0,<1.0" onnxruntime-gpu
+  run "$pip" install --no-deps \
+      "git+https://github.com/facebookresearch/sam2.git@0e78a118995e66bb27d78518c4bd9a3e95b4e266"
+
+  if [[ "$DRY_RUN" == "0" ]]; then
+    local site_packages
+    site_packages="$("$venv_dir/bin/python" -c 'import site; print(site.getsitepackages()[0])')"
+    printf '%s\n' "$wan_dir" > "$site_packages/wan2_2_repo.pth"
+  fi
+
+  local fa3_sm90_check
+  fa3_sm90_check='import torch, flash_attn_interface as fa3; assert torch.cuda.get_device_capability() == (9, 0); q=torch.randn((1,128,8,64),device="cuda",dtype=torch.bfloat16); fa3.flash_attn_func(q,q,q)'
+  if ! "$venv_dir/bin/python" -c "$fa3_sm90_check" 2>/dev/null; then
+    run env FLASHATTENTION_DISABLE_SM80=TRUE "$pip" install --force-reinstall --no-deps --no-build-isolation \
+        "flash-attn-3 @ git+https://github.com/Dao-AILab/flash-attention.git@v2.8.3.post1#subdirectory=hopper"
+  fi
+  if [[ "$DRY_RUN" == "0" ]]; then
+    "$venv_dir/bin/python" -c "$fa3_sm90_check" || die "Wan Animate FA3 sm_90a verification failed"
+    "$venv_dir/bin/python" -c 'import onnxruntime as ort; assert "CUDAExecutionProvider" in ort.get_available_providers(), ort.get_available_providers()' || \
+      die "Wan Animate ONNX CUDAExecutionProvider is unavailable"
+  fi
+
+  if [[ ! -d "$model_dir" ]] || [[ -z "$(ls -A "$model_dir" 2>/dev/null)" ]]; then
+    log "Downloading Wan2.2-Animate-14B (~72.4 GB)"
+    if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$model_dir"; fi
+    run env HF_HUB_ENABLE_HF_TRANSFER=0 ${HF_TOKEN:+HF_TOKEN="$HF_TOKEN"} \
+        hf download Wan-AI/Wan2.2-Animate-14B --local-dir "$model_dir"
+  else
+    ok "Wan2.2 Animate model already at $model_dir"
+  fi
+
+  local checkpoints=(
+    "$model_dir/process_checkpoint/pose2d/vitpose_h_wholebody.onnx"
+    "$model_dir/process_checkpoint/det/yolov10m.onnx"
+    "$model_dir/process_checkpoint/sam2/sam2_hiera_large.pt"
+  )
+  if [[ "$DRY_RUN" == "0" ]]; then
+    local checkpoint
+    for checkpoint in "${checkpoints[@]}"; do
+      [[ -f "$checkpoint" ]] || die "Wan Animate checkpoint missing: $checkpoint"
+    done
+  fi
+
+  if [[ "$SKIP_WAN_ANIMATE_FLUX" == "0" ]]; then
+    local flux_dir="$model_dir/process_checkpoint/FLUX.1-Kontext-dev"
+    if [[ ! -d "$flux_dir" ]] || [[ -z "$(ls -A "$flux_dir" 2>/dev/null)" ]]; then
+      run env HF_HUB_ENABLE_HF_TRANSFER=0 ${HF_TOKEN:+HF_TOKEN="$HF_TOKEN"} \
+          hf download black-forest-labs/FLUX.1-Kontext-dev --local-dir "$flux_dir"
+    fi
+  fi
+  ok "Wan2.2 Animate environment ready"
+}
+
+# ── Step 6d: LightX2V Wan 2.2 I2V acceleration ──────────────────────────────
 setup_lightx2v() {
   log "Setting up LightX2V Wan2.2 I2V fast path (port 8032)"
   local lightx2v_dir="$WORKSPACE/LightX2V"
@@ -1335,6 +1439,11 @@ VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188
 VIDEO_ME_VIDEO_ADAPTER=wan_s2v
 VIDEO_ME_WAN_S2V_BASE_URL=http://localhost:8031
 VIDEO_ME_WAN_LIGHTX2V_BASE_URL=http://localhost:8032
+VIDEO_ME_WAN_ANIMATE_BASE_URL=http://localhost:8033
+VIDEO_ME_WAN_ANIMATE_PYTHON=$WORKSPACE/.venv_wan_animate/bin/python
+VIDEO_ME_WAN_ANIMATE_REPO_DIR=$WORKSPACE/Wan2.2
+VIDEO_ME_WAN_ANIMATE_MODEL_DIR=$WORKSPACE/Wan2.2-Animate-14B
+VIDEO_ME_WAN_ANIMATE_DATA_ROOT=$WORKSPACE/video_me/data
 VIDEO_ME_WAN_S2V_FPS=16
 WAN_S2V_OFFLOAD_MODEL=false
 WAN_I2V_OFFLOAD_MODEL=false
@@ -1479,6 +1588,10 @@ fi
 
 if [[ "$SKIP_WAN" == "0" ]]; then
   setup_wan
+fi
+
+if [[ "$SKIP_WAN_ANIMATE" == "0" ]]; then
+  setup_wan_animate
 fi
 
 if [[ "$SKIP_LIGHTX2V" == "0" ]]; then

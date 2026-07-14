@@ -123,3 +123,31 @@ def test_url_request_ignores_story_validators() -> None:
         rights_cleared=True,
     )
     assert req.source.url == "https://example.com/v"
+
+
+def test_wan_animate_story_requires_separate_driver() -> None:
+    with pytest.raises(ValidationError, match="uploaded or local driver"):
+        _story_request(overrides={"video_adapter": "wan_animate"})
+
+
+def test_wan_animate_story_accepts_uploaded_driver() -> None:
+    req = _story_request(overrides={
+        "video_adapter": "wan_animate",
+        "wan_animate_driver_source": "upload",
+        "wan_animate_driver_uri": "/data/uploads/driver.mp4",
+        "wan_animate_timeline": "sequential",
+    })
+    assert req.overrides.wan_animate_mode is None
+
+
+def test_wan_animate_replace_rejects_retargeting() -> None:
+    with pytest.raises(ValidationError, match="does not support pose retargeting"):
+        CreateDashboardJobRequest(
+            source=DashboardSource(kind="file", url="file:///tmp/source.mp4"),
+            rights_cleared=True,
+            overrides={
+                "video_adapter": "wan_animate",
+                "wan_animate_mode": "replace",
+                "wan_animate_retarget_pose": True,
+            },
+        )

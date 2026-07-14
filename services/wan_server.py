@@ -34,6 +34,8 @@ Environment variables:
   WAN_MODEL_DIR           Path to the downloaded I2V model (default: /workspace/Wan2.2-I2V-A14B)
   WAN_I2V_OFFLOAD_MODEL   Pass-through for generate(..., offload_model=...)
                           (default: false)
+  WAN_REQUIRE_FLASH_ATTN_3 Require FlashAttention-3 instead of allowing Wan's
+                          FA2/SDPA fallback (default: true)
 
 Run (from /workspace/video_me):
   uvicorn services.wan_server:app --host 0.0.0.0 --port 8030
@@ -56,9 +58,19 @@ from fastapi.responses import JSONResponse, Response
 
 logger = logging.getLogger(__name__)
 
+try:
+    # This is the exact module checked first by Wan2.2's attention dispatcher.
+    import flash_attn_interface  # noqa: F401
+    FLASH_ATTN_3_AVAILABLE = True
+except (ImportError, OSError):
+    FLASH_ATTN_3_AVAILABLE = False
+
 WAN_DIR = Path(os.getenv("WAN_DIR", "/workspace/Wan2.2"))
 WAN_MODEL_DIR = Path(os.getenv("WAN_MODEL_DIR", "/workspace/Wan2.2-I2V-A14B"))
 WAN_I2V_OFFLOAD_MODEL = os.getenv("WAN_I2V_OFFLOAD_MODEL", "false").strip().lower() in (
+    "1", "true", "yes",
+)
+WAN_REQUIRE_FLASH_ATTN_3 = os.getenv("WAN_REQUIRE_FLASH_ATTN_3", "true").strip().lower() in (
     "1", "true", "yes",
 )
 
@@ -85,6 +97,11 @@ def _load_pipeline() -> None:
         _loading = True
         _pipeline_error = None
     try:
+        if WAN_REQUIRE_FLASH_ATTN_3 and not FLASH_ATTN_3_AVAILABLE:
+            raise RuntimeError(
+                "FlashAttention-3 is required but flash_attn_interface cannot be imported; "
+                "install the 'flash-attn-3' distribution from the official hopper package"
+            )
         if str(WAN_DIR) not in sys.path:
             sys.path.insert(0, str(WAN_DIR))
 
@@ -92,7 +109,11 @@ def _load_pipeline() -> None:
         from wan.configs import WAN_CONFIGS  # noqa: PLC0415
 
         cfg = WAN_CONFIGS["i2v-A14B"]
-        logger.info("Loading WanI2V from %s — takes 4–5 min on first start ...", WAN_MODEL_DIR)
+        logger.info(
+            "Loading WanI2V from %s (flash_attn_3=%s) — takes 4–5 min on first start ...",
+            WAN_MODEL_DIR,
+            FLASH_ATTN_3_AVAILABLE,
+        )
         _pipeline = wan.WanI2V(
             config=cfg,
             checkpoint_dir=str(WAN_MODEL_DIR),
@@ -157,6 +178,8 @@ def health() -> JSONResponse:
         "model_loaded": _pipeline is not None,
         "loading": _loading,
         "error": _pipeline_error,
+        "flash_attn_3": FLASH_ATTN_3_AVAILABLE,
+        "require_flash_attn_3": WAN_REQUIRE_FLASH_ATTN_3,
     })
 
 

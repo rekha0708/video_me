@@ -31,6 +31,7 @@ from core.models.capabilities import (
     CritiqueRequest,
     CritiqueResult,
     FetchMediaRequest,
+    FetchMediaResult,
     FinalVideo,
     ImageApprovalRequest,
     ImageCritiqueRequest,
@@ -43,6 +44,7 @@ from core.models.capabilities import (
     TranscribeRequest,
     VideoEnhanceRequest,
     VideoClip,
+    VideoDriver,
     VideoRequest,
     VisualContext,
     VoiceRequest,
@@ -234,6 +236,32 @@ def _make_video_adapter(s, work_dir: Path):
             work_dir=work_dir / "video" / "wan_lightx2v",
             base_url=s.wan_lightx2v_base_url,
             fps=s.wan_s2v_fps,
+        )
+    if s.video_adapter == "wan_animate":
+        from adapters.generate_video.wan_animate_adapter import WanAnimateAdapter
+        return WanAnimateAdapter(
+            work_dir=work_dir / "video" / "wan_animate",
+            base_url=s.wan_animate_base_url,
+            python_bin=s.wan_animate_python,
+            wan_dir=s.wan_animate_repo_dir,
+            model_dir=s.wan_animate_model_dir,
+            mode=s.wan_animate_mode,
+            driver_source=s.wan_animate_driver_source,
+            driver_uri=s.wan_animate_driver_uri,
+            timeline=s.wan_animate_timeline,
+            fps=s.wan_animate_fps,
+            resolution_area=s.wan_animate_resolution_area,
+            subject_selection=s.wan_animate_subject_selection,
+            retarget_pose=s.wan_animate_retarget_pose,
+            use_flux_retarget=s.wan_animate_use_flux_retarget,
+            refert_num=s.wan_animate_refert_num,
+            sampling_steps=s.wan_animate_sampling_steps,
+            mask_iterations=s.wan_animate_mask_iterations,
+            mask_kernel=s.wan_animate_mask_kernel,
+            mask_w_len=s.wan_animate_mask_w_len,
+            mask_h_len=s.wan_animate_mask_h_len,
+            ffmpeg_bin=s.ffmpeg_bin,
+            ffprobe_bin=s.ffprobe_bin,
         )
     from adapters.generate_video.wan_adapter import WanAdapter
     return WanAdapter(work_dir=work_dir / "video" / "wan", base_url=s.wan_base_url)
@@ -934,6 +962,168 @@ async def _write_shot_attempt_audit(
     return run
 
 
+async def _prepare_wan_animate_inputs(
+    *,
+    shots: list[Shot],
+    image_uris: list[str],
+    adapter: Any,
+    fetch_result: FetchMediaResult | None,
+    stage_hook: Callable[..., None] | None,
+) -> dict[str, VideoDriver]:
+    """Resolve deterministic driver ranges and batch-preprocess Animate inputs."""
+    if not hasattr(adapter, "prepare_inputs"):
+        return {}
+
+    driver_uri = str(getattr(adapter, "driver_uri", "") or "").strip()
+    driver_source = getattr(adapter, "driver_source", "job_source")
+    if driver_source == "job_source":
+        if fetch_result is None or not fetch_result.video_uri or fetch_result.video_uri.startswith("story://"):
+            raise ValueError(
+                "Wan Animate needs a driving video. Story jobs must upload or select one."
+            )
+        driver_uri = fetch_result.video_uri
+    if not driver_uri:
+        raise ValueError("Wan Animate driving video is required")
+
+    timeline = getattr(adapter, "timeline", "source_timestamps")
+    cursor = 0.0
+    requests: list[VideoRequest] = []
+    drivers: dict[str, VideoDriver] = {}
+    for shot, image_uri in zip(shots, image_uris):
+        if timeline == "source_timestamps":
+            if shot.source_start_sec is None or shot.source_end_sec is None:
+                raise ValueError(
+                    f"Shot {shot.shot_id} has no source timestamps; choose sequential "
+                    "Wan Animate timeline mapping for this job."
+                )
+            start, end = shot.source_start_sec, shot.source_end_sec
+        else:
+            start, end = cursor, cursor + shot.duration_sec
+            cursor = end
+        driver = VideoDriver(
+            uri=driver_uri,
+            start_sec=float(start),
+            end_sec=float(end),
+            mode=getattr(adapter, "mode", "animate"),
+        )
+        drivers[shot.shot_id] = driver
+        requests.append(VideoRequest(
+            image_uri=image_uri,
+            action=shot.action,
+            duration_sec=shot.duration_sec,
+            shot_id=shot.shot_id,
+            setting=shot.setting,
+            driver=driver,
+        ))
+
+    if stage_hook:
+        stage_hook(
+            "wan_animate_preprocess", "stage_started",
+            message=f"Preprocessing {len(requests)} Wan Animate driving segment(s)",
+        )
+    try:
+        prepared = await adapter.prepare_inputs(requests)
+    except Exception:
+        if stage_hook:
+            stage_hook(
+                "wan_animate_preprocess", "stage_failed",
+                message="Wan Animate preprocessing failed",
+            )
+        raise
+    for shot_id, result in prepared.items():
+        drivers[shot_id].prepared_dir = result.prepared_dir
+    if stage_hook:
+        hits = sum(1 for result in prepared.values() if result.cache_hit)
+        stage_hook(
+            "wan_animate_preprocess", "stage_completed",
+            message=f"Wan Animate preprocessing ready ({hits} cache hit(s))",
+        )
+    return drivers
+
+
+async def _prepare_wan_animate_audio(
+    *,
+    shots: list[Shot],
+    script: Script,
+    cast: Cast,
+    adapters: _Adapters,
+    work_dir: Path,
+    options: RunOptions,
+    render_mode: str,
+    source_audio_uri: str | None,
+) -> dict[str, AudioTrack]:
+    """Finish all audio before the 14B Animate model occupies the GPU."""
+    members = {member.id: member for member in cast.members}
+    tracks: dict[str, AudioTrack] = {}
+    total = len(shots)
+    for index, shot in enumerate(shots, start=1):
+        speaker_id = shot.characters_on_screen[0]
+        speaker = members[speaker_id]
+        params = load_cast_params(cast.id).get(speaker_id)
+        label = f"Shot {shot.shot_id} ({index}/{total})"
+        if render_mode == "source_audio":
+            if not source_audio_uri or shot.source_start_sec is None or shot.source_end_sec is None:
+                raise ValueError(f"Source audio timing is missing for {shot.shot_id}")
+            output = work_dir / "audio" / "source_slices" / f"{shot.shot_id}.wav"
+            if options.resume and output.exists():
+                track = AudioTrack(uri=str(output), duration_sec=shot.duration_sec)
+            else:
+                _notify_shot(
+                    options.stage_hook, "slice_source_audio", "stage_started",
+                    shot_id=shot.shot_id, label=label, detail="slicing source audio",
+                )
+                track = await _slice_source_audio(
+                    source_audio_uri, shot.source_start_sec, shot.source_end_sec,
+                    output, adapters.ffmpeg_bin,
+                )
+                _notify_shot(
+                    options.stage_hook, "slice_source_audio", "stage_completed",
+                    shot_id=shot.shot_id, label=label, detail="audio slice done",
+                )
+        else:
+            existing = _existing_audio_for_shot(work_dir, shot, speaker_id, render_mode)
+            if options.resume and existing:
+                track = AudioTrack(uri=existing, duration_sec=shot.duration_sec)
+            else:
+                lines = [_resolve_line(ref, script) for ref in shot.dialogue_line_refs]
+                text = " ".join(line.text.strip() for line in lines if line.text.strip())
+                first = lines[0] if lines else None
+                _notify_shot(
+                    options.stage_hook, "synthesize_voice", "stage_started",
+                    shot_id=shot.shot_id, label=label, detail="synthesizing voice",
+                )
+                track = await adapters.voice.run(VoiceRequest(
+                    text=text,
+                    voice_profile_ref=(
+                        params.voice_file if params and params.voice_file
+                        else speaker.voice_profile_ref
+                    ),
+                    speaker_id=speaker_id,
+                    expression=first.expression if first else None,
+                    language=options.language,
+                ))
+                _notify_shot(
+                    options.stage_hook, "synthesize_voice", "stage_completed",
+                    shot_id=shot.shot_id, label=label, detail="voice done",
+                )
+                if render_mode == "re_voice":
+                    _notify_shot(
+                        options.stage_hook, "fit_voice_audio", "stage_started",
+                        shot_id=shot.shot_id, label=label, detail="matching source pacing",
+                    )
+                    track = await _fit_audio_to_duration(
+                        track, shot.duration_sec,
+                        work_dir / "audio" / "timed" / f"{shot.shot_id}.wav",
+                        adapters.ffmpeg_bin, adapters.ffprobe_bin,
+                    )
+                    _notify_shot(
+                        options.stage_hook, "fit_voice_audio", "stage_completed",
+                        shot_id=shot.shot_id, label=label, detail="voice timing matched",
+                    )
+        tracks[shot.shot_id] = track
+    return tracks
+
+
 async def _generate_shot_video(
     shot: Shot,
     script: Script,
@@ -947,6 +1137,9 @@ async def _generate_shot_video(
     total_shots: int = 1,
     render_mode: str = "full",
     source_audio_uri: str | None = None,
+    video_driver: VideoDriver | None = None,
+    prefetched_audio: AudioTrack | None = None,
+    skip_lipsync: bool = False,
 ) -> tuple[VideoClip, AudioTrack]:
     """Phase B: synthesize voice + generate video for one shot using the approved image.
 
@@ -991,7 +1184,9 @@ async def _generate_shot_video(
 
     # ── 1. synthesize_voice (or slice source audio) ────────────────────────────
     vparams = load_cast_params(cast.id).get(speaker_id)
-    if render_mode == "source_audio" and source_audio_uri and shot.source_start_sec is not None and shot.source_end_sec is not None:
+    if prefetched_audio is not None:
+        audio_track = prefetched_audio
+    elif render_mode == "source_audio" and source_audio_uri and shot.source_start_sec is not None and shot.source_end_sec is not None:
         audio_slice_path = work_dir / "audio" / "source_slices" / f"{shot.shot_id}.wav"
         if opts.resume and audio_slice_path.exists():
             logger.info("Skipping source audio slice for %s (exists)", shot.shot_id)
@@ -1094,6 +1289,7 @@ async def _generate_shot_video(
                 setting=shot.setting,
                 audio_uri=audio_track.uri if native_lipsync else None,
                 style_suffix=vparams.style_suffix if vparams else "",
+                driver=video_driver,
             )
         )
         _notify_shot(
@@ -1102,6 +1298,8 @@ async def _generate_shot_video(
         )
 
     raw_clip = clip
+    if skip_lipsync:
+        return raw_clip, audio_track
     lipsync_attempts: list[dict[str, Any]] = []
     lipsync_failure_policy = opts.lipsync_failure_policy or "fallback_raw"
     lipsync_max_retries = max(0, int(opts.lipsync_max_retries or 0))
@@ -2498,29 +2696,91 @@ async def _run_to_assembled_video(
         # load, poll until ready.
         if is_managed(adapters.render):
             await adapters.render.unload()
-        await prepare_video_model(
-            adapters.video, config.settings, notify=opts.stage_hook
-        )
-        await prepare_voice_model(
-            adapters.voice, config.settings, notify=opts.stage_hook
-        )
 
+        video_drivers: dict[str, VideoDriver] = {}
+        if config.settings.video_adapter == "wan_animate":
+            if fetch_result is None:
+                fetch_result = _load_artifact(
+                    job.job_id, "fetch_media", FetchMediaResult, artifact_store
+                )
+            video_drivers = await _prepare_wan_animate_inputs(
+                shots=shots_to_run,
+                image_uris=approved_uris,
+                adapter=adapters.video,
+                fetch_result=fetch_result,
+                stage_hook=opts.stage_hook,
+            )
         # ── Phase B: synthesize voice + generate video with approved image ─────
         if opts.stage_hook:
             opts.stage_hook(
                 "video_loop", "stage_started",
                 message=f"Generating video for {total_shots} shot{'s' if total_shots != 1 else ''}",
             )
-        synced_clips = []
-        audio_tracks = []
-        for i, (shot, image_uri) in enumerate(zip(shots_to_run, approved_uris), start=1):
-            synced, audio = await _generate_shot_video(
-                shot, script, config.cast, adapters, ctx.work_dir, image_uri, opts,
-                shot_index=i, total_shots=total_shots,
-                render_mode=opts.render_mode, source_audio_uri=source_audio_uri,
+        synced_clips: list[VideoClip] = []
+        audio_tracks: list[AudioTrack] = []
+        if config.settings.video_adapter == "wan_animate":
+            # Animate, Fish S2, and LatentSync are each heavyweight. Batch the
+            # three phases so none of their models coexist in VRAM.
+            await prepare_voice_model(
+                adapters.voice, config.settings, notify=opts.stage_hook
             )
-            synced_clips.append(synced)
-            audio_tracks.append(audio)
+            prefetched = await _prepare_wan_animate_audio(
+                shots=shots_to_run,
+                script=script,
+                cast=config.cast,
+                adapters=adapters,
+                work_dir=ctx.work_dir,
+                options=opts,
+                render_mode=opts.render_mode,
+                source_audio_uri=source_audio_uri,
+            )
+            if is_managed(adapters.voice):
+                await adapters.voice.unload()
+
+            await prepare_video_model(
+                adapters.video, config.settings, notify=opts.stage_hook
+            )
+            raw_clips: list[VideoClip] = []
+            for i, (shot, image_uri) in enumerate(zip(shots_to_run, approved_uris), start=1):
+                raw, audio = await _generate_shot_video(
+                    shot, script, config.cast, adapters, ctx.work_dir, image_uri, opts,
+                    shot_index=i, total_shots=total_shots,
+                    render_mode=opts.render_mode, source_audio_uri=source_audio_uri,
+                    video_driver=video_drivers.get(shot.shot_id),
+                    prefetched_audio=prefetched[shot.shot_id],
+                    skip_lipsync=True,
+                )
+                raw_clips.append(raw)
+                audio_tracks.append(audio)
+            await adapters.video.unload()
+
+            resume_for_lipsync = _dc_replace(opts, resume=True)
+            for i, (shot, image_uri) in enumerate(zip(shots_to_run, approved_uris), start=1):
+                synced, _ = await _generate_shot_video(
+                    shot, script, config.cast, adapters, ctx.work_dir,
+                    image_uri, resume_for_lipsync,
+                    shot_index=i, total_shots=total_shots,
+                    render_mode=opts.render_mode, source_audio_uri=source_audio_uri,
+                    video_driver=video_drivers.get(shot.shot_id),
+                    prefetched_audio=prefetched[shot.shot_id],
+                )
+                synced_clips.append(synced)
+        else:
+            await prepare_video_model(
+                adapters.video, config.settings, notify=opts.stage_hook
+            )
+            await prepare_voice_model(
+                adapters.voice, config.settings, notify=opts.stage_hook
+            )
+            for i, (shot, image_uri) in enumerate(zip(shots_to_run, approved_uris), start=1):
+                synced, audio = await _generate_shot_video(
+                    shot, script, config.cast, adapters, ctx.work_dir, image_uri, opts,
+                    shot_index=i, total_shots=total_shots,
+                    render_mode=opts.render_mode, source_audio_uri=source_audio_uri,
+                    video_driver=video_drivers.get(shot.shot_id),
+                )
+                synced_clips.append(synced)
+                audio_tracks.append(audio)
         shots_for_clips = shots_to_run  # one clip per shot, same order
 
         if opts.phase == "render":

@@ -102,7 +102,7 @@ class DashboardJobOverrides(BaseModel):
     whisper_language: str | None = None
     whisper_isolate_vocals: bool | None = None
     render_adapter: Literal["a1111", "comfyui_flux", "musubi_flux"] | None = None
-    video_adapter: Literal["wan_s2v", "wan", "wan_lightx2v", "ltx"] | None = None
+    video_adapter: Literal["wan_s2v", "wan", "wan_lightx2v", "wan_animate", "ltx"] | None = None
     lipsync_adapter: Literal["latentsync", "musetalk", "none"] | None = None
     tts_adapter: Literal["chatterbox", "fish_s2"] | None = None
     image_candidates: int | None = Field(default=None, ge=1, le=10)
@@ -127,6 +127,20 @@ class DashboardJobOverrides(BaseModel):
     auto_approve_plan: bool | None = None
     auto_approve_images: bool | None = None
     auto_approve_transcript: bool | None = None
+    wan_animate_mode: Literal["animate", "replace"] | None = None
+    wan_animate_driver_source: Literal["job_source", "upload", "local"] | None = None
+    wan_animate_driver_uri: str | None = None
+    wan_animate_timeline: Literal["source_timestamps", "sequential"] | None = None
+    wan_animate_subject_selection: Literal["largest", "center"] | None = None
+    wan_animate_resolution_area: Literal["480p", "720p"] | None = None
+    wan_animate_retarget_pose: bool | None = None
+    wan_animate_use_flux_retarget: bool | None = None
+    wan_animate_refert_num: Literal[1, 5] | None = None
+    wan_animate_sampling_steps: int | None = Field(default=None, ge=10, le=40)
+    wan_animate_mask_iterations: int | None = Field(default=None, ge=0, le=10)
+    wan_animate_mask_kernel: int | None = Field(default=None, ge=1, le=31)
+    wan_animate_mask_w_len: int | None = Field(default=None, ge=1, le=8)
+    wan_animate_mask_h_len: int | None = Field(default=None, ge=1, le=8)
 
 
 class LoraTrainingRequest(BaseModel):
@@ -178,6 +192,20 @@ class CreateDashboardJobRequest(BaseModel):
                 raise ValueError("lora_training.cast_member_id is required")
             if not self.lora_training.image_paths:
                 raise ValueError("lora_training.image_paths requires at least one image")
+        if self.overrides.video_adapter == "wan_animate":
+            source = self.overrides.wan_animate_driver_source or "job_source"
+            driver_uri = (self.overrides.wan_animate_driver_uri or "").strip()
+            if source in ("upload", "local") and not driver_uri:
+                raise ValueError("Wan Animate upload/local driver requires wan_animate_driver_uri")
+            if self.source.kind in ("story", "story_images") and source == "job_source":
+                raise ValueError("Story jobs using Wan Animate require an uploaded or local driver video")
+            if self.overrides.wan_animate_use_flux_retarget and not self.overrides.wan_animate_retarget_pose:
+                raise ValueError("Wan Animate Flux retargeting requires pose retargeting")
+            if (self.overrides.wan_animate_mode or "animate") == "replace" and (
+                self.overrides.wan_animate_retarget_pose
+                or self.overrides.wan_animate_use_flux_retarget
+            ):
+                raise ValueError("Wan Animate replacement mode does not support pose retargeting")
         return self
 
 

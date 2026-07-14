@@ -54,6 +54,7 @@ Chatterbox TTS HTTP service wrapper.
   - `_init_schema(self) -> None`
   - `create_queued_job(self, request: CreateDashboardJobRequest, *, priority: int=100) -> tuple[DashboardJobRecord, DashboardQueueItem]`
   - `get_job(self, job_id: str) -> DashboardJobRecord | None`
+  - `save_job(self, job: DashboardJobRecord) -> DashboardJobRecord` — Persist an edited dashboard record, including its request payload.
   - `list_jobs(self, *, limit: int=50) -> list[DashboardJobRecord]`
   - `get_job_detail(self, job_id: str, *, event_limit: int=100) -> DashboardJobDetail | None`
   - `delete_job(self, job_id: str) -> bool` — Delete a job and its dashboard-owned rows (queue, events, artifacts, approvals, chat).
@@ -206,6 +207,27 @@ MuseTalk lip-sync HTTP service wrapper.
 - `async lipsync(video: UploadFile=File(...), audio: UploadFile=File(...), shot_id: str=Form(...)) -> Response`
 - `_convert_to_mp4(avi: Path, out: Path) -> Path`
 
+### `services/wan_animate_preprocess.py`
+
+Short-lived batch preprocessor for official Wan2.2 Animate inputs.
+
+- `_probe(path: Path) -> dict`
+- `main() -> int`
+
+### `services/wan_animate_server.py`
+
+Deferred-loading HTTP service for official Wan2.2-Animate-14B.
+
+- `_load_pipeline(mode: str) -> None`
+- `_unload_pipeline() -> None`
+- `_safe_prepared_dir(value: str) -> Path`
+- `_inference(prepared_dir: Path, mode: str, fps: int, refert_num: int, sampling_steps: int, seed: int) -> bytes`
+- `async lifespan(_: FastAPI)`
+- `health() -> JSONResponse`
+- `async load(mode: str=Form('animate')) -> JSONResponse`
+- `async unload() -> JSONResponse`
+- `async generate(prepared_dir: str=Form(...), mode: str=Form('animate'), fps: int=Form(30), refert_num: int=Form(1), sampling_steps: int=Form(20), seed: int=Form(-1)) -> Response`
+
 ### `services/wan_lightx2v_server.py`
 
 LightX2V Wan2.2 I2V HTTP service.
@@ -225,11 +247,18 @@ LightX2V Wan2.2 I2V HTTP service.
 
 ### `services/wan_s2v_server.py`
 
-Wan2.2 Speech-to-Video HTTP service wrapper.
+Wan2.2 Speech-to-Video HTTP service wrapper (resident model).
 
+- `_check_setup() -> None`
+- `_place_audio_encoder(pipe) -> str` — Keep Wan's Wav2Vec2 feature extractor on the configured device.
 - `_infer_frames_for_duration(duration_sec: float, fps: int) -> int`
+- `_load_pipeline() -> None`
+- `_unload_pipeline() -> None`
 - `async lifespan(app: FastAPI)`
 - `health() -> JSONResponse`
+- `async load() -> JSONResponse`
+- `async unload() -> JSONResponse`
+- `_generate(*, image_path: Path, audio_path: Path, prompt: str, infer_frames: int, output_path: Path) -> None`
 - `async generate(image: UploadFile=File(...), audio: UploadFile=File(...), prompt: str=Form(...), duration_sec: float=Form(0.0), fps: int=Form(0), infer_frames: int=Form(0), shot_id: str=Form('shot')) -> Response`
 
 ### `services/wan_server.py`

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import shutil
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -215,6 +216,53 @@ def check_video_enhance_assets(settings: Settings) -> list[CheckResult]:
     return results
 
 
+def check_wan_animate_assets(settings: Settings) -> list[CheckResult]:
+    if settings.video_adapter != "wan_animate":
+        return []
+    results: list[CheckResult] = []
+
+    def require(name: str, path: Path, *, directory: bool = False) -> None:
+        exists = path.is_dir() if directory else path.is_file()
+        results.append(CheckResult(name, PASS if exists else FAIL, str(path) if exists else f"missing: {path}"))
+
+    python = Path(settings.wan_animate_python)
+    require("Wan Animate Python", python)
+    require("Wan Animate repository", Path(settings.wan_animate_repo_dir), directory=True)
+    model = Path(settings.wan_animate_model_dir)
+    require("Wan Animate model", model, directory=True)
+    require("Wan Animate ViTPose", model / "process_checkpoint/pose2d/vitpose_h_wholebody.onnx")
+    require("Wan Animate detector", model / "process_checkpoint/det/yolov10m.onnx")
+    require("Wan Animate SAM2", model / "process_checkpoint/sam2/sam2_hiera_large.pt")
+    if settings.wan_animate_use_flux_retarget:
+        require(
+            "Wan Animate Flux Kontext",
+            model / "process_checkpoint/FLUX.1-Kontext-dev",
+            directory=True,
+        )
+    if python.is_file():
+        try:
+            check = subprocess.run(
+                [
+                    str(python), "-c",
+                    'import onnxruntime as ort; assert "CUDAExecutionProvider" in ort.get_available_providers(); import flash_attn_interface',
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            results.append(CheckResult("Wan Animate CUDA providers", FAIL, str(exc)))
+            return results
+        if check.returncode == 0:
+            results.append(CheckResult("Wan Animate CUDA providers", PASS, "ONNX CUDA + FA3 available"))
+        else:
+            results.append(CheckResult(
+                "Wan Animate CUDA providers", FAIL,
+                (check.stderr or check.stdout or "provider validation failed")[-500:],
+            ))
+    return results
+
+
 def _join_url(base_url: str, suffix: str) -> str:
     return f"{base_url.rstrip('/')}/{suffix.lstrip('/')}"
 
@@ -249,6 +297,13 @@ def _service_urls(settings: Settings) -> list[tuple[str, str, bool]]:
             urls.append(("ComfyUI (LTX video)", comfy_url, True))
     elif settings.video_adapter == "wan_s2v":
         urls.append(("Wan2.2 Speech-to-Video", _join_url(settings.wan_s2v_base_url, "health"), True))
+    elif settings.video_adapter == "wan_animate":
+        urls.append(("Wan2.2 Animate", _join_url(settings.wan_animate_base_url, "health"), True))
+        if settings.lipsync_adapter == "latentsync":
+            urls.append(("LatentSync lip-sync", _join_url(settings.latentsync_base_url, "health"), True))
+        elif settings.lipsync_adapter == "musetalk":
+            base_url = getattr(settings, "musetalk_base_url", None) or settings.lipsync_base_url
+            urls.append(("MuseTalk lip-sync (fallback)", _join_url(base_url, "health"), True))
     elif settings.video_adapter in {"wan", "wan_lightx2v"}:
         if settings.video_adapter == "wan_lightx2v":
             urls.append(
@@ -332,6 +387,7 @@ def collect_readiness_results(
     results.extend(check_system_tools())
     results.extend(check_track_b_assets(config, code_test=code_test))
     results.extend(check_video_enhance_assets(config.settings))
+    results.extend(check_wan_animate_assets(config.settings))
     if skip_services:
         results.append(
             CheckResult(

@@ -39,10 +39,30 @@
 | `VIDEO_ME_RENDER_ADAPTER` | `Literal['a1111', 'comfyui_flux', 'musubi_flux']` | `'musubi_flux'` |
 | `VIDEO_ME_SD_BASE_URL` | `str` | `'http://localhost:7860'` |
 | `VIDEO_ME_COMFYUI_BASE_URL` | `str` | `'http://localhost:8188'` |
-| `VIDEO_ME_VIDEO_ADAPTER` | `Literal['wan_s2v', 'wan', 'wan_lightx2v', 'ltx']` | `'wan_s2v'` |
+| `VIDEO_ME_VIDEO_ADAPTER` | `Literal['wan_s2v', 'wan', 'wan_lightx2v', 'wan_animate', 'ltx']` | `'wan_s2v'` |
 | `VIDEO_ME_WAN_BASE_URL` | `str` | `'http://localhost:8030'` |
 | `VIDEO_ME_WAN_S2V_BASE_URL` | `str` | `'http://localhost:8031'` |
 | `VIDEO_ME_WAN_LIGHTX2V_BASE_URL` | `str` | `'http://localhost:8032'` |
+| `VIDEO_ME_WAN_ANIMATE_BASE_URL` | `str` | `'http://localhost:8033'` |
+| `VIDEO_ME_WAN_ANIMATE_PYTHON` | `str` | `'/workspace/.venv_wan_animate/bin/python'` |
+| `VIDEO_ME_WAN_ANIMATE_REPO_DIR` | `Path` | `Path('/workspace/Wan2.2')` |
+| `VIDEO_ME_WAN_ANIMATE_MODEL_DIR` | `Path` | `Path('/workspace/Wan2.2-Animate-14B')` |
+| `VIDEO_ME_WAN_ANIMATE_DATA_ROOT` | `Path` | `Path('/workspace/video_me/.local')` |
+| `VIDEO_ME_WAN_ANIMATE_MODE` | `Literal['animate', 'replace']` | `'animate'` |
+| `VIDEO_ME_WAN_ANIMATE_DRIVER_SOURCE` | `Literal['job_source', 'upload', 'local']` | `'job_source'` |
+| `VIDEO_ME_WAN_ANIMATE_DRIVER_URI` | `str` | `''` |
+| `VIDEO_ME_WAN_ANIMATE_TIMELINE` | `Literal['source_timestamps', 'sequential']` | `'source_timestamps'` |
+| `VIDEO_ME_WAN_ANIMATE_SUBJECT_SELECTION` | `Literal['largest', 'center']` | `'largest'` |
+| `VIDEO_ME_WAN_ANIMATE_RESOLUTION_AREA` | `Literal['480p', '720p']` | `'720p'` |
+| `VIDEO_ME_WAN_ANIMATE_FPS` | `int` | `30` |
+| `VIDEO_ME_WAN_ANIMATE_RETARGET_POSE` | `bool` | `False` |
+| `VIDEO_ME_WAN_ANIMATE_USE_FLUX_RETARGET` | `bool` | `False` |
+| `VIDEO_ME_WAN_ANIMATE_REFERT_NUM` | `Literal[1, 5]` | `1` |
+| `VIDEO_ME_WAN_ANIMATE_SAMPLING_STEPS` | `int` | `20` |
+| `VIDEO_ME_WAN_ANIMATE_MASK_ITERATIONS` | `int` | `3` |
+| `VIDEO_ME_WAN_ANIMATE_MASK_KERNEL` | `int` | `7` |
+| `VIDEO_ME_WAN_ANIMATE_MASK_W_LEN` | `int` | `1` |
+| `VIDEO_ME_WAN_ANIMATE_MASK_H_LEN` | `int` | `1` |
 | `VIDEO_ME_LTX_BASE_URL` | `str` | `'http://localhost:8188'` |
 | `VIDEO_ME_WAN_LOAD_GAP_SEC` | `int` | `30` |
 | `VIDEO_ME_WAN_LOAD_TIMEOUT_SEC` | `int` | `1800` |

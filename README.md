@@ -241,6 +241,7 @@ and `scripts.check_runtime_readiness`.
 | AUTOMATIC1111 | 7860 | SD 1.5 image gen | ⚠️ Only if `RENDER_ADAPTER=a1111` |
 | Wan 2.2 I2V | 8030 | Image-to-video | ⚠️ Only if `VIDEO_ADAPTER=wan` |
 | LightX2V Wan I2V | 8032 | 4-step experimental Wan I2V fast path | ⚠️ Only if `VIDEO_ADAPTER=wan_lightx2v` |
+| Wan 2.2 Animate | 8033 | Motion transfer / character replacement | ⚠️ Only if `VIDEO_ADAPTER=wan_animate` |
 | LatentSync | 8041 | Lip-sync repair for non-native video | ⚠️ Only if `LIPSYNC_ADAPTER=latentsync` with `wan`/`wan_lightx2v` |
 | MuseTalk | 8040 | Legacy lip-sync repair | ⚠️ Only if `LIPSYNC_ADAPTER=musetalk` with `wan`/`wan_lightx2v` |
 
@@ -331,6 +332,7 @@ Switch adapters with env vars — no code change needed:
 ```bash
 VIDEO_ME_RENDER_ADAPTER=a1111        # fall back to AUTOMATIC1111 + SD 1.5
 VIDEO_ME_VIDEO_ADAPTER=wan_lightx2v  # experimental LightX2V Wan 2.2 I2V fast path
+VIDEO_ME_VIDEO_ADAPTER=wan_animate   # Wan 2.2 motion transfer / character replacement
 VIDEO_ME_LIPSYNC_ADAPTER=none        # fastest visual run; no mouth repair
 VIDEO_ME_VIDEO_ADAPTER=wan           # Wan 2.2 I2V + lip-sync repair
 VIDEO_ME_LIPSYNC_ADAPTER=latentsync  # preferred repair for Wan I2V; or: musetalk
@@ -375,7 +377,9 @@ VIDEO_ME_FISH_S2_BASE_URL=http://localhost:8025   # Fish Audio S2 (EN + HI TTS)
 
 # Fast video/offload knobs
 WAN_S2V_OFFLOAD_MODEL=false
+WAN_S2V_AUDIO_ENCODER_DEVICE=cuda       # Wav2Vec2 on GPU; file decode/resampling remains CPU
 WAN_I2V_OFFLOAD_MODEL=false
+WAN_REQUIRE_FLASH_ATTN_3=true           # official Wan I2V + S2V use flash-attn-3
 LIGHTX2V_I2V_OFFLOAD_MODEL=false
 LIGHTX2V_I2V_STEPS=4
 LIGHTX2V_I2V_ATTN_MODE=sage_attn2

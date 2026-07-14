@@ -58,10 +58,30 @@
 - `render_adapter: Literal['a1111', 'comfyui_flux', 'musubi_flux']` = `'musubi_flux'`
 - `sd_base_url: str` = `'http://localhost:7860'`
 - `comfyui_base_url: str` = `'http://localhost:8188'`
-- `video_adapter: Literal['wan_s2v', 'wan', 'wan_lightx2v', 'ltx']` = `'wan_s2v'`
+- `video_adapter: Literal['wan_s2v', 'wan', 'wan_lightx2v', 'wan_animate', 'ltx']` = `'wan_s2v'`
 - `wan_base_url: str` = `'http://localhost:8030'`
 - `wan_s2v_base_url: str` = `'http://localhost:8031'`
 - `wan_lightx2v_base_url: str` = `'http://localhost:8032'`
+- `wan_animate_base_url: str` = `'http://localhost:8033'`
+- `wan_animate_python: str` = `'/workspace/.venv_wan_animate/bin/python'`
+- `wan_animate_repo_dir: Path` = `Path('/workspace/Wan2.2')`
+- `wan_animate_model_dir: Path` = `Path('/workspace/Wan2.2-Animate-14B')`
+- `wan_animate_data_root: Path` = `Path('/workspace/video_me/.local')`
+- `wan_animate_mode: Literal['animate', 'replace']` = `'animate'`
+- `wan_animate_driver_source: Literal['job_source', 'upload', 'local']` = `'job_source'`
+- `wan_animate_driver_uri: str` = `''`
+- `wan_animate_timeline: Literal['source_timestamps', 'sequential']` = `'source_timestamps'`
+- `wan_animate_subject_selection: Literal['largest', 'center']` = `'largest'`
+- `wan_animate_resolution_area: Literal['480p', '720p']` = `'720p'`
+- `wan_animate_fps: int` = `30`
+- `wan_animate_retarget_pose: bool` = `False`
+- `wan_animate_use_flux_retarget: bool` = `False`
+- `wan_animate_refert_num: Literal[1, 5]` = `1`
+- `wan_animate_sampling_steps: int` = `20`
+- `wan_animate_mask_iterations: int` = `3`
+- `wan_animate_mask_kernel: int` = `7`
+- `wan_animate_mask_w_len: int` = `1`
+- `wan_animate_mask_h_len: int` = `1`
 - `ltx_base_url: str` = `'http://localhost:8188'`
 - `wan_load_gap_sec: int` = `30`
 - `wan_load_timeout_sec: int` = `1800`
@@ -278,6 +298,14 @@ A rendered overlay PNG + the absolute time window it is visible in the final vid
 - `duration_sec: float`
 - `speaker_id: str | None` = `None`
 
+### `VideoDriver` (BaseModel) — `core/models/capabilities.py`
+
+- `uri: str`
+- `start_sec: float` = `Field(ge=0.0)`
+- `end_sec: float` = `Field(gt=0.0)`
+- `mode: Literal['animate', 'replace']` = `'animate'`
+- `prepared_dir: str | None` = `None`
+
 ### `VideoRequest` (BaseModel) — `core/models/capabilities.py`
 
 - `image_uri: str`
@@ -287,6 +315,20 @@ A rendered overlay PNG + the absolute time window it is visible in the final vid
 - `setting: str` = `''`
 - `audio_uri: str | None` = `None`
 - `style_suffix: str` = `''`
+- `driver: VideoDriver | None` = `None`
+
+### `PreparedWanAnimateInput` (BaseModel) — `core/models/capabilities.py`
+
+- `shot_id: str`
+- `prepared_dir: str`
+- `driver_uri: str`
+- `start_sec: float`
+- `end_sec: float`
+- `frame_count: int`
+- `fps: int`
+- `width: int`
+- `height: int`
+- `cache_hit: bool` = `False`
 
 ### `VideoClip` (BaseModel) — `core/models/capabilities.py`
 
@@ -530,7 +572,7 @@ LLM-authored chart/diagram panel composited over the upper third of the shot.
 - `whisper_language: str | None` = `None`
 - `whisper_isolate_vocals: bool | None` = `None`
 - `render_adapter: Literal['a1111', 'comfyui_flux', 'musubi_flux'] | None` = `None`
-- `video_adapter: Literal['wan_s2v', 'wan', 'wan_lightx2v', 'ltx'] | None` = `None`
+- `video_adapter: Literal['wan_s2v', 'wan', 'wan_lightx2v', 'wan_animate', 'ltx'] | None` = `None`
 - `lipsync_adapter: Literal['latentsync', 'musetalk', 'none'] | None` = `None`
 - `tts_adapter: Literal['chatterbox', 'fish_s2'] | None` = `None`
 - `image_candidates: int | None` = `Field(default=None, ge=1, le=10)`
@@ -547,6 +589,20 @@ LLM-authored chart/diagram panel composited over the upper third of the shot.
 - `auto_approve_plan: bool | None` = `None`
 - `auto_approve_images: bool | None` = `None`
 - `auto_approve_transcript: bool | None` = `None`
+- `wan_animate_mode: Literal['animate', 'replace'] | None` = `None`
+- `wan_animate_driver_source: Literal['job_source', 'upload', 'local'] | None` = `None`
+- `wan_animate_driver_uri: str | None` = `None`
+- `wan_animate_timeline: Literal['source_timestamps', 'sequential'] | None` = `None`
+- `wan_animate_subject_selection: Literal['largest', 'center'] | None` = `None`
+- `wan_animate_resolution_area: Literal['480p', '720p'] | None` = `None`
+- `wan_animate_retarget_pose: bool | None` = `None`
+- `wan_animate_use_flux_retarget: bool | None` = `None`
+- `wan_animate_refert_num: Literal[1, 5] | None` = `None`
+- `wan_animate_sampling_steps: int | None` = `Field(default=None, ge=10, le=40)`
+- `wan_animate_mask_iterations: int | None` = `Field(default=None, ge=0, le=10)`
+- `wan_animate_mask_kernel: int | None` = `Field(default=None, ge=1, le=31)`
+- `wan_animate_mask_w_len: int | None` = `Field(default=None, ge=1, le=8)`
+- `wan_animate_mask_h_len: int | None` = `Field(default=None, ge=1, le=8)`
 
 ### `LoraTrainingRequest` (BaseModel) — `core/models/dashboard.py`
 

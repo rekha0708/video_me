@@ -51,11 +51,31 @@ class Settings(BaseSettings):
     sd_base_url: str = "http://localhost:7860"       # AUTOMATIC1111 (kept for fallback)
     comfyui_base_url: str = "http://localhost:8188"  # ComfyUI (legacy LTX + comfyui_flux fallback)
 
-    # --- generate_video backend ("wan_s2v", "wan", "wan_lightx2v", or legacy "ltx") ---
-    video_adapter: Literal["wan_s2v", "wan", "wan_lightx2v", "ltx"] = "wan_s2v"
+    # --- generate_video backend ---
+    video_adapter: Literal["wan_s2v", "wan", "wan_lightx2v", "wan_animate", "ltx"] = "wan_s2v"
     wan_base_url: str = "http://localhost:8030"      # Wan 2.2 deferred-load server (fallback)
     wan_s2v_base_url: str = "http://localhost:8031"  # Wan 2.2 Speech-to-Video server (singing/default)
     wan_lightx2v_base_url: str = "http://localhost:8032"  # LightX2V 4-step Wan I2V (experimental)
+    wan_animate_base_url: str = "http://localhost:8033"
+    wan_animate_python: str = "/workspace/.venv_wan_animate/bin/python"
+    wan_animate_repo_dir: Path = Path("/workspace/Wan2.2")
+    wan_animate_model_dir: Path = Path("/workspace/Wan2.2-Animate-14B")
+    wan_animate_data_root: Path = Path("/workspace/video_me/.local")
+    wan_animate_mode: Literal["animate", "replace"] = "animate"
+    wan_animate_driver_source: Literal["job_source", "upload", "local"] = "job_source"
+    wan_animate_driver_uri: str = ""
+    wan_animate_timeline: Literal["source_timestamps", "sequential"] = "source_timestamps"
+    wan_animate_subject_selection: Literal["largest", "center"] = "largest"
+    wan_animate_resolution_area: Literal["480p", "720p"] = "720p"
+    wan_animate_fps: int = 30
+    wan_animate_retarget_pose: bool = False
+    wan_animate_use_flux_retarget: bool = False
+    wan_animate_refert_num: Literal[1, 5] = 1
+    wan_animate_sampling_steps: int = 20
+    wan_animate_mask_iterations: int = 3
+    wan_animate_mask_kernel: int = 7
+    wan_animate_mask_w_len: int = 1
+    wan_animate_mask_h_len: int = 1
     ltx_base_url: str = "http://localhost:8188"      # LTX-Video 2.3 via ComfyUI (legacy)
     # Wan deferred-loading sequence (core/gpu_sequencer.py): gap between unloading
     # the render-phase models and loading Wan, and the readiness-poll ceiling.

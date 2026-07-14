@@ -21,7 +21,7 @@ content are blocked, not silently passed.
 
 - **LLM**: qwen3.6:35b (MoE 35B). Thinking mode disabled via `extra_body={"think": False}` + no `response_format`. `max_tokens=16384`. `json_repair` fallback. Used for all LLM stages including plan critique.
 - **Image generation**: Flux 2.0 Dev (32B, Nov 2025) + Flux LoRA, run **locally via musubi-tuner** (replaces A1111 + SD 1.5). Default adapter: `MusubiFluxAdapter` (subprocess, no server). `ComfyUIFluxAdapter` (port 8188) is a fallback but ComfyUI can't load Flux 2.0 locally — it needs the paid BFL cloud API / a custom Mistral 3 node.
-- **Video generation**: Wan2.2-S2V 14B via `WanS2VAdapter` + `services/wan_s2v_server.py` (port 8031). It receives the approved still + the exact shot audio and derives `infer_frames` from shot duration using `VIDEO_ME_WAN_S2V_FPS` (default 16) with Wan-style `4n+1` frame counts. The service invokes Wan's `generate.py` as a subprocess per clip; `WAN_S2V_OFFLOAD_MODEL=false` is the default for speed on high-VRAM GPUs. There is no resident S2V `/load` endpoint today; process exit after each clip is the release point.
+- **Video generation**: Wan2.2-S2V 14B via `WanS2VAdapter` + the resident `services/wan_s2v_server.py` service (port 8031). It receives the approved still + exact shot audio, derives `infer_frames` from shot duration using `VIDEO_ME_WAN_S2V_FPS` (default 16), and keeps one model loaded across the job's shot loop. `WAN_S2V_OFFLOAD_MODEL=false` keeps the DiT on GPU, while `WAN_S2V_AUDIO_ENCODER_DEVICE=cuda` keeps the Wav2Vec2 feature encoder on GPU; only file decode/resampling remains CPU-side.
 - **Plan critique loop**: after `plan_shots`, `LlmPlanCritiqueAdapter` scores 5 dimensions (character_fit, scene_achievability, pacing, kids_safety, visual_clarity). All must be ≥ 0.75 to pass. Up to 3 re-plan iterations with specific fix notes injected.
 - **Human approval gate (storyboard)**: after critique passes, web UI at `http://localhost:8765` shows shot table + score bars. Approve → render. Reject + notes → one more re-plan cycle. 2nd rejection → job FAILED. CI bypass: `VIDEO_ME_AUTO_APPROVE_PLAN=true`.
 - **Image candidate generation**: render_character generates N images per shot (default 1 — operator decision 2026-07-07: Flux candidates are near-identical, so extra candidates waste GPU; raise via `VIDEO_ME_IMAGE_CANDIDATES` if variety is needed). `Shot.action` is included in the render prompt so each still shows the shot's pose/angle (LTX still animates the motion). Phase A batches all pending shots into one `run_many()` call per LoRA (one 64 GB model load instead of one per candidate) and dedups identically specified shots (same member/setting/camera/action → PNGs copied, not re-rendered). With a single candidate the VLM critique is skipped (auto-pick, `origin="single"`) — the human image gate stays the quality check. `VlmImageCritiqueAdapter` (qwen3.6:35b, natively multimodal) scores all candidates on 5 dimensions and picks the best. Self-learning: each pick + human override is appended to `assets/kids_duo/critique_feedback.jsonl`; last 5 entries are injected as few-shot context on the next run.
@@ -384,7 +384,9 @@ VIDEO_ME_WAN_S2V_BASE_URL=http://localhost:8031
 VIDEO_ME_WAN_LIGHTX2V_BASE_URL=http://localhost:8032
 VIDEO_ME_FISH_S2_BASE_URL=http://localhost:8025
 WAN_S2V_OFFLOAD_MODEL=false
+WAN_S2V_AUDIO_ENCODER_DEVICE=cuda
 WAN_I2V_OFFLOAD_MODEL=false
+WAN_REQUIRE_FLASH_ATTN_3=true
 LIGHTX2V_I2V_OFFLOAD_MODEL=false
 VIDEO_ME_VIDEO_UPSCALE_ENABLED=false
 VIDEO_ME_VIDEO_UPSCALE_TARGET_FPS=48

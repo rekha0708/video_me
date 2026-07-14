@@ -282,6 +282,42 @@ class DashboardRepository:
             ).fetchone()
         return self._job_from_row(row) if row else None
 
+    def save_job(self, job: DashboardJobRecord) -> DashboardJobRecord:
+        """Persist an edited dashboard record, including its request payload."""
+        now = utc_now()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE dashboard_jobs
+                SET source_url = ?, source_kind = ?, status = ?, phase = ?,
+                    target_language = ?, rights_cleared = ?, updated_at = ?,
+                    request_json = ?, current_stage = ?, current_shot_id = ?,
+                    approval_kind = ?, terminal_error_json = ?, completed_phases_json = ?
+                WHERE job_id = ?
+                """,
+                (
+                    job.source_url,
+                    job.source_kind,
+                    job.status.value,
+                    job.phase,
+                    job.target_language,
+                    int(job.rights_cleared),
+                    _dt_text(now),
+                    _json_dumps(job.request),
+                    job.current_stage,
+                    job.current_shot_id,
+                    job.approval_kind,
+                    _json_dumps(job.terminal_error) if job.terminal_error else None,
+                    _json_dumps(job.completed_phases),
+                    job.job_id,
+                ),
+            )
+        if cursor.rowcount != 1:
+            raise KeyError(f"dashboard job not found: {job.job_id}")
+        saved = self.get_job(job.job_id)
+        assert saved is not None
+        return saved
+
     def list_jobs(self, *, limit: int = 50) -> list[DashboardJobRecord]:
         limit = max(1, min(limit, 200))
         with self._connect() as conn:

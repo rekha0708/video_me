@@ -53,6 +53,7 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `adapters/generate_video/__init__.py` — Video-generation adapters.
 - `adapters/generate_video/ltx_adapter.py` — (no module docstring)
 - `adapters/generate_video/wan_adapter.py` — (no module docstring)
+- `adapters/generate_video/wan_animate_adapter.py` — (no module docstring)
 - `adapters/generate_video/wan_lightx2v_adapter.py` — (no module docstring)
 - `adapters/generate_video/wan_s2v_adapter.py` — (no module docstring)
 - `adapters/lip_sync/__init__.py` — Lip-sync adapters.
@@ -97,8 +98,10 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `services/latentsync_server.py` — LatentSync lip-sync HTTP service wrapper.
 - `services/musetalk_compat/sitecustomize.py` — PyTorch 2.6+ changed torch.load's weights_only default from False to True,
 - `services/musetalk_server.py` — MuseTalk lip-sync HTTP service wrapper.
+- `services/wan_animate_preprocess.py` — Short-lived batch preprocessor for official Wan2.2 Animate inputs.
+- `services/wan_animate_server.py` — Deferred-loading HTTP service for official Wan2.2-Animate-14B.
 - `services/wan_lightx2v_server.py` — LightX2V Wan2.2 I2V HTTP service.
-- `services/wan_s2v_server.py` — Wan2.2 Speech-to-Video HTTP service wrapper.
+- `services/wan_s2v_server.py` — Wan2.2 Speech-to-Video HTTP service wrapper (resident model).
 - `services/wan_server.py` — Wan2.2 image-to-video HTTP service — deferred-loading edition.
 
 ## scripts/
@@ -159,5 +162,9 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `tests/test_transcribe.py` — (no module docstring)
 - `tests/test_video_enhance_ai_adapter.py` — (no module docstring)
 - `tests/test_video_enhance_ffmpeg_adapter.py` — (no module docstring)
+- `tests/test_wan_animate_adapter.py` — (no module docstring)
+- `tests/test_wan_animate_server.py` — (no module docstring)
+- `tests/test_wan_animate_workflow.py` — (no module docstring)
 - `tests/test_wan_s2v_adapter.py` — (no module docstring)
+- `tests/test_wan_s2v_server.py` — (no module docstring)
 - `tests/test_workflow.py` — Tests for run_pipeline_job (A1.12) and its private helpers.

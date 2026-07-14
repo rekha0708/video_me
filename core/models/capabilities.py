@@ -169,6 +169,14 @@ class AudioTrack(BaseModel):
 
 # ---------- generate_video ----------
 
+class VideoDriver(BaseModel):
+    uri: str
+    start_sec: float = Field(ge=0.0)
+    end_sec: float = Field(gt=0.0)
+    mode: Literal["animate", "replace"] = "animate"
+    prepared_dir: str | None = None
+
+
 class VideoRequest(BaseModel):
     image_uri: str
     action: str
@@ -178,6 +186,22 @@ class VideoRequest(BaseModel):
     audio_uri: str | None = None  # set when video adapter has native_lipsync=True
     # Same per-cast style_suffix as RenderCharacterRequest ("" → adapter's cartoon default).
     style_suffix: str = ""
+    # Driving-video conditioning used only by Wan2.2 Animate. Keeping this
+    # optional preserves the request contract for every existing backend.
+    driver: VideoDriver | None = None
+
+
+class PreparedWanAnimateInput(BaseModel):
+    shot_id: str
+    prepared_dir: str
+    driver_uri: str
+    start_sec: float
+    end_sec: float
+    frame_count: int
+    fps: int
+    width: int
+    height: int
+    cache_hit: bool = False
 
 
 class VideoClip(BaseModel):

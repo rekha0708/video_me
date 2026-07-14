@@ -16,6 +16,7 @@
 | fetch_media | `YtDlpAdapter` | `adapters/fetch_media/ytdlp_adapter.py` |
 | generate_video | `LtxAdapter` | `adapters/generate_video/ltx_adapter.py` |
 | generate_video | `WanAdapter` | `adapters/generate_video/wan_adapter.py` |
+| generate_video | `WanAnimateAdapter` | `adapters/generate_video/wan_animate_adapter.py` |
 | generate_video | `WanLightX2VAdapter` | `adapters/generate_video/wan_lightx2v_adapter.py` |
 | generate_video | `WanS2VAdapter` | `adapters/generate_video/wan_s2v_adapter.py` |
 | lip_sync | `LatentSyncAdapter` | `adapters/lip_sync/latentsync_adapter.py` |
@@ -285,6 +286,23 @@ Video-generation adapters.
   - `async _call_wan(self, image_path: Path, prompt: str, duration_sec: float) -> bytes` — POST to the Wan service; return raw MP4 bytes.
   - `_save_clip(self, mp4_bytes: bytes, out_dir: Path) -> Path` — Write MP4 bytes to out_dir/clip.mp4 and return the path.
 
+### `adapters/generate_video/wan_animate_adapter.py`
+
+- **class `WanAnimateAdapter(GenerateVideo)`** — Official Wan2.2 Animate motion-transfer/character-replacement backend.
+  - `__init__(self, *, work_dir: Path, base_url: str, python_bin: str, wan_dir: Path, model_dir: Path, mode: str='animate', driver_source: str='job_source', driver_uri: str='', timeline: str='source_timestamps', fps: int=30, resolution_area: str='720p', subject_selection: str='largest', retarget_pose: bool=False, use_flux_retarget: bool=False, refert_num: int=1, sampling_steps: int=20, mask_iterations: int=3, mask_kernel: int=7, mask_w_len: int=1, mask_h_len: int=1, ffmpeg_bin: str='ffmpeg', ffprobe_bin: str='ffprobe') -> None`
+  - `async health(self) -> HealthStatus`
+  - `async load(self) -> None`
+  - `async unload(self) -> bool`
+  - `async wait_until_loaded(self, timeout_sec: float, poll_sec: float=10.0) -> None`
+  - `async estimate_cost(self, req: VideoRequest) -> CostEstimate`
+  - `async prepare_inputs(self, requests: list[VideoRequest]) -> dict[str, PreparedWanAnimateInput]` — Normalize all driver slices, then run one batch preprocessing process.
+  - `async run(self, req: VideoRequest) -> VideoClip`
+  - `_cache_key(self, req: VideoRequest, driver: Path, reference: Path) -> str`
+  - `_read_cached(self, path: Path, cache_key: str) -> PreparedWanAnimateInput | None`
+  - `async _normalize_driver(self, source: Path, output: Path, start_sec: float, end_sec: float) -> None`
+  - `async _probe_duration(self, source: Path) -> float`
+- `_local_path(uri: str) -> Path`
+
 ### `adapters/generate_video/wan_lightx2v_adapter.py`
 
 - **class `WanLightX2VAdapter(GenerateVideo)`** — Experimental Wan2.2 I2V adapter backed by LightX2V's 4-step distill LoRA path.
@@ -305,6 +323,9 @@ Video-generation adapters.
 - **class `WanS2VAdapter(GenerateVideo)`** — generate_video adapter: Wan2.2 Speech-to-Video via a thin local HTTP wrapper.
   - `__init__(self, work_dir: Path, base_url: str='http://localhost:8031', fps: int=_DEFAULT_FPS) -> None`
   - `async health(self) -> HealthStatus`
+  - `async load(self) -> None`
+  - `async unload(self) -> bool`
+  - `async wait_until_loaded(self, timeout_sec: float, poll_sec: float=10.0) -> None`
   - `async estimate_cost(self, req: VideoRequest) -> CostEstimate`
   - `async run(self, req: VideoRequest) -> VideoClip`
   - `_check_inputs(self, image_path: Path, audio_path: Path, shot_id: str) -> None`

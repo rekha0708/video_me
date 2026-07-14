@@ -2,7 +2,7 @@
 
 # Dashboard API routes (`services/dashboard_api.py`)
 
-42 routes.
+43 routes.
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
@@ -43,6 +43,7 @@
 | GET | `/api/runtime/services` | `runtime_services` |  |
 | POST | `/api/uploads/character-image` | `upload_character_image` |  |
 | POST | `/api/uploads/lora-training-image` | `upload_lora_training_image` |  |
+| POST | `/api/uploads/wan-animate-driver` | `upload_wan_animate_driver` | Stream a driver video to a server-local, job-safe staging directory. |
 | GET | `/gpu` | `ui_gpu_status` |  |
 | GET | `/health` | `ui_health` |  |
 | GET | `/img/{path_b64}` | `serve_render_image` |  |

@@ -367,9 +367,7 @@ async def test_worker_runs_noop_job_to_completed(tmp_path: Path) -> None:
 async def test_run_action_stops_fish_s2_after_every_outcome(
     tmp_path: Path, _no_real_fish_s2_pkill, _no_real_wan_unload,
 ) -> None:
-    """Fish S2 process cleanup must fire after completion and failure. The
-    default S2V backend is subprocess-per-request, so there is no resident
-    video `/unload` endpoint to call."""
+    """Fish S2 and the managed S2V service are cleaned after every outcome."""
     worker, repo = _make_worker(tmp_path)
 
     # Completed
@@ -378,7 +376,7 @@ async def test_run_action_stops_fish_s2_after_every_outcome(
         action = repo.claim_next_action("w1")
         await worker._run_action(action)
     assert _no_real_fish_s2_pkill.await_count == 1
-    assert _no_real_wan_unload.await_count == 0
+    assert _no_real_wan_unload.await_count == 1
 
     # Failed
     job_fail, _ = repo.create_queued_job(_noop_request())
@@ -386,7 +384,7 @@ async def test_run_action_stops_fish_s2_after_every_outcome(
         action = repo.claim_next_action("w1")
         await worker._run_action(action)
     assert _no_real_fish_s2_pkill.await_count == 2
-    assert _no_real_wan_unload.await_count == 0
+    assert _no_real_wan_unload.await_count == 2
 
 
 async def test_run_action_records_descriptive_cleanup_events(tmp_path: Path) -> None:

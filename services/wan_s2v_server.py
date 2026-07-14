@@ -37,6 +37,10 @@ Environment variables:
                       wrapper is sized for a single high-VRAM GPU where the
                       14B model comfortably stays resident — set true on a
                       smaller/shared GPU that needs the memory back)
+  WAN_S2V_AUDIO_ENCODER_DEVICE
+                      Device for the Wav2Vec2 audio feature encoder: cuda or
+                      cpu (default: cuda). File decode/resampling remains CPU;
+                      the expensive neural encoder stays resident on GPU.
   WAN_S2V_SAMPLE_STEPS
                       Pass-through for generate()'s sampling_steps. Unset by
                       default, which falls through to Wan's own s2v_14B config
@@ -53,14 +57,17 @@ Environment variables:
   WAN_S2V_SHIFT       Pass-through for generate()'s shift (noise schedule).
                       Default 3.0 — Wan's own docstring recommends 3.0 for
                       480p generation (vs the 5.0 default tuned for 720p+).
+  WAN_REQUIRE_FLASH_ATTN_3
+                      Require FlashAttention-3 instead of allowing Wan's
+                      FA2/SDPA fallback (default: true).
 
 FlashAttention-3: Wan2.2's wan/modules/attention.py auto-detects FA3 via
 `import flash_attn_interface` (falls back to flash-attn 2, then SDPA) with no
 config on our side — this module just re-checks the same import so /health
 and the load log can report whether it's actually active in this process's
-venv. Install lives at /workspace/flash-attention/hopper (built for both
-sm80 and sm90; only sm90/Hopper is needed on this pod's H200) and is
-installed into .venv_wan via `python setup.py install` there.
+venv. setup_gpu.sh installs the official flash-attn-3 hopper package with
+sm80 disabled, then executes a BF16 FA3 kernel to verify sm_90a/Hopper on
+this pod's H200 before the Wan services are used.
 """
 
 from __future__ import annotations
@@ -83,7 +90,7 @@ logger = logging.getLogger(__name__)
 try:
     import flash_attn_interface  # noqa: F401  (Wan2.2's own attention.py detects this same module)
     FLASH_ATTN_3_AVAILABLE = True
-except ModuleNotFoundError:
+except (ImportError, OSError):
     FLASH_ATTN_3_AVAILABLE = False
 
 WAN_DIR = Path(os.getenv("WAN_DIR", "/workspace/Wan2.2"))
@@ -97,12 +104,19 @@ WAN_S2V_OFFLOAD_MODEL = os.getenv("WAN_S2V_OFFLOAD_MODEL", "false").strip().lowe
 )
 WAN_S2V_SAMPLE_STEPS = os.getenv("WAN_S2V_SAMPLE_STEPS", "").strip()
 WAN_S2V_SHIFT = float(os.getenv("WAN_S2V_SHIFT", "3.0"))
+WAN_S2V_AUDIO_ENCODER_DEVICE = os.getenv(
+    "WAN_S2V_AUDIO_ENCODER_DEVICE", "cuda"
+).strip().lower()
+WAN_REQUIRE_FLASH_ATTN_3 = os.getenv("WAN_REQUIRE_FLASH_ATTN_3", "true").strip().lower() in (
+    "1", "true", "yes",
+)
 
 _pipeline = None
 _pipeline_error: str | None = None
 _loading = False
 _load_lock = threading.Lock()
 _infer_lock = threading.Lock()
+_active_audio_encoder_device = "unloaded"
 
 
 def _check_setup() -> None:
@@ -110,6 +124,28 @@ def _check_setup() -> None:
         raise FileNotFoundError(f"WAN_DIR missing: {WAN_DIR}")
     if not WAN_S2V_MODEL_DIR.exists():
         raise FileNotFoundError(f"WAN_S2V_MODEL_DIR missing: {WAN_S2V_MODEL_DIR}")
+    if WAN_REQUIRE_FLASH_ATTN_3 and not FLASH_ATTN_3_AVAILABLE:
+        raise RuntimeError(
+            "FlashAttention-3 is required but flash_attn_interface cannot be imported; "
+            "install the 'flash-attn-3' distribution from the official hopper package"
+        )
+    if WAN_S2V_AUDIO_ENCODER_DEVICE not in {"cpu", "cuda"}:
+        raise ValueError(
+            "WAN_S2V_AUDIO_ENCODER_DEVICE must be 'cuda' or 'cpu', got "
+            f"{WAN_S2V_AUDIO_ENCODER_DEVICE!r}"
+        )
+
+
+def _place_audio_encoder(pipe) -> str:
+    """Keep Wan's Wav2Vec2 feature extractor on the configured device."""
+    model = pipe.audio_encoder.model
+    model.eval().requires_grad_(False)
+    target = pipe.device if WAN_S2V_AUDIO_ENCODER_DEVICE == "cuda" else "cpu"
+    model.to(target)
+    actual = str(next(model.parameters()).device)
+    if WAN_S2V_AUDIO_ENCODER_DEVICE == "cuda" and not actual.startswith("cuda"):
+        raise RuntimeError(f"Wav2Vec2 audio encoder did not move to CUDA (actual={actual})")
+    return actual
 
 
 def _infer_frames_for_duration(duration_sec: float, fps: int) -> int:
@@ -119,7 +155,7 @@ def _infer_frames_for_duration(duration_sec: float, fps: int) -> int:
 
 
 def _load_pipeline() -> None:
-    global _pipeline, _pipeline_error, _loading
+    global _pipeline, _pipeline_error, _loading, _active_audio_encoder_device
     with _load_lock:
         if _pipeline is not None:
             return
@@ -153,8 +189,12 @@ def _load_pipeline() -> None:
             init_on_cpu=False,  # keep resident on GPU across shots in the job
             convert_model_dtype=True,
         )
+        _active_audio_encoder_device = _place_audio_encoder(pipe)
         _pipeline = pipe
-        logger.info("WanS2V ready")
+        logger.info(
+            "WanS2V ready (Wav2Vec2 audio encoder=%s)",
+            _active_audio_encoder_device,
+        )
     except Exception as exc:
         _pipeline_error = str(exc)
         logger.error("WanS2V failed to load: %s", exc, exc_info=True)
@@ -208,6 +248,9 @@ def health() -> JSONResponse:
             "offload_model": WAN_S2V_OFFLOAD_MODEL,
             "size": WAN_S2V_SIZE,
             "flash_attn_3": FLASH_ATTN_3_AVAILABLE,
+            "require_flash_attn_3": WAN_REQUIRE_FLASH_ATTN_3,
+            "audio_encoder_device_requested": WAN_S2V_AUDIO_ENCODER_DEVICE,
+            "audio_encoder_device_active": _active_audio_encoder_device,
         },
         status_code=200 if setup_error is None else 503,
     )

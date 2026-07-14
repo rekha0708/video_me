@@ -112,7 +112,9 @@ Shared Pydantic models for orchestration.
 - **class `ImageSet(BaseModel)`**
 - **class `VoiceRequest(BaseModel)`**
 - **class `AudioTrack(BaseModel)`**
+- **class `VideoDriver(BaseModel)`**
 - **class `VideoRequest(BaseModel)`**
+- **class `PreparedWanAnimateInput(BaseModel)`**
 - **class `VideoClip(BaseModel)`**
 - **class `ImageCandidateScore(BaseModel)`**
 - **class `ImageCritiqueRequest(BaseModel)`**
@@ -278,7 +280,9 @@ Shared Pydantic models for orchestration.
 - `_existing_audio_for_shot(work_dir: Path, shot: Shot, speaker_id: str, render_mode: str) -> str | None`
 - `_snapshot_attempt_file(src_uri: str, out_dir: Path, filename: str) -> str | None`
 - `async _write_shot_attempt_audit(*, work_dir: Path, shot: Shot, render_mode: str, native_lipsync: bool, raw_clip: VideoClip, selected_clip: VideoClip, audio_track: AudioTrack, ffprobe_bin: str, tolerance_sec: float, lipsync_attempts: list[dict[str, Any]], lipsync_failure_policy: str) -> dict[str, Any]`
-- `async _generate_shot_video(shot: Shot, script: Script, cast: Cast, adapters: _Adapters, work_dir: Path, image_uri: str, options: RunOptions | None=None, *, shot_index: int=1, total_shots: int=1, render_mode: str='full', source_audio_uri: str | None=None) -> tuple[VideoClip, AudioTrack]` — Phase B: synthesize voice + generate video for one shot using the approved image.
+- `async _prepare_wan_animate_inputs(*, shots: list[Shot], image_uris: list[str], adapter: Any, fetch_result: FetchMediaResult | None, stage_hook: Callable[..., None] | None) -> dict[str, VideoDriver]` — Resolve deterministic driver ranges and batch-preprocess Animate inputs.
+- `async _prepare_wan_animate_audio(*, shots: list[Shot], script: Script, cast: Cast, adapters: _Adapters, work_dir: Path, options: RunOptions, render_mode: str, source_audio_uri: str | None) -> dict[str, AudioTrack]` — Finish all audio before the 14B Animate model occupies the GPU.
+- `async _generate_shot_video(shot: Shot, script: Script, cast: Cast, adapters: _Adapters, work_dir: Path, image_uri: str, options: RunOptions | None=None, *, shot_index: int=1, total_shots: int=1, render_mode: str='full', source_audio_uri: str | None=None, video_driver: VideoDriver | None=None, prefetched_audio: AudioTrack | None=None, skip_lipsync: bool=False) -> tuple[VideoClip, AudioTrack]` — Phase B: synthesize voice + generate video for one shot using the approved image.
 - `async _concat_audio(tracks: list[AudioTrack], work_dir: Path, ffmpeg_bin: str='ffmpeg') -> AudioTrack` — Concatenate per-shot WAV files into one combined dialogue track.
 - `_segment_to_verbatim_lines(segment, *, speaker: str, max_line_duration_sec: float | None=None) -> list['Line']` — Turn one Whisper segment into one or more timed script lines.
 - `_build_verbatim_script(transcribe_result, cast: Cast, visual_context: 'VisualContext | None'=None, rights_cleared: bool=True, max_line_duration_sec: float | None=None) -> Script` — Build a Script directly from transcript segments (source_audio mode).

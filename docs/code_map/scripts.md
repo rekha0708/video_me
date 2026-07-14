@@ -15,6 +15,7 @@ Executable helpers for local development.
 - `check_system_tools(which: Callable[[str], str | None]=shutil.which) -> list[CheckResult]`
 - `check_track_b_assets(config: AppConfig, *, code_test: bool=False) -> list[CheckResult]`
 - `check_video_enhance_assets(settings: Settings) -> list[CheckResult]`
+- `check_wan_animate_assets(settings: Settings) -> list[CheckResult]`
 - `_join_url(base_url: str, suffix: str) -> str`
 - `_service_urls(settings: Settings) -> list[tuple[str, str, bool]]` — Return (name, url, required) tuples. required=False means WARN on failure.
 - `_url_ok(url: str, *, timeout: float, urlopen: Callable=urllib.request.urlopen) -> tuple[bool, str]`

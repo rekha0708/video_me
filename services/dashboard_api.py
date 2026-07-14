@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 import json
 import os
@@ -637,6 +638,7 @@ def create_app(
         return _base_response({"videos": videos, "dir": str(video_dir)})
 
     _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+    _VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".mkv"}
 
     @app.get("/api/casts")
     def list_casts() -> dict[str, Any]:
@@ -728,6 +730,98 @@ def create_app(
         dest = dest_dir / f"{member_id}{ext}"
         dest.write_bytes(content)
         return _base_response({"path": str(dest), "member_id": member_id, "filename": dest.name})
+
+    @app.post("/api/uploads/wan-animate-driver")
+    async def upload_wan_animate_driver(
+        file: UploadFile = File(...),
+    ) -> dict[str, Any]:
+        """Stream a driver video to a server-local, job-safe staging directory."""
+        ext = Path(file.filename or "driver.mp4").suffix.lower()
+        if ext not in _VIDEO_EXTENSIONS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "INVALID_FORMAT",
+                    "message": "Driver video must be MP4, MOV, WebM, or MKV",
+                    "retryable": False,
+                },
+            )
+        import uuid
+        token = uuid.uuid4().hex
+        dest_dir = Path(config.settings.data_dir) / "uploads" / "wan_animate" / token
+        dest_dir.mkdir(parents=True, exist_ok=False)
+        dest = dest_dir / f"driver{ext}"
+        size = 0
+        max_size = 2 * 1024 * 1024 * 1024
+        try:
+            with dest.open("wb") as handle:
+                while chunk := await file.read(8 * 1024 * 1024):
+                    size += len(chunk)
+                    if size > max_size:
+                        raise HTTPException(
+                            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            detail={
+                                "code": "FILE_TOO_LARGE",
+                                "message": "Driver video must be at most 2 GiB",
+                                "retryable": False,
+                            },
+                        )
+                    handle.write(chunk)
+            probe = await asyncio.create_subprocess_exec(
+                config.settings.ffprobe_bin,
+                "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=width,height,codec_name:format=duration",
+                "-of", "json", str(dest),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await probe.communicate()
+            if probe.returncode != 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "UNREADABLE_VIDEO",
+                        "message": "Driver video could not be decoded: "
+                        + stderr.decode(errors="replace")[-500:],
+                        "retryable": False,
+                    },
+                )
+            metadata = json.loads(stdout)
+            streams = metadata.get("streams") or []
+            if len(streams) != 1:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"code": "NO_VIDEO", "message": "Driver must contain one readable video stream", "retryable": False},
+                )
+            duration = float((metadata.get("format") or {}).get("duration") or 0)
+            width = int(streams[0].get("width") or 0)
+            height = int(streams[0].get("height") or 0)
+            if duration <= 0 or duration > 600:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"code": "INVALID_DURATION", "message": "Driver duration must be greater than 0 and at most 10 minutes", "retryable": False},
+                )
+            if min(width, height) < 256:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"code": "VIDEO_TOO_SMALL", "message": "Driver's shorter side must be at least 256 pixels", "retryable": False},
+                )
+        except Exception:
+            dest.unlink(missing_ok=True)
+            try:
+                dest_dir.rmdir()
+            except OSError:
+                pass
+            raise
+        return _base_response({
+            "path": str(dest.resolve()),
+            "filename": file.filename or dest.name,
+            "size_bytes": size,
+            "duration_sec": duration,
+            "width": width,
+            "height": height,
+            "codec": streams[0].get("codec_name"),
+        })
 
     @app.post("/api/uploads/lora-training-image")
     async def upload_lora_training_image(

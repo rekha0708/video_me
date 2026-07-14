@@ -163,6 +163,7 @@ NEED_CHATTERBOX=0
 NEED_WAN_S2V=0
 NEED_WAN_I2V=1
 NEED_WAN_LIGHTX2V=1
+NEED_WAN_ANIMATE=0
 NEED_VIDEO_ENHANCE_CLI=1
 NEED_LATENTSYNC=1
 NEED_MUSETALK=0
@@ -185,6 +186,14 @@ case "$VIDEO_ADAPTER" in
     ;;
   wan_lightx2v)
     NEED_WAN_LIGHTX2V=1
+    if [[ "$LIPSYNC_ADAPTER" == "latentsync" ]]; then
+      NEED_LATENTSYNC=1
+    elif [[ "$LIPSYNC_ADAPTER" == "musetalk" ]]; then
+      NEED_MUSETALK=1
+    fi
+    ;;
+  wan_animate)
+    NEED_WAN_ANIMATE=1
     if [[ "$LIPSYNC_ADAPTER" == "latentsync" ]]; then
       NEED_LATENTSYNC=1
     elif [[ "$LIPSYNC_ADAPTER" == "musetalk" ]]; then
@@ -484,6 +493,27 @@ else
   ok "LightX2V Wan I2V not selected by current video adapter — skipping"
 fi
 
+# ── Wan 2.2 Animate (motion transfer / character replacement) ────────────────
+if [[ "$NEED_WAN_ANIMATE" == "1" ]]; then
+  log "Wan2.2 Animate (port 8033, VIDEO_ADAPTER=wan_animate)"
+  if [[ ! -d "$WORKSPACE/.venv_wan_animate" ]]; then
+    warn "Wan Animate venv not found — run setup_gpu.sh --with-wan-animate"
+  elif curl -sf http://localhost:8033/health >/dev/null 2>&1; then
+    ok "Wan Animate already responding"
+  else
+    cd "$ROOT_DIR"
+    WAN_DIR="$WORKSPACE/Wan2.2" \
+    WAN_ANIMATE_MODEL_DIR="$WORKSPACE/Wan2.2-Animate-14B" \
+    WAN_ANIMATE_DATA_ROOT="${VIDEO_ME_WAN_ANIMATE_DATA_ROOT:-${VIDEO_ME_DATA_DIR:-$ROOT_DIR/.local}}" \
+    launch_with_self_heal "Wan Animate" "$LOG_DIR/wan_animate.log" "$WORKSPACE/.venv_wan_animate/bin/pip" -- \
+      nohup "$WORKSPACE/.venv_wan_animate/bin/uvicorn" services.wan_animate_server:app \
+      --host 0.0.0.0 --port 8033
+    ok "Wan Animate starting (log: $LOG_DIR/wan_animate.log)"
+  fi
+else
+  ok "Wan Animate not selected by current video adapter — skipping"
+fi
+
 # ── LatentSync (preferred repair for Wan I2V) ─────────────────────────────────
 if [[ "$NEED_LATENTSYNC" == "1" ]]; then
   log "LatentSync lip-sync (port 8041, LIPSYNC_ADAPTER=latentsync)"
@@ -542,6 +572,9 @@ if [[ "$NEED_WAN_I2V" == "1" ]]; then
 fi
 if [[ "$NEED_WAN_LIGHTX2V" == "1" ]]; then
   wait_for "LightX2V Wan I2V" "http://localhost:8032/health"          20 || FAILED=1
+fi
+if [[ "$NEED_WAN_ANIMATE" == "1" ]]; then
+  wait_for "Wan2.2 Animate" "http://localhost:8033/health"             20 || FAILED=1
 fi
 if [[ "$NEED_LATENTSYNC" == "1" ]]; then
   wait_for "LatentSync"   "http://localhost:8041/health"             20 || FAILED=1
