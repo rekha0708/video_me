@@ -2,7 +2,7 @@
 
 # Dashboard API routes (`services/dashboard_api.py`)
 
-53 routes.
+54 routes.
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
@@ -47,6 +47,7 @@
 | GET | `/api/jobs/{job_id}/visuals` | `get_visuals` | Per-segment settings the VLM extracted from the source video. |
 | GET | `/api/local-images` | `list_local_images` |  |
 | GET | `/api/local-videos` | `list_local_videos` |  |
+| GET | `/api/pipeline/options` | `pipeline_options` | Return casts, default adapters, and readiness for all pipeline backends. |
 | GET | `/api/runtime/gpu-status` | `runtime_gpu_status` |  |
 | POST | `/api/runtime/gpu-watermarks/reset` | `runtime_gpu_watermarks_reset` |  |
 | GET | `/api/runtime/readiness` | `runtime_readiness` |  |

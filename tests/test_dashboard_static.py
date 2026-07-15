@@ -12,7 +12,7 @@ def test_job_detail_event_rows_carry_ids_for_live_dedupe() -> None:
 
 def test_new_job_routes_wan_animate_to_dedicated_studio() -> None:
     template = Path("services/templates/job_new.html").read_text()
-    assert '<option value="wan_animate">' in template
+    assert 'value="wan_animate"' in template
     assert 'href="/animate/new"' in template
     assert 'id="nj-wan-animate-mode"' not in template
     assert "/api/uploads/wan-animate-driver" not in template

@@ -1,726 +1,448 @@
 {% extends "base.html" %}
-{% block title %}New Job{% endblock %}
+{% block title %}Pipeline Studio{% endblock %}
 
 {% block content %}
-<div class="page-header">
-  <div>
-    <div class="page-title">New Pipeline Job</div>
-    <div class="page-subtitle">Choose an input mode and configure the pipeline run.</div>
-  </div>
-  <a href="/" class="btn btn-outline">&larr; Back to Jobs</a>
-</div>
-
-<div class="card" style="max-width:640px">
-  <form id="new-job-form" onsubmit="submitNewJob(event)">
-
-    {# ── Cast selector ── #}
-    <div class="form-row">
-      <label>Cast</label>
-      <select id="nj-cast" onchange="onCastChange(this.value)">
-        {# populated by JS from GET /api/casts; default pre-selected #}
-      </select>
-      <div class="form-hint">Character cast for this job. Each cast has its own LoRA + voice profiles.</div>
+<main class="animate-page" id="pipeline-studio"
+      data-options-url="/api/pipeline/options"
+      data-create-url="/api/jobs"
+      data-default-cast="{{ default_cast_id }}">
+  <header class="animate-hero pipeline-hero">
+    <div class="animate-hero-copy">
+      <div class="animate-eyebrow">Pipeline</div>
+      <h1>Pipeline Studio</h1>
+      <p>Choose an input, configure the pipeline, and launch a full end-to-end video job.</p>
     </div>
+    <div class="animate-readiness" id="pipeline-readiness" aria-live="polite">
+      <span class="animate-status-dot" aria-hidden="true"></span>
+      <span id="pipeline-readiness-label">Checking readiness&hellip;</span>
+    </div>
+  </header>
 
-    {# ── Input mode selector ── #}
-    <div class="form-row">
-      <label>Input Mode</label>
-      <div style="display:flex;gap:12px;flex-wrap:wrap">
-        <label class="radio-label">
-          <input type="radio" name="source_kind" value="url" checked
-                 onchange="toggleSourceMode('url')"> Video URL
+  <form id="pipeline-job-form" novalidate>
+    <div class="animate-layout">
+      <div class="animate-sections">
+
+        {# ── Section 1: Cast ── #}
+        <section class="animate-section" aria-labelledby="pipeline-cast-heading">
+          <div class="animate-section-heading">
+            <span class="animate-section-number">1</span>
+            <div>
+              <h2 id="pipeline-cast-heading">Choose a cast</h2>
+              <p>Each cast has its own character LoRAs and voice profiles.</p>
+            </div>
+          </div>
+          <div class="animate-field">
+            <label for="pipeline-cast">Cast</label>
+            <select id="pipeline-cast" disabled>
+              <option value="">Loading casts&hellip;</option>
+            </select>
+            <div class="form-hint" id="pipeline-cast-capabilities"></div>
+          </div>
+        </section>
+
+        {# ── Section 2: Source material ── #}
+        <section class="animate-section" aria-labelledby="pipeline-source-heading">
+          <div class="animate-section-heading">
+            <span class="animate-section-number">2</span>
+            <div>
+              <h2 id="pipeline-source-heading">Provide source material</h2>
+              <p>Choose an input mode and provide the source content for transformation.</p>
+            </div>
+          </div>
+
+          <div class="animate-choice-grid pipeline-source-grid">
+            <label class="animate-choice-card animate-choice-card-compact">
+              <input type="radio" name="source_kind" value="url" checked>
+              <span class="animate-choice-copy">
+                <strong>Video URL</strong>
+                <small>YouTube, TikTok, Instagram</small>
+              </span>
+              <span class="animate-pill animate-pill-blue">Default</span>
+            </label>
+            <label class="animate-choice-card animate-choice-card-compact">
+              <input type="radio" name="source_kind" value="file">
+              <span class="animate-choice-copy">
+                <strong>Local File</strong>
+                <small>Server video file</small>
+              </span>
+            </label>
+            <label class="animate-choice-card animate-choice-card-compact">
+              <input type="radio" name="source_kind" value="story">
+              <span class="animate-choice-copy">
+                <strong>Story</strong>
+                <small>Text-based story</small>
+              </span>
+            </label>
+            <label class="animate-choice-card animate-choice-card-compact">
+              <input type="radio" name="source_kind" value="story_images">
+              <span class="animate-choice-copy">
+                <strong>Story + Images</strong>
+                <small>Story with character refs</small>
+              </span>
+            </label>
+            <label class="animate-choice-card animate-choice-card-compact">
+              <input type="radio" name="source_kind" value="lora_training">
+              <span class="animate-choice-copy">
+                <strong>LoRA Training</strong>
+                <small>Train cast member</small>
+              </span>
+            </label>
+          </div>
+
+          {# ── URL input panel ── #}
+          <div class="pipeline-source-panel" id="panel-url">
+            <div class="animate-field">
+              <label for="pipeline-url">Video URL</label>
+              <input type="url" id="pipeline-url" autocomplete="url"
+                     placeholder="https://www.youtube.com/watch?v=&hellip;">
+              <div class="form-hint">YouTube, TikTok, Instagram, or any yt-dlp-supported URL.</div>
+            </div>
+          </div>
+
+          {# ── Local file panel ── #}
+          <div class="pipeline-source-panel" id="panel-file" hidden>
+            <div class="animate-form-grid animate-form-grid-2">
+              <div class="animate-field">
+                <label for="pipeline-file-dir">Directory</label>
+                <div class="animate-input-action">
+                  <input type="text" id="pipeline-file-dir" style="font-family:monospace;font-size:12px"
+                         placeholder="/workspace/downloads">
+                  <button type="button" class="btn btn-outline animate-icon-button" id="pipeline-refresh-files"
+                          aria-label="Refresh file list" title="Refresh file list">&#8635;</button>
+                </div>
+                <div class="form-hint" id="pipeline-file-dir-hint"></div>
+              </div>
+              <div class="animate-field">
+                <label for="pipeline-file">Local Video</label>
+                <select id="pipeline-file">
+                  <option value="">&mdash; select a file &mdash;</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {# ── Story panel ── #}
+          <div class="pipeline-source-panel" id="panel-story" hidden>
+            <div class="animate-field">
+              <label for="pipeline-story-text">Story Text</label>
+              <textarea id="pipeline-story-text" rows="6"
+                        style="font-family:monospace;font-size:12px"
+                        placeholder="Paste your story here."></textarea>
+              <div class="form-hint">
+                Use <code>start-end: text</code> per line for precise timing,
+                or paste free text (auto-segmented by the LLM).
+              </div>
+            </div>
+          </div>
+
+          {# ── Story + Images panel ── #}
+          <div class="pipeline-source-panel" id="panel-story_images" hidden>
+            <div class="animate-field">
+              <label for="pipeline-story-images-text">Story Text</label>
+              <textarea id="pipeline-story-images-text" rows="6"
+                        style="font-family:monospace;font-size:12px"
+                        placeholder="Paste your story here."></textarea>
+            </div>
+            <div class="animate-field" style="margin-top:12px">
+              <label>Character Reference Images</label>
+              <div class="form-hint" style="margin-bottom:8px">Upload one reference image per character.</div>
+              <div id="pipeline-images-slots"></div>
+            </div>
+          </div>
+
+          {# ── LoRA Training panel ── #}
+          <div class="pipeline-source-panel" id="panel-lora_training" hidden>
+            <div class="animate-form-grid animate-form-grid-2">
+              <div class="animate-field">
+                <label for="pipeline-lora-member">Cast Member</label>
+                <select id="pipeline-lora-member"></select>
+              </div>
+              <div class="animate-field">
+                <label for="pipeline-lora-files">Training Images</label>
+                <input type="file" id="pipeline-lora-files" accept="image/png,image/jpeg,image/webp" multiple>
+                <div class="form-hint">Flux2 LoRA training queued after upload.</div>
+              </div>
+            </div>
+            <div id="pipeline-lora-caption-rows" style="margin-top:8px">
+              <div class="form-hint">Choose image files to add captions.</div>
+            </div>
+            <div class="form-hint" id="pipeline-lora-upload-status"></div>
+          </div>
+
+          <div class="animate-field-error" id="pipeline-source-error" role="alert" hidden></div>
+        </section>
+
+        {# ── Section 3: Pipeline config ── #}
+        <section class="animate-section" aria-labelledby="pipeline-config-heading">
+          <div class="animate-section-heading">
+            <span class="animate-section-number">3</span>
+            <div>
+              <h2 id="pipeline-config-heading">Configure the pipeline</h2>
+              <p>Select the pipeline phase, output language, and source language.</p>
+            </div>
+          </div>
+
+          <div class="animate-field">
+            <label for="pipeline-phase">Phase</label>
+            <select id="pipeline-phase">
+              <option value="noop">noop &mdash; smoke test only (no pipeline)</option>
+              <option value="transcribe" id="opt-transcribe">transcribe &mdash; fetch &rarr; transcribe &rarr; analyze</option>
+              <option value="script_plan" id="opt-script_plan">script + plan &mdash; adapt script &rarr; plan shots &rarr; approval</option>
+              <option value="render" id="opt-render">render &mdash; images &rarr; voice &rarr; video per shot</option>
+              <option value="assemble" id="opt-assemble">assemble &mdash; concat shots &rarr; final video</option>
+              <option value="all" selected>all &mdash; full pipeline (end-to-end)</option>
+              <option value="lora_train" id="opt-lora_train" disabled>lora train &mdash; train selected member LoRA</option>
+            </select>
+            <div class="form-hint" id="pipeline-phase-hint">Full end-to-end pipeline &mdash; all stages in sequence.</div>
+          </div>
+
+          <div class="animate-form-grid animate-form-grid-2">
+            <div class="animate-field">
+              <label for="pipeline-lang">Output Language</label>
+              <select id="pipeline-lang">
+                <option value="en" selected>English</option>
+                <option value="hi">Hindi</option>
+                <option value="both">Both (EN + HI)</option>
+              </select>
+            </div>
+            <div class="animate-field" id="pipeline-source-lang-row">
+              <label for="pipeline-whisper-lang">Source Language</label>
+              <select id="pipeline-whisper-lang">
+                <option value="auto">Auto-detect</option>
+                <option value="en" selected>English</option>
+                <option value="hi">Hindi</option>
+              </select>
+              <div class="form-hint">Auto-detect can misread music as another language.</div>
+            </div>
+          </div>
+        </section>
+
+        {# ── Section 4: Video generation ── #}
+        <section class="animate-section" aria-labelledby="pipeline-video-heading">
+          <div class="animate-section-heading">
+            <span class="animate-section-number">4</span>
+            <div>
+              <h2 id="pipeline-video-heading">Choose video generation</h2>
+              <p>Select the video model and optional lip-sync repair backend.</p>
+            </div>
+          </div>
+
+          <fieldset class="animate-fieldset">
+            <legend>Video model</legend>
+            <div class="animate-choice-grid pipeline-source-grid">
+              <label class="animate-choice-card animate-choice-card-compact">
+                <input type="radio" name="video_adapter" value="" checked>
+                <span class="animate-choice-copy">
+                  <strong>Default</strong>
+                  <small>From server config</small>
+                </span>
+                <span class="animate-pill animate-pill-blue">Default</span>
+              </label>
+              <label class="animate-choice-card animate-choice-card-compact">
+                <input type="radio" name="video_adapter" value="wan_s2v">
+                <span class="animate-choice-copy">
+                  <strong>Wan 2.2 S2V</strong>
+                  <small>Image + audio, native lip-sync</small>
+                </span>
+              </label>
+              <label class="animate-choice-card animate-choice-card-compact">
+                <input type="radio" name="video_adapter" value="wan">
+                <span class="animate-choice-copy">
+                  <strong>Wan 2.2 I2V</strong>
+                  <small>Visual motion, needs repair</small>
+                </span>
+              </label>
+              <label class="animate-choice-card animate-choice-card-compact">
+                <input type="radio" name="video_adapter" value="wan_lightx2v">
+                <span class="animate-choice-copy">
+                  <strong>LightX2V</strong>
+                  <small>Experimental fast I2V</small>
+                </span>
+              </label>
+              <label class="animate-choice-card animate-choice-card-compact">
+                <input type="radio" name="video_adapter" value="wan_animate">
+                <span class="animate-choice-copy">
+                  <strong>Wan Animate</strong>
+                  <small>Motion transfer / replace</small>
+                </span>
+              </label>
+              <label class="animate-choice-card animate-choice-card-compact">
+                <input type="radio" name="video_adapter" value="ltx">
+                <span class="animate-choice-copy">
+                  <strong>LTX-Video</strong>
+                  <small>Legacy native lip-sync</small>
+                </span>
+              </label>
+            </div>
+          </fieldset>
+
+          <div class="animate-info-strip" id="pipeline-wan-animate-bridge" hidden>
+            <span aria-hidden="true">&#8594;</span>
+            <div>
+              <strong>Wan Animate has a dedicated workspace</strong>
+              <p>Choose motion transfer or character replacement, upload the driving video, and configure in Animate Studio.</p>
+              <a href="/animate/new" class="btn btn-primary btn-sm" style="margin-top:8px">Open Animate Studio &rarr;</a>
+            </div>
+          </div>
+
+          <div class="animate-field" style="margin-top:16px">
+            <label for="pipeline-lipsync">Lip-sync Repair</label>
+            <select id="pipeline-lipsync">
+              <option value="">Default (from config)</option>
+              <option value="latentsync">LatentSync &mdash; stronger repair</option>
+              <option value="musetalk">MuseTalk &mdash; fast fallback</option>
+              <option value="none">Skip repair &mdash; no mouth-sync</option>
+            </select>
+            <div class="form-hint">Used only when the video model does not handle lip-sync natively.</div>
+          </div>
+        </section>
+
+        {# ── Section 5: Render mode and audio ── #}
+        <section class="animate-section" aria-labelledby="pipeline-render-heading">
+          <div class="animate-section-heading">
+            <span class="animate-section-number">5</span>
+            <div>
+              <h2 id="pipeline-render-heading">Set render mode and audio</h2>
+              <p>Control how dialogue is generated and whether to isolate vocals.</p>
+            </div>
+          </div>
+
+          <fieldset class="animate-fieldset">
+            <legend>Render mode</legend>
+            <div class="animate-segmented animate-segmented-3" role="radiogroup" aria-label="Render mode">
+              <label><input type="radio" name="render_mode" value="full" checked><span>Full</span></label>
+              <label><input type="radio" name="render_mode" value="source_audio"><span>Source Audio</span></label>
+              <label><input type="radio" name="render_mode" value="re_voice"><span>Re-voice</span></label>
+            </div>
+            <p class="form-hint" id="pipeline-render-hint">Full: rewrites script + generates voice. Source Audio: keeps original audio. Re-voice: TTS at original pacing.</p>
+          </fieldset>
+
+          <div class="animate-form-grid animate-form-grid-2" style="margin-top:16px">
+            <div class="animate-field">
+              <label for="pipeline-audio-profile">Audio Type</label>
+              <select id="pipeline-audio-profile">
+                <option value="auto" selected>Auto / unknown</option>
+                <option value="single_speaker">Single person talking</option>
+                <option value="singing">Singing / lyrics</option>
+                <option value="multi_speaker">Multiple people talking</option>
+              </select>
+              <div class="form-hint">Tunes transcript pass/fail checks.</div>
+            </div>
+            <div class="animate-field">
+              <label class="animate-switch-label">&nbsp;</label>
+              <label class="checkbox-row">
+                <input type="checkbox" id="pipeline-isolate-vocals" disabled>
+                <span>Isolate vocals (Demucs)</span>
+              </label>
+              <div class="form-hint">Singing only. Runs vocal/music separation before Whisper.</div>
+            </div>
+          </div>
+        </section>
+
+        {# ── Section 6: Advanced ── #}
+        <details class="animate-section animate-advanced" id="pipeline-advanced">
+          <summary>
+            <span class="animate-section-number">6</span>
+            <span><strong>Advanced controls</strong><small>Duration, cost, enhancement, and approval gates</small></span>
+            <span class="animate-chevron" aria-hidden="true">&#8964;</span>
+          </summary>
+          <div class="animate-advanced-content">
+            <div class="animate-form-grid animate-form-grid-2">
+              <div class="animate-field">
+                <label for="pipeline-max-shot-dur">Max shot duration (seconds)</label>
+                <input type="number" id="pipeline-max-shot-dur" min="2" max="10" step="0.5" value="8">
+                <div class="form-hint">Per-shot ceiling. Lower for shorter videos.</div>
+              </div>
+              <div class="animate-field">
+                <label for="pipeline-gpu-price">GPU price ($/hour)</label>
+                <input type="number" id="pipeline-gpu-price" min="0" step="0.01" value="0">
+                <div class="form-hint">Dashboard cost estimate only.</div>
+              </div>
+            </div>
+
+            <div style="margin-top:12px">
+              <label class="checkbox-row">
+                <input type="checkbox" id="pipeline-upscale">
+                <span>Upscale and smooth final video (1080&times;1920 + frame interpolation)</span>
+              </label>
+            </div>
+
+            <div style="margin-top:8px">
+              <label class="checkbox-row">
+                <input type="checkbox" id="pipeline-enhance">
+                <span>Enhance clips before assembly</span>
+              </label>
+              <select id="pipeline-enhance-adapter" style="margin-top:6px;max-width:360px">
+                <option value="ffmpeg">FFmpeg baseline</option>
+                <option value="realesrgan_rife">Real-ESRGAN + RIFE</option>
+                <option value="realesrgan_film">Real-ESRGAN + FILM</option>
+                <option value="rife">RIFE only</option>
+                <option value="film">FILM only</option>
+                <option value="latent_rife" disabled>Latent workflow + RIFE (not set up)</option>
+                <option value="latent_film" disabled>Latent workflow + FILM (not set up)</option>
+              </select>
+            </div>
+
+            <p class="animate-control-label" style="margin-top:16px">Approval gates</p>
+            <div class="form-hint" style="margin-bottom:6px">
+              Skip human review at these gates for unattended runs.
+            </div>
+            <label class="checkbox-row">
+              <input type="checkbox" id="pipeline-auto-plan">
+              <span>Skip storyboard approval</span>
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" id="pipeline-auto-images">
+              <span>Skip image approval</span>
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" id="pipeline-auto-transcript">
+              <span>Skip transcript review</span>
+            </label>
+          </div>
+        </details>
+      </div>
+
+      {# ── Sticky sidebar ── #}
+      <aside class="animate-summary" aria-labelledby="pipeline-summary-heading">
+        <div class="animate-summary-header">
+          <div>
+            <span class="animate-eyebrow">Configuration</span>
+            <h2 id="pipeline-summary-heading">Job summary</h2>
+          </div>
+          <span class="animate-pill animate-pill-amber" id="pipeline-intensity-pill">GPU intensive</span>
+        </div>
+
+        <dl class="animate-summary-list">
+          <div><dt>Cast</dt><dd id="summary-cast">Loading&hellip;</dd></div>
+          <div><dt>Input</dt><dd id="summary-input">Video URL</dd></div>
+          <div><dt>Source</dt><dd id="summary-source">Not provided</dd></div>
+          <div><dt>Phase</dt><dd id="summary-phase">Full pipeline</dd></div>
+          <div><dt>Video</dt><dd id="summary-video">Default</dd></div>
+          <div><dt>Lip-sync</dt><dd id="summary-lipsync">Default</dd></div>
+          <div><dt>Render</dt><dd id="summary-render">Full</dd></div>
+          <div><dt>Language</dt><dd id="summary-lang">English</dd></div>
+          <div><dt>Output</dt><dd id="summary-output">Standard</dd></div>
+        </dl>
+
+        <div class="animate-readiness-list" id="pipeline-readiness-list" aria-live="polite"></div>
+
+        <label class="animate-rights">
+          <input type="checkbox" id="pipeline-rights-cleared">
+          <span id="pipeline-rights-label">I confirm this source is cleared for transformative use.</span>
         </label>
-        <label class="radio-label">
-          <input type="radio" name="source_kind" value="file"
-                 onchange="toggleSourceMode('file')"> Local File
-        </label>
-        <label class="radio-label">
-          <input type="radio" name="source_kind" value="story"
-                 onchange="toggleSourceMode('story')"> Story
-        </label>
-        <label class="radio-label">
-          <input type="radio" name="source_kind" value="story_images"
-                 onchange="toggleSourceMode('story_images')"> Story + Images
-        </label>
-        <label class="radio-label">
-          <input type="radio" name="source_kind" value="lora_training"
-                 onchange="toggleSourceMode('lora_training')"> LoRA Training
-        </label>
-      </div>
-    </div>
 
-    {# ── URL input ── #}
-    <div class="form-row" id="nj-url-row">
-      <label>URL</label>
-      <input type="text" id="nj-url"
-             placeholder="https://www.youtube.com/watch?v=…">
-      <div class="form-hint">YouTube, TikTok, Instagram, or any yt-dlp-supported URL.</div>
-    </div>
-
-    {# ── Local file browser ── #}
-    <div class="form-row" id="nj-file-row" style="display:none">
-      <label>Directory</label>
-      <div style="display:flex;gap:8px;align-items:center">
-        <input type="text" id="nj-file-dir-input" style="flex:1;font-family:monospace;font-size:12px"
-               placeholder="/workspace/downloads"
-               onkeydown="if(event.key==='Enter'){event.preventDefault();loadLocalVideos();}"
-               onblur="loadLocalVideos()">
-        <button type="button" class="btn btn-outline" style="padding:4px 10px"
-                onclick="loadLocalVideos()" title="Refresh file list">&#8635;</button>
-      </div>
-      <div class="form-hint" id="nj-file-dir-hint"></div>
-
-      <label style="margin-top:10px">Local Video</label>
-      <select id="nj-file" style="width:100%">
-        <option value="">— select a file —</option>
-      </select>
-    </div>
-
-    {# ── Story textarea ── #}
-    <div class="form-row" id="nj-story-row" style="display:none">
-      <label>Story Text</label>
-      <textarea id="nj-story-text" rows="8" style="width:100%;font-family:monospace;font-size:12px"
-                placeholder="Paste your story here.&#10;&#10;Structured format (optional):&#10;0-4: Characters find a rainbow.&#10;4-8: They count the colors together.&#10;&#10;Or just paste free text — it will be auto-segmented."></textarea>
-      <div class="form-hint">
-        Use <code>start-end: text</code> per line for precise timing,
-        or paste free text (auto-segmented by the LLM).
-      </div>
-    </div>
-
-    {# ── Character image upload (story_images mode) — rebuilt dynamically by JS ── #}
-    <div class="form-row" id="nj-images-row" style="display:none">
-      <label>Character Reference Images</label>
-      <div class="form-hint" style="margin-bottom:8px">
-        Upload one reference image per character. Used for all shots.
-      </div>
-      <div id="nj-images-slots"></div>
-    </div>
-
-    {# ── LoRA training upload ── #}
-    <div class="form-row" id="nj-lora-row" style="display:none">
-      <label>Cast Member</label>
-      <select id="nj-lora-member" style="width:100%"></select>
-
-      <label style="margin-top:10px">Training Images</label>
-      <input type="file" id="nj-lora-files" accept="image/png,image/jpeg,image/webp" multiple
-             onchange="rebuildLoraCaptionRows()">
-      <div class="form-hint">
-        Images are added to the member's existing Musubi training dataset and then Flux2 LoRA training is queued.
-      </div>
-
-      <label style="margin-top:10px">Captions</label>
-      <div id="nj-lora-caption-rows"></div>
-      <div class="form-hint">
-        Optional per image. Blank captions use the cast member descriptor. Each saved image gets a same-name .txt sidecar.
-      </div>
-      <div class="form-hint" id="nj-lora-upload-status"></div>
-    </div>
-
-    {# ── Phase ── #}
-    <div class="form-row">
-      <label>Phase</label>
-      <select name="phase" id="nj-phase" onchange="updatePhaseHint(this.value)">
-        <option value="noop">noop — smoke test only (no pipeline)</option>
-        <option value="transcribe" id="opt-transcribe">transcribe — fetch &rarr; transcribe &rarr; analyze content</option>
-        <option value="script_plan" id="opt-script_plan">script + plan — adapt script &rarr; plan shots &rarr; approval</option>
-        <option value="render" id="opt-render">render — render images &rarr; voice &rarr; video per shot</option>
-        <option value="assemble" id="opt-assemble">assemble — concat shots &rarr; final video</option>
-        <option value="all" selected>all — full pipeline (end-to-end)</option>
-        <option value="lora_train" id="opt-lora_train">lora train — train selected cast member LoRA</option>
-      </select>
-      <div class="form-hint" id="phase-hint"></div>
-    </div>
-
-    {# ── Language ── #}
-    <div class="form-row">
-      <label>Output Language</label>
-      <select name="target_language" id="nj-lang">
-        <option value="en" selected>English</option>
-        <option value="hi">Hindi</option>
-        <option value="both">Both (EN + HI)</option>
-      </select>
-    </div>
-
-    <div class="form-row" id="nj-source-language-row">
-      <label>Source Language</label>
-      <select name="whisper_language" id="nj-whisper-language">
-        <option value="auto">Auto-detect</option>
-        <option value="en" selected>English</option>
-        <option value="hi">Hindi</option>
-      </select>
-      <div class="form-hint">
-        Auto-detect can misread music as another language; choose the real source language.
-      </div>
-    </div>
-
-    {# ── Render mode ── #}
-    <div class="form-row" id="nj-render-mode-row">
-      <label>Render Mode</label>
-      <select name="render_mode" id="nj-render-mode">
-        <option value="full" selected>Full — adapted script + TTS voice + video</option>
-        <option value="source_audio">Source Audio — character video + original audio (no TTS)</option>
-        <option value="re_voice">Re-voice — character video + TTS at original pacing</option>
-      </select>
-      <div class="form-hint">
-        Full: rewrites script + generates voice. Source Audio: keeps original audio.
-        Re-voice: TTS but matches original video timing.
-      </div>
-    </div>
-
-    {# ── Source audio profile ── #}
-    <div class="form-row" id="nj-audio-profile-row">
-      <label>Audio Type</label>
-      <select name="audio_profile" id="nj-audio-profile">
-        <option value="auto" selected>Auto / unknown</option>
-        <option value="single_speaker">Single person talking</option>
-        <option value="singing">Singing / lyrics</option>
-        <option value="multi_speaker">Multiple people talking</option>
-      </select>
-      <div class="form-hint">
-        Tunes transcript pass/fail checks before planning.
-      </div>
-      <label class="checkbox-row">
-        <input type="checkbox" name="whisper_isolate_vocals" id="nj-isolate-vocals" disabled>
-        <span>Isolate vocals before transcription (Demucs)</span>
-      </label>
-      <div class="form-hint" id="nj-isolate-vocals-hint">
-        Runs vocal/music separation before Whisper to improve lyric accuracy on singing content.
-        Only applies when Audio Type is "Singing / lyrics" — ignored otherwise.
-      </div>
-    </div>
-
-    {# ── Video model ── #}
-    <div class="form-row">
-      <label>Video Model</label>
-      <select name="video_adapter" id="nj-video-adapter">
-        <option value="">Default (from .env)</option>
-        <option value="wan_s2v">Wan 2.2 S2V — image + audio, native singing sync</option>
-        <option value="wan">Wan 2.2 I2V — visual motion, needs lip-sync repair</option>
-        <option value="wan_lightx2v">Wan 2.2 I2V LightX2V — experimental fastest visual motion</option>
-        <option value="wan_animate">Wan 2.2 Animate — motion transfer / character replacement</option>
-        <option value="ltx">LTX-Video 2.3 — legacy native lip-sync</option>
-      </select>
-      <div class="form-hint">Which video generation backend to use for this job only.</div>
-    </div>
-
-    <div class="form-row" id="nj-wan-animate-panel" style="display:none">
-      <div class="animate-studio-bridge">
-        <strong>Wan Animate has a dedicated workspace</strong>
-        <p>Choose motion transfer or character replacement, upload the driving video, lock a cast look, and configure audio and export controls in Animate Studio.</p>
-        <a href="/animate/new" class="btn btn-primary">Open Animate Studio &rarr;</a>
-      </div>
-    </div>
-
-    {# ── Lip-sync model ── #}
-    <div class="form-row" id="nj-lipsync-row">
-      <label>Lip-sync Repair</label>
-      <select name="lipsync_adapter" id="nj-lipsync-adapter">
-        <option value="">Default (from .env)</option>
-        <option value="latentsync">LatentSync — stronger repair for Wan I2V</option>
-        <option value="musetalk">MuseTalk — fast legacy fallback</option>
-        <option value="none">Skip repair — fastest, no mouth-sync pass</option>
-      </select>
-      <div class="form-hint">Used only when the video model does not handle lip-sync natively.</div>
-    </div>
-
-    {# ── Final video enhancement ── #}
-    <div class="form-row">
-      <label>Final Video</label>
-      <label class="checkbox-row">
-        <input type="checkbox" name="video_upscale_enabled" id="nj-video-upscale">
-        <span>Upscale and smooth final video</span>
-      </label>
-      <div class="form-hint">
-        Adds a final 1080×1920 sharp scale and frame interpolation pass after assembly.
-      </div>
-    </div>
-
-    <div class="form-row">
-      <label>Experimental Enhance</label>
-      <label class="checkbox-row">
-        <input type="checkbox" name="video_enhance_enabled" id="nj-video-enhance">
-        <span>Enhance clips before assembly</span>
-      </label>
-      <select id="nj-video-enhance-adapter" style="margin-top:6px;max-width:360px">
-        <option value="ffmpeg">FFmpeg baseline</option>
-        <option value="realesrgan_rife">Real-ESRGAN + RIFE</option>
-        <option value="realesrgan_film">Real-ESRGAN + FILM</option>
-        <option value="rife">RIFE only</option>
-        <option value="film">FILM only</option>
-        <option value="latent_rife" disabled>Latent workflow + RIFE (not set up yet)</option>
-        <option value="latent_film" disabled>Latent workflow + FILM (not set up yet)</option>
-      </select>
-      <div class="form-hint">
-        Runs the separate video_enhance pipeline only for this job. AI backends require setup_gpu.sh --with-video-enhance. Latent modes are disabled until assets/comfyui_workflows/video_enhance_latent.json exists and is validated (see docs/VIDEO_ENHANCE_PIPELINE_PLAN.md).
-      </div>
-    </div>
-
-    {# ── Max shot duration ── #}
-    <div class="form-row">
-      <label>Max shot duration (seconds)</label>
-      <input type="number" id="nj-max-shot-duration" min="2" max="10" step="0.5" value="8"
-             style="width:80px">
-      <div class="form-hint">
-        Per-shot ceiling (default 8s). Lower to keep total video shorter.
-        Each shot's duration is derived from dialogue word count, clamped to [5s, this value].
-      </div>
-    </div>
-
-    {# ── Cost estimate ── #}
-    <div class="form-row">
-      <label>GPU price ($/hour)</label>
-      <input type="number" id="nj-gpu-price" min="0" step="0.01" value="0"
-             style="width:110px">
-      <div class="form-hint">
-        Optional. Used only for dashboard cost estimates from measured stage start/end times.
-      </div>
-    </div>
-
-    {# ── Approval gates ── #}
-    <div class="form-row">
-      <label>Approval gates</label>
-      <label class="checkbox-row">
-        <input type="checkbox" name="auto_approve_plan" id="nj-auto-approve-plan">
-        <span>Skip storyboard approval (auto-approve the plan)</span>
-      </label>
-      <label class="checkbox-row">
-        <input type="checkbox" name="auto_approve_images" id="nj-auto-approve-images">
-        <span>Skip image approval (auto-accept rendered picks)</span>
-      </label>
-      <label class="checkbox-row">
-        <input type="checkbox" name="auto_approve_transcript" id="nj-auto-approve-transcript">
-        <span>Skip transcript review (story / transcribe phase)</span>
-      </label>
-      <div class="form-hint">
-        For unattended long runs: the job proceeds without waiting for human
-        review at the checked gates. Leave unchecked to review in the dashboard.
-      </div>
-    </div>
-
-    {# ── Rights ── #}
-    <div class="form-row">
-      <label class="checkbox-row">
-        <input type="checkbox" name="rights_cleared" id="nj-rights">
-        <span id="nj-rights-label">I confirm this source is cleared for transformative use</span>
-      </label>
-      <div class="form-hint">Required for any non-noop phase.</div>
-    </div>
-
-    <div id="nj-error" class="alert alert-error" style="display:none"></div>
-
-    <div class="flex gap-8 mt-16">
-      <button type="submit" class="btn btn-primary" id="nj-submit">Submit</button>
-      <a href="/" class="btn btn-outline">Cancel</a>
+        <div class="alert alert-error" id="pipeline-submit-error" role="alert" hidden></div>
+        <button type="submit" class="btn btn-primary animate-submit" id="pipeline-submit" disabled>
+          Create pipeline job
+        </button>
+        <p class="animate-submit-hint">GPU-intensive phases wait for service readiness before starting.</p>
+      </aside>
     </div>
   </form>
-</div>
+</main>
 {% endblock %}
 
 {% block scripts %}
-<script>
-const DEFAULT_CAST_ID = "{{ default_cast_id }}";
-let _castsCache = null;
-let _currentCastMembers = [];
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-async function loadCasts() {
-  try {
-    const resp = await fetch("/api/casts");
-    const data = await resp.json();
-    _castsCache = data.casts || [];
-    const sel = document.getElementById("nj-cast");
-    sel.innerHTML = _castsCache.map(c =>
-      `<option value="${c.id}"${c.id === DEFAULT_CAST_ID ? " selected" : ""}>`
-      + `${c.id} — ${c.members.map(m => m.name).join(", ")} (${c.member_count})`
-      + `</option>`
-    ).join("");
-    onCastChange(sel.value);
-  } catch (e) {
-    console.error("Failed to load casts:", e);
-  }
-}
-
-function onCastChange(castId) {
-  const cast = (_castsCache || []).find(c => c.id === castId);
-  _currentCastMembers = cast ? cast.members : [];
-  rebuildImageSlots(_currentCastMembers);
-  rebuildLoraMemberOptions(_currentCastMembers);
-  updateStoryPlaceholder(_currentCastMembers);
-}
-
-function rebuildImageSlots(members) {
-  const container = document.getElementById("nj-images-slots");
-  if (!container) return;
-  container.innerHTML = members.map(m =>
-    `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">`
-    + `<span style="min-width:60px;font-weight:600">${m.name}</span>`
-    + `<input type="file" id="nj-img-${m.id}" accept="image/png,image/jpeg,image/webp" data-member-id="${m.id}">`
-    + `<span class="form-hint" id="nj-img-status-${m.id}"></span>`
-    + `</div>`
-  ).join("");
-}
-
-function rebuildLoraMemberOptions(members) {
-  const sel = document.getElementById("nj-lora-member");
-  if (!sel) return;
-  sel.innerHTML = members.map(m =>
-    `<option value="${m.id}">${m.name} (${m.id})</option>`
-  ).join("");
-  rebuildLoraCaptionRows();
-}
-
-function loraCaptionPlaceholder() {
-  const memberId = document.getElementById("nj-lora-member")?.value || "";
-  const castId = document.getElementById("nj-cast")?.value || "";
-  const member = _currentCastMembers.find(m => m.id === memberId);
-  const name = member ? member.name : memberId || "character";
-  const trigger = memberId ? `${castId}_${memberId}`.toLowerCase() : "trigger_token";
-  return `${trigger}, ${name}, describe outfit, pose, camera angle, background, lighting`;
-}
-
-function rebuildLoraCaptionRows() {
-  const filesInput = document.getElementById("nj-lora-files");
-  const container = document.getElementById("nj-lora-caption-rows");
-  if (!filesInput || !container) return;
-  const files = Array.from(filesInput.files || []);
-  if (!files.length) {
-    container.innerHTML = '<div class="form-hint">Choose image files to add captions.</div>';
-    return;
-  }
-  const placeholder = escapeHtml(loraCaptionPlaceholder());
-  container.innerHTML = files.map((file, idx) =>
-    `<div style="border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:8px">`
-    + `<div class="td-mono" style="font-size:12px;margin-bottom:6px">${escapeHtml(file.name)}</div>`
-    + `<textarea id="nj-lora-caption-${idx}" rows="3" style="width:100%;font-family:monospace;font-size:12px"`
-    + ` placeholder="${placeholder}"></textarea>`
-    + `</div>`
-  ).join("");
-}
-
-function updateStoryPlaceholder(members) {
-  const ta = document.getElementById("nj-story-text");
-  if (!ta || !members.length) return;
-  const names = members.length > 1
-    ? members[0].name + " and " + members[1].name
-    : members[0].name;
-  ta.placeholder = "Paste your story here.\n\nStructured format (optional):\n"
-    + "0-4: " + names + " find a rainbow.\n"
-    + "4-8: They count the colors together.\n\n"
-    + "Or just paste free text — it will be auto-segmented.";
-}
-
-function updateIsolateVocalsAvailability() {
-  const audioProfileSel = document.getElementById("nj-audio-profile");
-  const cb = document.getElementById("nj-isolate-vocals");
-  if (!audioProfileSel || !cb) return;
-  const available = !audioProfileSel.disabled && audioProfileSel.value === "singing";
-  cb.disabled = !available;
-  if (!available) cb.checked = false;
-}
-
-document.addEventListener("DOMContentLoaded", () => {
-  loadCasts();
-  toggleSourceMode('url');
-  const audioProfileSel = document.getElementById("nj-audio-profile");
-  if (audioProfileSel) audioProfileSel.addEventListener("change", updateIsolateVocalsAvailability);
-  const videoAdapter = document.getElementById("nj-video-adapter");
-  if (videoAdapter) {
-    videoAdapter.addEventListener("change", updateWanAnimatePanel);
-    updateWanAnimatePanel();
-  }
-});
-
-function updateWanAnimatePanel() {
-  const enabled = document.getElementById("nj-video-adapter").value === "wan_animate";
-  document.getElementById("nj-wan-animate-panel").style.display = enabled ? "" : "none";
-  const submit = document.getElementById("nj-submit");
-  if (submit) submit.textContent = enabled ? "Open Animate Studio" : "Submit";
-}
-
-const PHASE_HINTS = {
-  "noop":        "Runs a mock pipeline in-memory — no services needed.",
-  "transcribe":  "Downloads the video, transcribes audio, and analyzes content.",
-  "script_plan": "Adapts the transcript into a script, plans shots. Needs completed transcribe.",
-  "render":      "Renders character images, synthesizes voice, generates video per shot.",
-  "assemble":    "Concatenates rendered shots into a final video and publishes.",
-  "all":         "Full end-to-end pipeline — all stages in sequence.",
-  "lora_train":  "Uploads training image(s), then launches kohya Flux LoRA training for one cast member.",
-};
-
-function updatePhaseHint(phase) {
-  const el = document.getElementById("phase-hint");
-  if (el) el.textContent = PHASE_HINTS[phase] || "";
-}
-
-const STORY_MODES = new Set(["story", "story_images"]);
-const RESTRICTED_PHASES = new Set(["script_plan", "render", "assemble"]);
-
-function toggleSourceMode(mode) {
-  document.getElementById("nj-url-row").style.display = mode === "url" ? "" : "none";
-  document.getElementById("nj-file-row").style.display = mode === "file" ? "" : "none";
-  document.getElementById("nj-story-row").style.display =
-    (mode === "story" || mode === "story_images") ? "" : "none";
-  document.getElementById("nj-images-row").style.display =
-    mode === "story_images" ? "" : "none";
-  document.getElementById("nj-lora-row").style.display =
-    mode === "lora_training" ? "" : "none";
-
-  // Restrict phase options for story modes.
-  const isStory = STORY_MODES.has(mode);
-  const isLora = mode === "lora_training";
-  RESTRICTED_PHASES.forEach(p => {
-    const opt = document.getElementById("opt-" + p);
-    if (opt) opt.disabled = isStory || isLora;
-  });
-  ["noop", "transcribe", "all"].forEach(p => {
-    const opt = document.querySelector(`#nj-phase option[value="${p}"]`);
-    if (opt) opt.disabled = isLora && p !== "noop";
-  });
-  const loraOpt = document.getElementById("opt-lora_train");
-  if (loraOpt) loraOpt.disabled = !isLora;
-  const transcribeOpt = document.getElementById("opt-transcribe");
-  if (transcribeOpt) {
-    transcribeOpt.textContent = isStory
-      ? "transcribe — analyze story (review segmentation)"
-      : "transcribe — fetch → transcribe → analyze content";
-  }
-  // If current selection is a restricted phase, switch to 'all'.
-  const sel = document.getElementById("nj-phase");
-  if (isLora) sel.value = "lora_train";
-  if (isStory && RESTRICTED_PHASES.has(sel.value)) sel.value = "all";
-  if (!isLora && sel.value === "lora_train") sel.value = "all";
-  updatePhaseHint(sel.value);
-
-  // Disable source_audio/re_voice for modes without real audio.
-  const noSourceAudio = isStory || isLora;
-  const rmSel = document.getElementById("nj-render-mode");
-  rmSel.querySelectorAll("option").forEach(opt => {
-    opt.disabled = noSourceAudio && opt.value !== "full";
-  });
-  if (noSourceAudio && rmSel.value !== "full") rmSel.value = "full";
-  const audioProfileSel = document.getElementById("nj-audio-profile");
-  if (audioProfileSel) {
-    audioProfileSel.disabled = noSourceAudio;
-    if (noSourceAudio) audioProfileSel.value = "auto";
-  }
-  updateIsolateVocalsAvailability();
-  const sourceLangSel = document.getElementById("nj-whisper-language");
-  if (sourceLangSel) {
-    sourceLangSel.disabled = noSourceAudio;
-    if (noSourceAudio) sourceLangSel.value = "auto";
-  }
-
-  // Update rights checkbox label.
-  const label = document.getElementById("nj-rights-label");
-  if (label) {
-    label.textContent = isLora
-      ? "I confirm I own/have rights to these training images"
-      : isStory
-      ? "I confirm I own/have rights to this story and images"
-      : "I confirm this source is cleared for transformative use";
-  }
-  if (mode === "file") loadLocalVideos();
-}
-
-async function loadLocalVideos() {
-  const sel = document.getElementById("nj-file");
-  const hint = document.getElementById("nj-file-dir-hint");
-  const dirInput = document.getElementById("nj-file-dir-input");
-  const customDir = dirInput.value.trim();
-  const url = customDir ? "/api/local-videos?dir=" + encodeURIComponent(customDir) : "/api/local-videos";
-  sel.innerHTML = '<option value="">Loading…</option>';
-  try {
-    const resp = await fetch(url);
-    const data = await resp.json();
-    if (!customDir) dirInput.value = data.dir;
-    if (data.error) {
-      hint.textContent = data.error;
-      hint.style.color = "var(--color-error, #e53e3e)";
-      sel.innerHTML = '<option value="">—</option>';
-      return;
-    }
-    hint.textContent = data.videos.length + " video(s) found";
-    hint.style.color = "";
-    if (!data.videos.length) {
-      sel.innerHTML = '<option value="">No video files found</option>';
-      return;
-    }
-    sel.innerHTML = '<option value="">— select a file —</option>' +
-      data.videos.map(v =>
-        `<option value="${v.uri}">${v.name} (${v.size_mb} MB)</option>`
-      ).join("");
-  } catch (e) {
-    sel.innerHTML = '<option value="">Error loading files</option>';
-    hint.textContent = e.message;
-    hint.style.color = "var(--color-error, #e53e3e)";
-  }
-}
-
-async function uploadCharacterImage(memberId) {
-  const input = document.getElementById("nj-img-" + memberId);
-  if (!input || !input.files.length) return null;
-  const formData = new FormData();
-  formData.append("member_id", memberId);
-  formData.append("file", input.files[0]);
-  const castSel = document.getElementById("nj-cast");
-  if (castSel && castSel.value) formData.append("cast_ref", castSel.value);
-  const resp = await fetch("/api/uploads/character-image", { method: "POST", body: formData });
-  if (!resp.ok) {
-    const data = await resp.json();
-    throw new Error(data.detail?.message || "Upload failed for " + memberId);
-  }
-  const data = await resp.json();
-  document.getElementById("nj-img-status-" + memberId).textContent = "✓";
-  return { member_id: memberId, path: data.path };
-}
-
-async function uploadLoraTrainingImage(memberId, file, caption) {
-  const formData = new FormData();
-  formData.append("member_id", memberId);
-  formData.append("file", file);
-  if (caption) formData.append("caption", caption);
-  const castSel = document.getElementById("nj-cast");
-  if (castSel && castSel.value) formData.append("cast_ref", castSel.value);
-  const resp = await fetch("/api/uploads/lora-training-image", { method: "POST", body: formData });
-  if (!resp.ok) {
-    const data = await resp.json();
-    throw new Error(data.detail?.message || "LoRA image upload failed");
-  }
-  const data = await resp.json();
-  return data.path;
-}
-
-async function submitNewJob(e) {
-  e.preventDefault();
-  const errEl = document.getElementById("nj-error");
-  errEl.style.display = "none";
-  const btn = document.getElementById("nj-submit");
-  btn.disabled = true;
-  btn.textContent = "Submitting…";
-
-  try {
-    if (document.getElementById("nj-video-adapter").value === "wan_animate") {
-      window.location.assign("/animate/new");
-      return;
-    }
-    const sourceKind = document.querySelector('input[name="source_kind"]:checked').value;
-    let sourceUrl = "";
-    let storyText = null;
-    const characterImages = {};
-    let loraTraining = null;
-
-    if (sourceKind === "url") {
-      sourceUrl = document.getElementById("nj-url").value.trim();
-      if (!sourceUrl) throw new Error("Source URL is required.");
-    } else if (sourceKind === "file") {
-      sourceUrl = document.getElementById("nj-file").value;
-      if (!sourceUrl) throw new Error("Select a local video file.");
-    } else if (sourceKind === "story" || sourceKind === "story_images") {
-      storyText = document.getElementById("nj-story-text").value.trim();
-      if (!storyText) throw new Error("Story text is required.");
-    } else if (sourceKind === "lora_training") {
-      const memberId = document.getElementById("nj-lora-member").value;
-      const files = Array.from(document.getElementById("nj-lora-files").files || []);
-      if (!memberId) throw new Error("Select a cast member.");
-      if (!files.length) throw new Error("Choose at least one LoRA training image.");
-      const statusEl = document.getElementById("nj-lora-upload-status");
-      const paths = [];
-      for (let i = 0; i < files.length; i++) {
-        statusEl.textContent = `Uploading ${i + 1}/${files.length}…`;
-        const caption = document.getElementById(`nj-lora-caption-${i}`)?.value.trim() || "";
-        paths.push(await uploadLoraTrainingImage(memberId, files[i], caption));
-      }
-      statusEl.textContent = `${paths.length} image(s) staged.`;
-      sourceUrl = "lora-training://dashboard-upload";
-      loraTraining = { cast_member_id: memberId, image_paths: paths };
-    }
-
-    if (sourceKind === "story_images") {
-      const inputs = document.querySelectorAll("#nj-images-row input[type=file]");
-      let hasAny = false;
-      for (const inp of inputs) {
-        if (inp.files.length) {
-          const result = await uploadCharacterImage(inp.dataset.memberId);
-          if (result) {
-            characterImages[result.member_id] = result.path;
-            hasAny = true;
-          }
-        }
-      }
-      if (!hasAny) throw new Error("Upload at least one character image.");
-    }
-
-    const videoAdapter = document.getElementById("nj-video-adapter").value;
-    const lipsyncAdapter = document.getElementById("nj-lipsync-adapter").value;
-    const whisperLanguage = document.getElementById("nj-whisper-language").value;
-    const hasRealAudio = !(sourceKind === "story" || sourceKind === "story_images" || sourceKind === "lora_training");
-    const maxShotDur = parseFloat(document.getElementById("nj-max-shot-duration").value);
-    const gpuPrice = parseFloat(document.getElementById("nj-gpu-price").value);
-    const castSel = document.getElementById("nj-cast");
-    const overrides = {};
-    if (videoAdapter) overrides.video_adapter = videoAdapter;
-    if (lipsyncAdapter) overrides.lipsync_adapter = lipsyncAdapter;
-    overrides.video_upscale_enabled = document.getElementById("nj-video-upscale").checked;
-    overrides.video_enhance_enabled = document.getElementById("nj-video-enhance").checked;
-    overrides.video_enhance_adapter = document.getElementById("nj-video-enhance-adapter").value;
-    if (hasRealAudio && whisperLanguage) overrides.whisper_language = whisperLanguage;
-    const isolateVocalsCb = document.getElementById("nj-isolate-vocals");
-    if (isolateVocalsCb && !isolateVocalsCb.disabled && isolateVocalsCb.checked) {
-      overrides.whisper_isolate_vocals = true;
-    }
-    if (maxShotDur && maxShotDur !== 8) overrides.max_shot_duration_sec = maxShotDur;
-    if (document.getElementById("nj-auto-approve-plan").checked) overrides.auto_approve_plan = true;
-    if (document.getElementById("nj-auto-approve-images").checked) overrides.auto_approve_images = true;
-    if (document.getElementById("nj-auto-approve-transcript").checked) overrides.auto_approve_transcript = true;
-    const renderMode = document.getElementById("nj-render-mode").value;
-    const audioProfile = document.getElementById("nj-audio-profile").value;
-    const body = {
-      source: { kind: sourceKind, url: sourceUrl },
-      rights_cleared: document.getElementById("nj-rights").checked,
-      target_language: document.getElementById("nj-lang").value,
-      phase: document.getElementById("nj-phase").value,
-      render_mode: renderMode,
-      audio_profile: audioProfile,
-      gpu_price_per_hour: Number.isFinite(gpuPrice) ? gpuPrice : 0,
-      overrides,
-    };
-    if (castSel && castSel.value) body.cast_ref = castSel.value;
-    if (storyText) body.story_text = storyText;
-    if (Object.keys(characterImages).length) body.character_images = characterImages;
-    if (loraTraining) body.lora_training = loraTraining;
-
-    const res = await fetch("/api/jobs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      let msg;
-      if (Array.isArray(data.detail)) {
-        msg = data.detail.map(e => {
-          const field = e.loc ? e.loc.slice(1).join(".") : "";
-          return field ? `${field}: ${e.msg}` : e.msg;
-        }).join("\n");
-      } else {
-        msg = data.detail?.message || JSON.stringify(data.detail) || "Unknown error";
-      }
-      throw new Error(msg);
-    }
-    window.location.href = "/jobs/" + data.job_id;
-  } catch (err) {
-    errEl.textContent = err.message;
-    errEl.style.display = "block";
-    btn.disabled = false;
-    btn.textContent = "Submit";
-  }
-}
-</script>
+<script src="/static/pipeline.js?v=1" defer></script>
 {% endblock %}

@@ -932,8 +932,10 @@ def create_app(
             return False, model_reason
         return True, "Wan Animate is installed; its deferred-loading service starts on demand."
 
-    def _http_service_readiness(base_url: str, label: str) -> dict[str, Any]:
-        url = f"{base_url.rstrip('/')}/health"
+    def _http_service_readiness(
+        base_url: str, label: str, *, path: str = "/health",
+    ) -> dict[str, Any]:
+        url = f"{base_url.rstrip('/')}{path}"
         try:
             request = urllib.request.Request(url, method="GET")
             with urllib.request.urlopen(request, timeout=0.75) as response:
@@ -991,6 +993,67 @@ def create_app(
                 },
                 "limits": {
                     "max_driver_range_sec": WAN_ANIMATE_MAX_DRIVER_RANGE_SEC,
+                },
+            }
+        )
+
+    @app.get("/api/pipeline/options")
+    def pipeline_options() -> dict[str, Any]:
+        """Return casts, default adapters, and readiness for all pipeline backends."""
+        import concurrent.futures
+
+        s = config.settings
+
+        def _probe(label: str, base_url: str, *, path: str = "/health") -> tuple[str, dict[str, Any]]:
+            return label, _http_service_readiness(base_url, label, path=path)
+
+        probes = [
+            ("ollama", s.llm_base_url.replace("/v1", ""), "/api/tags"),
+            ("wan_s2v", s.wan_s2v_base_url, "/health"),
+            ("wan", s.wan_base_url, "/health"),
+            ("wan_lightx2v", s.wan_lightx2v_base_url, "/health"),
+            ("wan_animate", s.wan_animate_base_url, "/health"),
+            ("fish_s2", s.fish_s2_base_url, "/health"),
+            ("chatterbox", s.tts_base_url, "/health"),
+            ("latentsync", s.latentsync_base_url, "/health"),
+            ("musetalk", s.musetalk_base_url, "/health"),
+        ]
+        readiness_results: dict[str, dict[str, Any]] = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(probes)) as pool:
+            futures = {
+                pool.submit(_probe, key, url, path=p): key
+                for key, url, p in probes
+            }
+            for fut in concurrent.futures.as_completed(futures):
+                key, result = fut.result()
+                readiness_results[key] = result
+
+        return _base_response(
+            {
+                "casts": _animate_cast_catalog(),
+                "default": config.cast.id,
+                "defaults": {
+                    "cast_ref": config.cast.id,
+                    "video_adapter": s.video_adapter,
+                    "tts_adapter": s.tts_adapter,
+                    "lipsync_adapter": s.lipsync_adapter,
+                },
+                "readiness": {
+                    "ollama": readiness_results.get("ollama", {"ready": False, "reason": "Not probed"}),
+                    "video": {
+                        "wan_s2v": readiness_results.get("wan_s2v", {"ready": False, "reason": "Not probed"}),
+                        "wan": readiness_results.get("wan", {"ready": False, "reason": "Not probed"}),
+                        "wan_lightx2v": readiness_results.get("wan_lightx2v", {"ready": False, "reason": "Not probed"}),
+                        "wan_animate": readiness_results.get("wan_animate", {"ready": False, "reason": "Not probed"}),
+                    },
+                    "tts": {
+                        "fish_s2": readiness_results.get("fish_s2", {"ready": False, "reason": "Not probed"}),
+                        "chatterbox": readiness_results.get("chatterbox", {"ready": False, "reason": "Not probed"}),
+                    },
+                    "lipsync": {
+                        "latentsync": readiness_results.get("latentsync", {"ready": False, "reason": "Not probed"}),
+                        "musetalk": readiness_results.get("musetalk", {"ready": False, "reason": "Not probed"}),
+                    },
                 },
             }
         )
