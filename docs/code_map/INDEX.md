@@ -9,6 +9,7 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 ## core/
 
 - `core/__init__.py` — Core orchestration package for video_me.
+- `core/animate_workflow.py` — Direct Wan 2.2 Animate orchestration for dashboard Animate Studio jobs.
 - `core/capabilities/__init__.py` — Capability contracts used by adapters.
 - `core/capabilities/base.py` — (no module docstring)
 - `core/cast_params.py` — Per-cast asset + render params, loaded from config/casts/<cast>/params.py.
@@ -27,6 +28,7 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `core/registry.py` — (no module docstring)
 - `core/router.py` — (no module docstring)
 - `core/storage.py` — (no module docstring)
+- `core/wan_animate_readiness.py` — Pure filesystem readiness checks shared by Animate API and worker code.
 - `core/workflow.py` — (no module docstring)
 
 ## adapters/
@@ -90,6 +92,8 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `services/chat_service.py` — Pipeline Assistant chat service.
 - `services/chatterbox_server.py` — Chatterbox TTS HTTP service wrapper.
 - `services/dashboard_api.py` — (no module docstring)
+- `services/dashboard_assets.py` — Opaque, durable media assets for dashboard jobs.
+- `services/dashboard_media.py` — Safe media ingestion helpers for dashboard-owned opaque assets.
 - `services/dashboard_repository.py` — (no module docstring)
 - `services/dashboard_worker.py` — Dashboard worker — claims queued jobs, runs the pipeline, emits events.
 - `services/fish_s2_server.py` — Fish Audio S2 TTS HTTP service wrapper.
@@ -123,19 +127,25 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `tests/test_adapt_script.py` — (no module docstring)
 - `tests/test_analyze_content.py` — (no module docstring)
 - `tests/test_analyze_visuals.py` — Tests for VlmAnalyzeVisualsAdapter (source-video setting extraction).
+- `tests/test_animate_workflow.py` — (no module docstring)
 - `tests/test_assemble_video.py` — (no module docstring)
 - `tests/test_cast_data_flow.py` — End-to-end cast data-flow tests.
 - `tests/test_cast_params.py` — Tests for per-cast params loading (config/casts/<cast>/params.py).
 - `tests/test_code_map.py` — Freshness guard for docs/code_map/.
 - `tests/test_comfyui_flux_adapter.py` — Unit tests for ComfyUIFluxAdapter's VRAM lifecycle (ComfyUIUnloadMixin).
 - `tests/test_critique.py` — (no module docstring)
+- `tests/test_dashboard_animate_api.py` — Focused integration coverage for the dashboard's direct Animate API.
+- `tests/test_dashboard_animate_models.py` — Versioning and cross-field validation for direct Wan Animate jobs.
 - `tests/test_dashboard_api_helpers.py` — Unit tests for the module-level job-page helpers in services/dashboard_api.py.
+- `tests/test_dashboard_assets.py` — Security and lifecycle tests for the dashboard opaque asset store.
 - `tests/test_dashboard_bulk_actions.py` — Tests for POST /api/jobs/bulk-cancel and /api/jobs/bulk-delete.
+- `tests/test_dashboard_media.py` — (no module docstring)
 - `tests/test_dashboard_models.py` — Validation tests for the story/story_images additions to core/models/dashboard.py.
 - `tests/test_dashboard_repository.py` — (no module docstring)
 - `tests/test_dashboard_retry.py` — Tests for POST /api/jobs/{job_id}/retry — retryable statuses + overrides.
 - `tests/test_dashboard_static.py` — (no module docstring)
 - `tests/test_dashboard_worker.py` — Tests for DashboardWorker (D3).
+- `tests/test_dashboard_worker_animate_direct.py` — (no module docstring)
 - `tests/test_executor.py` — (no module docstring)
 - `tests/test_fetch_media.py` — (no module docstring)
 - `tests/test_fish_s2_adapter.py` — (no module docstring)
@@ -144,8 +154,10 @@ Detail pages: [core.md](core.md), [adapters.md](adapters.md), [services.md](serv
 - `tests/test_gpu_status.py` — (no module docstring)
 - `tests/test_gpu_watermarks.py` — (no module docstring)
 - `tests/test_latentsync_adapter.py` — (no module docstring)
+- `tests/test_latentsync_server.py` — (no module docstring)
 - `tests/test_lip_sync.py` — (no module docstring)
 - `tests/test_ltx_render.py` — Unit tests for LtxAdapter prompt/workflow building (no ComfyUI calls).
+- `tests/test_musetalk_server.py` — (no module docstring)
 - `tests/test_musubi_render.py` — Unit tests for MusubiFluxAdapter param-driven behavior (no subprocess).
 - `tests/test_phase0_models.py` — (no module docstring)
 - `tests/test_phase0_workflow.py` — (no module docstring)

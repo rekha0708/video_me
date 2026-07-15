@@ -234,10 +234,11 @@ class DashboardRepository:
         request: CreateDashboardJobRequest,
         *,
         priority: int = 100,
+        job_id: str | None = None,
     ) -> tuple[DashboardJobRecord, DashboardQueueItem]:
         now = utc_now()
         job = DashboardJobRecord(
-            job_id=make_dashboard_job_id(),
+            job_id=job_id or make_dashboard_job_id(),
             source_url=request.source.url,
             source_kind=request.source.kind,
             status=DashboardJobStatus.QUEUED,

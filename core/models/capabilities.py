@@ -144,6 +144,16 @@ class RenderCharacterRequest(BaseModel):
     # Appended to the render prompt ("" → adapter's cartoon-style default, kept
     # for the original kids_duo cast; photorealistic casts should set this).
     style_suffix: str = ""
+    # FLUX.2 image-edit conditioning. The first image should normally be the
+    # approved/base cast identity reference, followed by clothing/complete-look
+    # references. Renderers without image-edit support must reject, not ignore,
+    # these inputs so the dashboard never promises a transfer it did not run.
+    control_image_uris: list[str] = Field(default_factory=list)
+    negative_prompt: str = ""
+    # A caller may reduce candidate count for an intermediate render that is
+    # never presented for approval (for example Animate's identity base). None
+    # keeps the adapter-level candidate count used by normal approval flows.
+    num_images: int | None = Field(default=None, ge=1, le=10)
 
 
 class ImageSet(BaseModel):

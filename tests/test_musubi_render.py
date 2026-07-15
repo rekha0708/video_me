@@ -27,6 +27,9 @@ def _req(tmp_path: Path, **kwargs) -> RenderCharacterRequest:
         lora_file=kwargs.get("lora_file", ""),
         trigger=kwargs.get("trigger", ""),
         style_suffix=kwargs.get("style_suffix", ""),
+        control_image_uris=kwargs.get("control_image_uris", []),
+        negative_prompt=kwargs.get("negative_prompt", ""),
+        num_images=kwargs.get("num_images"),
     )
 
 
@@ -198,6 +201,25 @@ async def test_run_batches_all_candidates_into_one_subprocess(
 
 
 @pytest.mark.asyncio
+async def test_request_can_reduce_intermediate_candidate_count(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _real_lora(tmp_path)
+    adapter = MusubiFluxAdapter(
+        work_dir=tmp_path / "renders", lora_dir=tmp_path / "loras", num_images=3
+    )
+    calls: list[list[str]] = []
+    _install_fake_subprocess(monkeypatch, calls)
+
+    result = await adapter.run(_req(tmp_path, num_images=1))
+
+    assert len(calls) == 1
+    assert result.images == [
+        str(tmp_path / "renders" / "s01" / "max" / "render_00.png")
+    ]
+
+
+@pytest.mark.asyncio
 async def test_run_many_prompt_lines_have_unique_seeds_and_params(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -268,6 +290,72 @@ def test_sanitize_prompt_line_strips_newlines_and_dashes() -> None:
     assert "\n" not in out
     assert "--" not in out
     assert "boy in shirt , in kitchen" in out
+
+
+@pytest.mark.asyncio
+async def test_flux2_edit_writes_each_reference_to_batch_prompt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _real_lora(tmp_path)
+    identity = tmp_path / "identity.png"
+    garment = tmp_path / "garment.png"
+    identity.write_bytes(b"png")
+    garment.write_bytes(b"png")
+    adapter = MusubiFluxAdapter(
+        work_dir=tmp_path / "renders",
+        lora_dir=tmp_path / "loras",
+        num_images=1,
+        enable_image_edit=True,
+    )
+    captured: dict[str, str] = {}
+
+    async def fake_exec(*cmd, **_kwargs):
+        cmd = list(cmd)
+        prompts_file = Path(cmd[cmd.index("--from_file") + 1])
+        captured["prompts"] = prompts_file.read_text()
+        save_path = Path(cmd[cmd.index("--save_path") + 1])
+        (save_path / "20990101-000000-000_0__000.png").write_bytes(b"png")
+        return _FakeProc()
+
+    import adapters.render_character.musubi_flux_adapter as mod
+    monkeypatch.setattr(mod.asyncio, "create_subprocess_exec", fake_exec)
+
+    await adapter.run(
+        _req(
+            tmp_path,
+            control_image_uris=[str(identity), f"file://{garment}"],
+            negative_prompt="no hat -- unsafe option",
+        )
+    )
+
+    line = captured["prompts"].strip()
+    assert f" --ci {identity.resolve()}" in line
+    assert f" --ci {garment.resolve()}" in line
+    assert " --n no hat — unsafe option" in line
+
+
+def test_flux2_edit_rejects_references_until_feature_enabled(tmp_path: Path) -> None:
+    reference = tmp_path / "garment.png"
+    reference.write_bytes(b"png")
+    adapter = _adapter(tmp_path)
+
+    with pytest.raises(RuntimeError, match="FLUX.2 reference-image editing is disabled"):
+        adapter._resolve_control_images(
+            _req(tmp_path, control_image_uris=[str(reference)])
+        )
+
+
+def test_flux2_edit_rejects_remote_reference(tmp_path: Path) -> None:
+    adapter = MusubiFluxAdapter(
+        work_dir=tmp_path / "renders",
+        lora_dir=tmp_path / "loras",
+        enable_image_edit=True,
+    )
+
+    with pytest.raises(ValueError, match="local file"):
+        adapter._resolve_control_images(
+            _req(tmp_path, control_image_uris=["https://example.com/garment.png"])
+        )
 
 
 @pytest.mark.asyncio

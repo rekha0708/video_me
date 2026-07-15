@@ -7,6 +7,64 @@
 Core orchestration package for video_me.
 
 
+### `core/animate_workflow.py`
+
+Direct Wan 2.2 Animate orchestration for dashboard Animate Studio jobs.
+
+- **class `AssetResolver(Protocol)`**
+  - `__call__(self, asset_id: str, expected_kind: str) -> Any`
+- **class `ResolvedAnimateAsset`**
+- **class `AnimateWorkflowDependencies`** — Adapters and services used by one direct Animate job.
+- **class `AnimateWorkflowResult(BaseModel)`**
+- `_utc_now() -> str`
+- `_dump(value: Any) -> Any`
+- `_fingerprint(payload: Any) -> str`
+- `_sha256_file(path: Path) -> str`
+- `_directory_revision(path: Path) -> dict[str, Any]` — Cheap revision token for large model trees without hashing 72 GB of weights.
+- `_file_revision(path: Path, *, hash_limit: int=2 * 1024 * 1024) -> dict[str, Any]` — Return a stable identity for a file without hashing multi-GB checkpoints.
+- `_settings_snapshot(settings: Any, names: tuple[str, ...]) -> dict[str, Any]` — Capture only semantic settings; omit process state and absent settings.
+- `_adapter_snapshot(adapter: Any | None, attributes: tuple[str, ...]) -> dict[str, Any] | None` — Describe adapter implementation and immutable construction parameters.
+- `_render_snapshot(adapter: Any | None) -> dict[str, Any] | None`
+- `_video_snapshot(adapter: Any | None) -> dict[str, Any] | None`
+- `_transcriber_snapshot(adapter: Any | None) -> dict[str, Any] | None`
+- `_voice_snapshot(adapter: Any | None) -> dict[str, Any] | None`
+- `_lipsync_snapshot(adapter: Any | None) -> dict[str, Any] | None`
+- `_stable_wan_health(payload: dict[str, Any]) -> dict[str, Any]` — Keep service identity/capabilities while excluding live load-state fields.
+- `_wan_runtime_revisions() -> dict[str, Any]` — Fingerprint the local service code that executes cached Wan stages.
+- `_fallback_lora_path(member: Any, lora_dir: Path) -> Path | None`
+- `async _character_provenance(options: Any, config: Any, deps: 'AnimateWorkflowDependencies') -> dict[str, Any]`
+- `async _voice_provenance(options: Any, config: Any) -> dict[str, Any] | None`
+- `async _asset_sha(asset: ResolvedAnimateAsset) -> str`
+- `_manifest_path(work_dir: Path, stage_name: str) -> Path`
+- `_read_manifest(work_dir: Path, stage_name: str, fingerprint: str) -> dict[str, Any] | None`
+- `_write_manifest(work_dir: Path, stage_name: str, fingerprint: str, inputs: Any, outputs: dict[str, Path], *, metadata: dict[str, Any] | None=None) -> dict[str, Any]`
+- `_notify(hook: Callable[..., None] | None, stage_name: str, event_type: str, message: str) -> None`
+- `async _run_visible_stage(stage_name: str, message: str, hook: Callable[..., None] | None, operation: Callable[[], Awaitable[Any]]) -> Any`
+- `async _maybe_await(value: Any) -> Any`
+- `_record_value(record: Any, *names: str, default: Any=None) -> Any`
+- `async _resolve_asset(resolver: AssetResolver, asset_id: str, expected_kind: str) -> ResolvedAnimateAsset`
+- `async _wan_health_payload(base_url: str) -> dict[str, Any] | None`
+- `async ensure_wan_animate_process_running(settings: Any, *, notify: Callable[..., None] | None=None, poll_sec: float=2.0, timeout_sec: float | None=None) -> dict[str, Any]` — Ensure the lightweight deferred-loading service is reachable.
+- `_validate_wan_health(payload: dict[str, Any], *, expected_model_dir: str | Path | None=None) -> None`
+- `async cleanup_wan_animate_processes(*, kill_service: bool=False) -> None` — Best-effort cancellation cleanup for subprocesses that outlive awaiters.
+- `_default_asset_resolver(asset_store: Any, *, job_id: str) -> AssetResolver`
+- `build_default_dependencies(*, config: Any, job_id: str, asset_store: Any, options: Any, image_approval: Any | None, stage_hook: Callable[..., None] | None) -> AnimateWorkflowDependencies` — Build production adapters while keeping the direct workflow injectable.
+- `async _probe_media(path: Path, ffprobe_bin: str) -> dict[str, Any]`
+- `_selected_range(driver: Any, duration_sec: float) -> tuple[float, float]`
+- `_complete_look_change_targets(wardrobe: Any | None) -> list[str]` — Return a stable, backwards-compatible scope for the requested edit.
+- `_wardrobe_prompt(wardrobe: Any | None) -> str`
+- `async _approve_candidates(candidates: list[str], *, member: Any, cast_id: str, approval: Any, wardrobe_prompt: str) -> str`
+- `async _render_canonical_look(options: Any, config: Any, deps: AnimateWorkflowDependencies, work_dir: Path) -> Path`
+- `async _extract_audio(source: Path, output: Path, start_sec: float, end_sec: float, ffmpeg_bin: str) -> Path`
+- `async _make_silence(path: Path, duration: float, ffmpeg_bin: str) -> None`
+- `async _concat_audio(parts: list[Path], output: Path, duration: float, ffmpeg_bin: str) -> None`
+- `async _build_cast_voice(source_audio: Path, duration_sec: float, options: Any, config: Any, deps: AnimateWorkflowDependencies, work_dir: Path) -> Path`
+- `async _mux_audio(video: Path, audio: Path, output: Path, ffmpeg_bin: str) -> Path`
+- `async _export_video(source: Path, output: Path, output_options: Any, ffmpeg_bin: str) -> Path`
+- `async _probe_duration(path: Path, ffprobe_bin: str) -> float`
+- `_assert_duration_close(stage: str, actual_sec: float, expected_sec: float, tolerance_sec: float) -> None`
+- `async run_wan_animate_direct_job(request: Any, app_config: Any, job_id: str, *, asset_store: Any | None=None, image_approval: Any | None=None, stage_hook: Callable[..., None] | None=None, dependencies: AnimateWorkflowDependencies | None=None) -> AnimateWorkflowResult` — Run one versioned direct Animate job with semantic stage caching.
+
 ### `core/capabilities/__init__.py`
 
 Capability contracts used by adapters.
@@ -163,10 +221,36 @@ Shared Pydantic models for orchestration.
 - **class `DashboardApprovalKind(StrEnum)`**
 - **class `DashboardApprovalStatus(StrEnum)`**
 - **class `DashboardArtifactKind(StrEnum)`**
+- **class `DashboardAssetKind(StrEnum)`** — Media types accepted by the dashboard's opaque asset layer.
+- **class `DashboardAssetStatus(StrEnum)`** — Lifecycle of a media asset before and after a job claims it.
 - **class `DashboardSource(BaseModel)`**
   - `_require_url_for_media_kinds(self) -> 'DashboardSource'`
 - **class `DashboardJobOverrides(BaseModel)`**
 - **class `LoraTrainingRequest(BaseModel)`**
+- **class `AnimateDriverInput(BaseModel)`** — The already-ingested driving video and optional selected range.
+  - `_validate_range_and_subject(self) -> 'AnimateDriverInput'`
+- **class `WardrobeSpec(BaseModel)`** — Complete-look controls for a FLUX.2 LoRA render or reference edit.
+  - `_clean_styling_items(cls, values: list[str]) -> list[str]`
+  - `_deduplicate_change_targets(cls, values: list[AnimateStylingTarget]) -> list[AnimateStylingTarget]`
+  - `_validate_asset_ids(cls, values: list[str]) -> list[str]`
+  - `_validate_reference_scope(self) -> 'WardrobeSpec'`
+  - `has_direction(self) -> bool`
+- **class `AnimateCharacterOptions(BaseModel)`**
+  - `_strip_optional_identifiers(cls, value: str | None) -> str | None`
+  - `_validate_look_source(self) -> 'AnimateCharacterOptions'`
+- **class `AnimateAudioOptions(BaseModel)`**
+  - `_strip_voice_member_id(cls, value: str | None) -> str | None`
+  - `_validate_voice(self) -> 'AnimateAudioOptions'`
+- **class `AnimateLipSyncOptions(BaseModel)`**
+- **class `AnimateOutputOptions(BaseModel)`**
+- **class `AnimateAdvancedOptions(BaseModel)`** — Mode-specific Wan controls kept out of the primary dashboard form.
+  - `_validate_advanced_dependencies(self) -> 'AnimateAdvancedOptions'`
+  - `has_replacement_controls(self) -> bool`
+- **class `WanAnimateJobOptions(BaseModel)`**
+  - `_validate_mode_specific_options(self) -> 'WanAnimateJobOptions'`
+- **class `DashboardAssetRecord(BaseModel)`** — Durable asset metadata; the server path is never serialized to clients.
+  - `_require_aware_timestamps(cls, value: datetime | None) -> datetime | None`
+  - `_validate_state(self) -> 'DashboardAssetRecord'`
 - **class `CreateDashboardJobRequest(BaseModel)`**
   - `_require_story_fields(self) -> 'CreateDashboardJobRequest'`
 - **class `DashboardJobRecord(BaseModel)`**
@@ -254,6 +338,13 @@ Shared Pydantic models for orchestration.
 - `create_artifact_store(settings: Settings) -> ArtifactStore`
 - `create_job_store(settings: Settings) -> JobRepository`
 - `completed_stage(stage_name: str, artifact: ArtifactRef, adapter_name: str='noop') -> StageResult`
+
+### `core/wan_animate_readiness.py`
+
+Pure filesystem readiness checks shared by Animate API and worker code.
+
+- `wan_animate_model_readiness(model_dir: str | Path) -> tuple[bool, str]` — Reject partial Animate snapshots rather than treating a directory as ready.
+- `wan_flux_retarget_readiness(model_dir: str | Path) -> tuple[bool, str]` — Check the optional FLUX.1 Kontext tree used only for pose retargeting.
 
 ### `core/workflow.py`
 

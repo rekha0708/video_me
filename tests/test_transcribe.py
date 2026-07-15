@@ -1,3 +1,4 @@
+import asyncio
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -6,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from adapters.transcribe.whisper_adapter import WhisperAdapter
-from core.models.capabilities import TranscribeRequest
+from core.models.capabilities import TranscribeRequest, TranscribeResult
 
 
 def _adapter(**kwargs) -> WhisperAdapter:
@@ -296,6 +297,29 @@ async def test_run_dispatches_to_transcribe() -> None:
 
     assert result.full_text == "Test."
     assert result.language == "en"
+
+
+async def test_run_cancellation_waits_for_executor_work() -> None:
+    adapter = _adapter()
+    loop = asyncio.get_running_loop()
+    executor_work: asyncio.Future[TranscribeResult] = loop.create_future()
+    result = TranscribeResult(segments=[], language="en", full_text="")
+
+    with patch.object(loop, "run_in_executor", return_value=executor_work):
+        task = asyncio.create_task(
+            adapter.run(TranscribeRequest(audio_uri="audio.wav"))
+        )
+        await asyncio.sleep(0)
+        task.cancel()
+        await asyncio.sleep(0)
+
+        # The caller's cancellation is deliberately held until the native
+        # executor work finishes, so another GPU job cannot overlap it.
+        assert not task.done()
+
+        executor_work.set_result(result)
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
 
 # ------------------------------------------------------------------ estimate_cost

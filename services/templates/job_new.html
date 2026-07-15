@@ -203,48 +203,11 @@
       <div class="form-hint">Which video generation backend to use for this job only.</div>
     </div>
 
-    <div class="form-row" id="nj-wan-animate-panel" style="display:none;border-left:3px solid var(--accent);padding-left:12px">
-      <label>Wan Animate Mode</label>
-      <select id="nj-wan-animate-mode">
-        <option value="animate">Motion transfer — animate the reference character</option>
-        <option value="replace">Character replacement — preserve source background</option>
-      </select>
-      <label style="margin-top:8px">Driving Video</label>
-      <select id="nj-wan-animate-driver-source">
-        <option value="job_source">Use this job's source video</option>
-        <option value="upload">Upload a separate driver video</option>
-        <option value="local">Server-local video path</option>
-      </select>
-      <input id="nj-wan-animate-driver-file" type="file" accept="video/mp4,video/quicktime,video/webm,.mkv" style="display:none;margin-top:6px">
-      <input id="nj-wan-animate-driver-path" type="text" placeholder="/workspace/downloads/driver.mp4" style="display:none;margin-top:6px">
-      <div class="form-hint" id="nj-wan-animate-upload-status"></div>
-      <label style="margin-top:8px">Timeline Mapping</label>
-      <select id="nj-wan-animate-timeline">
-        <option value="source_timestamps">Use each shot's source timestamps</option>
-        <option value="sequential">Sequentially from the start of the driver</option>
-      </select>
-      <label style="margin-top:8px">Resolution</label>
-      <select id="nj-wan-animate-resolution">
-        <option value="720p">720p area — best quality</option>
-        <option value="480p">480p area — faster / lower VRAM</option>
-      </select>
-      <label style="margin-top:8px">Subject Selection</label>
-      <select id="nj-wan-animate-subject">
-        <option value="largest">Largest person</option>
-        <option value="center">Person nearest center</option>
-      </select>
-      <label class="checkbox-row" style="margin-top:8px">
-        <input type="checkbox" id="nj-wan-animate-retarget">
-        <span>Retarget pose (motion-transfer mode only)</span>
-      </label>
-      <label>Temporal reference</label>
-      <select id="nj-wan-animate-refert">
-        <option value="1">1 frame — default/faster</option>
-        <option value="5">5 frames — stronger long-clip continuity</option>
-      </select>
-      <div class="form-hint">
-        Neural preprocessing runs on CUDA. Inputs are normalized to constant 30 FPS.
-        Clips over 77 frames (~2.57 s) cross an internal generation boundary.
+    <div class="form-row" id="nj-wan-animate-panel" style="display:none">
+      <div class="animate-studio-bridge">
+        <strong>Wan Animate has a dedicated workspace</strong>
+        <p>Choose motion transfer or character replacement, upload the driving video, lock a cast look, and configure audio and export controls in Animate Studio.</p>
+        <a href="/animate/new" class="btn btn-primary">Open Animate Studio &rarr;</a>
       </div>
     </div>
 
@@ -468,56 +431,17 @@ document.addEventListener("DOMContentLoaded", () => {
   const audioProfileSel = document.getElementById("nj-audio-profile");
   if (audioProfileSel) audioProfileSel.addEventListener("change", updateIsolateVocalsAvailability);
   const videoAdapter = document.getElementById("nj-video-adapter");
-  if (videoAdapter) videoAdapter.addEventListener("change", updateWanAnimatePanel);
-  const driverSource = document.getElementById("nj-wan-animate-driver-source");
-  if (driverSource) driverSource.addEventListener("change", updateWanAnimateDriverFields);
-  const animateMode = document.getElementById("nj-wan-animate-mode");
-  if (animateMode) animateMode.addEventListener("change", updateWanAnimateMode);
-  const renderMode = document.getElementById("nj-render-mode");
-  if (renderMode) renderMode.addEventListener("change", updateWanAnimateTimelineDefault);
+  if (videoAdapter) {
+    videoAdapter.addEventListener("change", updateWanAnimatePanel);
+    updateWanAnimatePanel();
+  }
 });
 
 function updateWanAnimatePanel() {
   const enabled = document.getElementById("nj-video-adapter").value === "wan_animate";
   document.getElementById("nj-wan-animate-panel").style.display = enabled ? "" : "none";
-  updateWanAnimateDriverFields();
-  updateWanAnimateMode();
-  updateWanAnimateTimelineDefault();
-}
-
-function updateWanAnimateTimelineDefault() {
-  if (document.getElementById("nj-video-adapter").value !== "wan_animate") return;
-  const renderMode = document.getElementById("nj-render-mode").value;
-  document.getElementById("nj-wan-animate-timeline").value =
-    (renderMode === "source_audio" || renderMode === "re_voice")
-      ? "source_timestamps" : "sequential";
-}
-
-function updateWanAnimateDriverFields() {
-  const source = document.getElementById("nj-wan-animate-driver-source").value;
-  document.getElementById("nj-wan-animate-driver-file").style.display = source === "upload" ? "" : "none";
-  document.getElementById("nj-wan-animate-driver-path").style.display = source === "local" ? "" : "none";
-}
-
-function updateWanAnimateMode() {
-  const replace = document.getElementById("nj-wan-animate-mode").value === "replace";
-  const retarget = document.getElementById("nj-wan-animate-retarget");
-  retarget.disabled = replace;
-  if (replace) retarget.checked = false;
-}
-
-async function uploadWanAnimateDriver() {
-  const input = document.getElementById("nj-wan-animate-driver-file");
-  if (!input.files.length) throw new Error("Choose a Wan Animate driving video.");
-  const status = document.getElementById("nj-wan-animate-upload-status");
-  status.textContent = "Uploading driving video…";
-  const formData = new FormData();
-  formData.append("file", input.files[0]);
-  const resp = await fetch("/api/uploads/wan-animate-driver", {method: "POST", body: formData});
-  const data = await resp.json();
-  if (!resp.ok) throw new Error(data.detail?.message || "Driving-video upload failed");
-  status.textContent = `Uploaded ${(data.size_bytes / 1048576).toFixed(1)} MB · ${data.width}×${data.height} · ${data.duration_sec.toFixed(1)}s`;
-  return data.path;
+  const submit = document.getElementById("nj-submit");
+  if (submit) submit.textContent = enabled ? "Open Animate Studio" : "Submit";
 }
 
 const PHASE_HINTS = {
@@ -603,11 +527,6 @@ function toggleSourceMode(mode) {
       : "I confirm this source is cleared for transformative use";
   }
   if (mode === "file") loadLocalVideos();
-  if (STORY_MODES.has(mode) && document.getElementById("nj-video-adapter").value === "wan_animate") {
-    document.getElementById("nj-wan-animate-driver-source").value = "upload";
-    document.getElementById("nj-wan-animate-timeline").value = "sequential";
-    updateWanAnimateDriverFields();
-  }
 }
 
 async function loadLocalVideos() {
@@ -687,6 +606,10 @@ async function submitNewJob(e) {
   btn.textContent = "Submitting…";
 
   try {
+    if (document.getElementById("nj-video-adapter").value === "wan_animate") {
+      window.location.assign("/animate/new");
+      return;
+    }
     const sourceKind = document.querySelector('input[name="source_kind"]:checked').value;
     let sourceUrl = "";
     let storyText = null;
@@ -743,26 +666,6 @@ async function submitNewJob(e) {
     const castSel = document.getElementById("nj-cast");
     const overrides = {};
     if (videoAdapter) overrides.video_adapter = videoAdapter;
-    if (videoAdapter === "wan_animate") {
-      const driverSource = document.getElementById("nj-wan-animate-driver-source").value;
-      let driverUri = "";
-      if (driverSource === "upload") driverUri = await uploadWanAnimateDriver();
-      if (driverSource === "local") {
-        driverUri = document.getElementById("nj-wan-animate-driver-path").value.trim();
-        if (!driverUri) throw new Error("Enter a server-local driving-video path.");
-      }
-      if (STORY_MODES.has(sourceKind) && driverSource === "job_source") {
-        throw new Error("Story jobs need an uploaded or server-local Wan Animate driver.");
-      }
-      overrides.wan_animate_mode = document.getElementById("nj-wan-animate-mode").value;
-      overrides.wan_animate_driver_source = driverSource;
-      if (driverUri) overrides.wan_animate_driver_uri = driverUri;
-      overrides.wan_animate_timeline = document.getElementById("nj-wan-animate-timeline").value;
-      overrides.wan_animate_resolution_area = document.getElementById("nj-wan-animate-resolution").value;
-      overrides.wan_animate_subject_selection = document.getElementById("nj-wan-animate-subject").value;
-      overrides.wan_animate_retarget_pose = document.getElementById("nj-wan-animate-retarget").checked;
-      overrides.wan_animate_refert_num = parseInt(document.getElementById("nj-wan-animate-refert").value, 10);
-    }
     if (lipsyncAdapter) overrides.lipsync_adapter = lipsyncAdapter;
     overrides.video_upscale_enabled = document.getElementById("nj-video-upscale").checked;
     overrides.video_enhance_enabled = document.getElementById("nj-video-enhance").checked;

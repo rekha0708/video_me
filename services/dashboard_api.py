@@ -1,20 +1,29 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections import defaultdict
+import hashlib
+import hmac
+import ipaddress
 import json
+import mimetypes
 import os
 import secrets
+import shutil
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
+import urllib.error
+import urllib.request
 from zoneinfo import ZoneInfo
 
 try:
-    from fastapi import File, Form, UploadFile
+    from fastapi import File, Form, Request, UploadFile
 except ModuleNotFoundError:  # allow import for helper tests without fastapi
-    File = Form = UploadFile = None  # type: ignore[assignment,misc]
+    File = Form = Request = UploadFile = None  # type: ignore[assignment,misc]
 
 from core.config import AppConfig, load_app_config, load_yaml_model
 from core.storage import create_artifact_store
@@ -23,15 +32,41 @@ from core.models.dashboard import (
     CreateDashboardJobRequest,
     DashboardEvent,
     DashboardApprovalStatus,
+    DashboardAssetKind,
     DashboardJobStatus,
     DashboardQueueAction,
+    WAN_ANIMATE_MAX_DRIVER_RANGE_SEC,
+)
+from core.wan_animate_readiness import (
+    wan_animate_model_readiness,
+    wan_flux_retarget_readiness,
 )
 from scripts.check_runtime_readiness import (
     CheckResult,
     check_service_health,
     collect_readiness_results,
 )
-from services.dashboard_repository import DashboardRepository
+from services.dashboard_assets import (
+    DashboardAssetAccessError,
+    DashboardAssetError,
+    DashboardAssetKindError,
+    DashboardAssetMetadataError,
+    DashboardAssetNotFoundError,
+    DashboardAssetPathError,
+    DashboardAssetQuotaError,
+    DashboardAssetStateError,
+    DashboardAssetStore,
+    collect_animate_asset_requirements,
+)
+from services.dashboard_media import (
+    MediaIngestError,
+    copy_local_file_limited,
+    download_public_video_url,
+    normalize_image,
+    probe_video,
+    stream_upload,
+)
+from services.dashboard_repository import DashboardRepository, make_dashboard_job_id
 from services.gpu_status import collect_gpu_status
 from services.gpu_watermarks import reset_watermarks, update_watermarks
 
@@ -158,6 +193,16 @@ _COST_STAGE_GROUPS = {
     "assemble_video": "assemble",
     "publish": "assemble",
     "lora_train": "training",
+    "animate_gpu_reset": "prep",
+    "animate_validate": "prep",
+    "wan_animate_service_start": "prep",
+    "canonical_look": "render",
+    "animate_preprocess": "video",
+    "animate_audio": "voice",
+    "animate_generate": "video",
+    "animate_lipsync": "video",
+    "animate_mux": "assemble",
+    "animate_export": "enhance",
 }
 
 
@@ -359,6 +404,32 @@ _STAGE_TO_MACRO = {
 
 _MACRO_ORDER = ["transcribe", "script_plan", "render", "assemble"]
 
+_ANIMATE_MACRO_ORDER = [
+    "animate_validate",
+    "canonical_look",
+    "animate_preprocess",
+    "animate_audio",
+    "animate_generate",
+    "animate_finish",
+]
+
+_ANIMATE_STAGE_TO_MACRO = {
+    "wan_animate_direct": "animate_validate",
+    "animate_gpu_reset": "animate_validate",
+    "animate_validate": "animate_validate",
+    "canonical_look": "canonical_look",
+    "animate_preprocess": "animate_preprocess",
+    "animate_audio": "animate_audio",
+    "voice_model_load": "animate_audio",
+    "voice_model_unload": "animate_audio",
+    "video_model_load": "animate_generate",
+    "animate_generate": "animate_generate",
+    "video_model_unload": "animate_generate",
+    "animate_lipsync": "animate_finish",
+    "animate_mux": "animate_finish",
+    "animate_export": "animate_finish",
+}
+
 
 def _workspace_path(path_value: str, *, cwd: Path | None = None) -> Path:
     """Map training TOML paths from /workspace/video_me to this checkout."""
@@ -447,6 +518,21 @@ def _stepper_state(job: Any, flags: dict[str, bool]) -> dict[str, Any]:
     completed set from artifact existence.
     """
     status = getattr(job.status, "value", str(job.status))
+    request = getattr(job, "request", {}) or {}
+    if request.get("workflow_kind") == "wan_animate_direct":
+        if status == "completed":
+            return {
+                "phase": "animate_finish",
+                "completed": list(_ANIMATE_MACRO_ORDER),
+            }
+        active = _ANIMATE_STAGE_TO_MACRO.get(
+            getattr(job, "current_stage", None) or "",
+            "animate_validate",
+        )
+        return {
+            "phase": active,
+            "completed": _ANIMATE_MACRO_ORDER[: _ANIMATE_MACRO_ORDER.index(active)],
+        }
     if job.phase != "all":
         return {"phase": job.phase, "completed": list(job.completed_phases or [])}
 
@@ -464,7 +550,10 @@ def _stepper_state(job: Any, flags: dict[str, bool]) -> dict[str, Any]:
             active = "script_plan"
         else:
             active = "transcribe"
-    return {"phase": active, "completed": _MACRO_ORDER[: _MACRO_ORDER.index(active)]}
+    return {
+        "phase": active,
+        "completed": _MACRO_ORDER[: _MACRO_ORDER.index(active)],
+    }
 
 
 def _make_repository(config: AppConfig) -> DashboardRepository:
@@ -484,7 +573,7 @@ def create_app(
     """
 
     try:
-        from fastapi import Body, Depends, FastAPI, Header, HTTPException, status
+        from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request, status
     except ImportError as exc:  # pragma: no cover - exercised only without extras
         raise RuntimeError(
             "Dashboard API requires FastAPI. Install with `pip install -e \".[dashboard]\"`."
@@ -493,15 +582,126 @@ def create_app(
     config = config_loader()
     repo = repository or _make_repository(config)
     artifact_store = create_artifact_store(config.settings)
+    asset_owner_id = os.getenv("VIDEO_ME_DASHBOARD_ASSET_OWNER", "dashboard-local")
+    asset_store = DashboardAssetStore(
+        repo.db_path,
+        Path(config.settings.data_dir) / "dashboard_assets",
+        allowed_server_roots=(config.settings.local_video_dir,),
+        max_total_bytes=config.settings.dashboard_asset_quota_bytes,
+    )
+    # Startup cleanup is intentionally limited to unclaimed assets. Claimed
+    # job inputs remain immutable and available to a queued/running worker.
+    asset_store.expire_staged(delete_files=True)
+    asset_store.delete_orphaned_claims()
+
+    signing_seed = os.getenv("VIDEO_ME_DASHBOARD_TOKEN", "").encode("utf-8")
+    asset_signing_key = (
+        hashlib.sha256(b"video-me-dashboard-assets\0" + signing_seed).digest()
+        if signing_seed
+        else secrets.token_bytes(32)
+    )
 
     app = FastAPI(title="video_me Dashboard API", version="0.1.0")
 
+    def _signed_value(purpose: str, value: str) -> str:
+        digest = hmac.new(
+            asset_signing_key,
+            f"{purpose}\0{value}".encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+    def _asset_media_url(asset_id: str) -> str:
+        signature = _signed_value("asset-media", asset_id)
+        return f"/api/assets/{asset_id}/media?token={signature}"
+
+    def _asset_payload(record: Any) -> dict[str, Any]:
+        payload = record.model_dump(mode="json", exclude={"owner_id", "storage_path"})
+        payload["media_url"] = _asset_media_url(record.asset_id)
+        return payload
+
+    def _asset_http_error(exc: Exception) -> HTTPException:
+        if isinstance(exc, DashboardAssetNotFoundError):
+            code, http_status = "ASSET_NOT_FOUND", status.HTTP_404_NOT_FOUND
+        elif isinstance(exc, DashboardAssetAccessError):
+            code, http_status = "ASSET_FORBIDDEN", status.HTTP_403_FORBIDDEN
+        elif isinstance(exc, DashboardAssetKindError):
+            code, http_status = "ASSET_KIND_MISMATCH", status.HTTP_400_BAD_REQUEST
+        elif isinstance(exc, DashboardAssetMetadataError):
+            code, http_status = "INVALID_ASSET_METADATA", status.HTTP_400_BAD_REQUEST
+        elif isinstance(exc, DashboardAssetQuotaError):
+            code, http_status = "ASSET_QUOTA_EXCEEDED", 507
+        elif isinstance(exc, DashboardAssetStateError):
+            code, http_status = "INVALID_ASSET_STATE", status.HTTP_409_CONFLICT
+        elif isinstance(exc, DashboardAssetPathError):
+            code, http_status = "INVALID_ASSET_PATH", status.HTTP_400_BAD_REQUEST
+        elif isinstance(exc, MediaIngestError):
+            code = exc.code
+            http_status = (
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+                if exc.code == "FILE_TOO_LARGE"
+                else status.HTTP_400_BAD_REQUEST
+            )
+        else:
+            code, http_status = "INVALID_ASSET", status.HTTP_400_BAD_REQUEST
+        return HTTPException(
+            status_code=http_status,
+            detail={"code": code, "message": str(exc), "retryable": False},
+        )
+
+    def _server_file_id(root_index: int, relative_path: str) -> str:
+        raw = json.dumps(
+            {"root": root_index, "path": relative_path},
+            separators=(",", ":"),
+        ).encode("utf-8")
+        payload = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+        return f"{payload}.{_signed_value('server-file', payload)}"
+
+    def _decode_server_file_id(file_id: str) -> Path:
+        try:
+            payload, signature = file_id.split(".", 1)
+            if not secrets.compare_digest(signature, _signed_value("server-file", payload)):
+                raise ValueError("signature mismatch")
+            padded = payload + "=" * (-len(payload) % 4)
+            decoded = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+            root_index = int(decoded["root"])
+            relative = str(decoded["path"])
+            root = asset_store.allowed_server_roots[root_index]
+        except (ValueError, KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            raise DashboardAssetPathError("invalid or expired server-file selection") from exc
+        return asset_store.validate_server_path(
+            root / relative,
+            expected_kind=DashboardAssetKind.VIDEO,
+        )
+
     def require_write_auth(
+        request: Request,
         authorization: str | None = Header(default=None),
     ) -> None:
         token = os.getenv("VIDEO_ME_DASHBOARD_TOKEN")
         if not token:
-            return
+            client_host = request.client.host if request.client is not None else ""
+            try:
+                is_loopback = ipaddress.ip_address(
+                    client_host.split("%", 1)[0]
+                ).is_loopback
+            except ValueError:
+                # Starlette's in-process TestClient uses this sentinel host.
+                is_loopback = client_host == "testclient"
+            if is_loopback:
+                return
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "LOCAL_DASHBOARD_ONLY",
+                    "message": (
+                        "Dashboard writes are restricted to loopback while "
+                        "VIDEO_ME_DASHBOARD_TOKEN is unset. Use an SSH tunnel or "
+                        "configure bearer-token injection at the trusted proxy."
+                    ),
+                    "retryable": False,
+                },
+            )
         if authorization is None or not secrets.compare_digest(
             authorization, f"Bearer {token}"
         ):
@@ -592,7 +792,9 @@ def create_app(
         return _base_response({**status, "watermarks": watermarks})
 
     @app.post("/api/runtime/gpu-watermarks/reset")
-    def runtime_gpu_watermarks_reset() -> dict[str, Any]:
+    def runtime_gpu_watermarks_reset(
+        _: None = Depends(require_write_auth),
+    ) -> dict[str, Any]:
         reset_watermarks(_gpu_watermarks)
         return _base_response({"watermarks": _gpu_watermarks})
 
@@ -640,25 +842,383 @@ def create_app(
     _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
     _VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".mkv"}
 
-    @app.get("/api/casts")
-    def list_casts() -> dict[str, Any]:
+    def _existing_lora_path(member: Any, params: Any | None) -> Path | None:
+        lora_dir = Path(config.settings.lora_dir).expanduser()
+        explicit = str(getattr(params, "lora_file", "") or "").strip()
+        if explicit:
+            candidate = lora_dir / explicit
+            return candidate if candidate.is_file() else None
+        parts = Path(str(member.lora_ref)).parts
+        if parts and parts[0] == "loras":
+            parts = parts[1:]
+        stem = "_".join(parts)
+        for extension in (".safetensors", ".pt", ".ckpt"):
+            candidate = lora_dir / f"{stem}{extension}"
+            if candidate.is_file():
+                return candidate
+        return None
+
+    def _existing_voice_path(member: Any, params: Any | None) -> Path | None:
+        voice_ref = str(
+            getattr(params, "voice_file", "") or member.voice_profile_ref or ""
+        ).strip()
+        parts = Path(voice_ref).parts
+        if parts and parts[0] == "voices":
+            parts = parts[1:]
+        base = Path(config.settings.voice_dir).expanduser().joinpath(*parts)
+        candidates = [base] if base.suffix else [base.with_suffix(ext) for ext in (".wav", ".mp3", ".flac", ".ogg")]
+        return next((candidate for candidate in candidates if candidate.is_file()), None)
+
+    def _animate_cast_catalog() -> list[dict[str, Any]]:
+        from core.cast_params import load_cast_params
         from core.models.profile import Cast
 
+        casts: list[Any] = []
         casts_dir = Path("config/casts")
-        result = []
         if casts_dir.is_dir():
-            for yml in sorted(casts_dir.glob("*.yaml")):
+            for yaml_path in sorted(casts_dir.glob("*.yaml")):
                 try:
-                    cast = load_yaml_model(yml, Cast)
-                    result.append({
-                        "id": cast.id,
-                        "species": cast.species,
-                        "member_count": len(cast.members),
-                        "members": [{"id": m.id, "name": m.name} for m in cast.members],
-                    })
+                    casts.append(load_yaml_model(yaml_path, Cast))
                 except Exception:
-                    pass
-        return _base_response({"casts": result, "default": config.cast.id})
+                    continue
+        if not any(cast.id == config.cast.id for cast in casts):
+            casts.append(config.cast)
+
+        result: list[dict[str, Any]] = []
+        for cast in casts:
+            try:
+                params_by_member = load_cast_params(cast.id, casts_dir)
+            except Exception:
+                params_by_member = {}
+            members = []
+            for member in cast.members:
+                params = params_by_member.get(member.id)
+                lora_path = _existing_lora_path(member, params)
+                voice_path = _existing_voice_path(member, params)
+                members.append(
+                    {
+                        "id": member.id,
+                        "name": member.name,
+                        "visual_descriptor": member.visual_descriptor,
+                        "has_lora": lora_path is not None,
+                        "has_voice": voice_path is not None,
+                    }
+                )
+            result.append(
+                {
+                    "id": cast.id,
+                    "name": cast.id.replace("_", " ").title(),
+                    "species": cast.species,
+                    "member_count": len(members),
+                    "members": members,
+                }
+            )
+        return result
+
+    def _wan_animate_install_readiness() -> tuple[bool, str]:
+        settings = config.settings
+        python_value = str(settings.wan_animate_python)
+        python_ready = Path(python_value).expanduser().is_file() or shutil.which(python_value) is not None
+        model_dir = Path(settings.wan_animate_model_dir).expanduser()
+        required_paths = [
+            ("Wan Animate Python", python_ready),
+            ("Wan 2.2 repository", Path(settings.wan_animate_repo_dir).expanduser().is_dir()),
+        ]
+        missing = [name for name, ready in required_paths if not ready]
+        if missing:
+            return False, "Missing " + ", ".join(missing) + ". Run setup_gpu.sh --with-wan-animate."
+        model_ready, model_reason = wan_animate_model_readiness(model_dir)
+        if not model_ready:
+            return False, model_reason
+        return True, "Wan Animate is installed; its deferred-loading service starts on demand."
+
+    def _http_service_readiness(base_url: str, label: str) -> dict[str, Any]:
+        url = f"{base_url.rstrip('/')}/health"
+        try:
+            request = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(request, timeout=0.75) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            ready = payload.get("status") == "ok"
+            reason = "Service is ready." if ready else str(payload.get("reason") or payload)
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            ready = False
+            reason = f"{label} is unreachable at {base_url}: {exc}"
+        return {"ready": ready, "reason": reason, "base_url": base_url}
+
+    @app.get("/api/casts")
+    def list_casts() -> dict[str, Any]:
+        return _base_response({"casts": _animate_cast_catalog(), "default": config.cast.id})
+
+    @app.get("/api/animate/options")
+    def animate_options() -> dict[str, Any]:
+        backend_ready, backend_reason = _wan_animate_install_readiness()
+        flux_retarget_ready, flux_retarget_reason = wan_flux_retarget_readiness(
+            config.settings.wan_animate_model_dir
+        )
+        lipsync_readiness = {
+            "latentsync": _http_service_readiness(
+                config.settings.latentsync_base_url, "LatentSync"
+            ),
+            "musetalk": _http_service_readiness(
+                config.settings.musetalk_base_url, "MuseTalk"
+            ),
+        }
+        return _base_response(
+            {
+                "casts": _animate_cast_catalog(),
+                "default": config.cast.id,
+                "defaults": {"cast_ref": config.cast.id},
+                "readiness": {
+                    "ready": backend_ready,
+                    "reason": backend_reason,
+                    "wan_animate": {"ready": backend_ready, "reason": backend_reason},
+                    "lipsync": lipsync_readiness,
+                },
+                "features": {
+                    "flux2_edit_enabled": config.settings.flux2_edit_enabled,
+                    # The canonical-look edit prepends one identity image to
+                    # the user-provided complete-look references.
+                    "flux2_edit_max_user_references": max(
+                        0, config.settings.flux2_edit_max_references - 1
+                    ),
+                    "flux2_edit_reason": (
+                        "FLUX.2 reference-image editing is disabled. Set "
+                        "VIDEO_ME_FLUX2_EDIT_ENABLED=true after validating the installed "
+                        "Musubi revision; text-directed complete-look styling remains available."
+                    ),
+                    "wan_flux_retarget_enabled": flux_retarget_ready,
+                    "wan_flux_retarget_reason": flux_retarget_reason,
+                },
+                "limits": {
+                    "max_driver_range_sec": WAN_ANIMATE_MAX_DRIVER_RANGE_SEC,
+                },
+            }
+        )
+
+    @app.get("/api/assets/video/server-files")
+    def list_server_video_assets(
+        _: None = Depends(require_write_auth),
+    ) -> dict[str, Any]:
+        files: list[dict[str, Any]] = []
+        for root_index, root in enumerate(asset_store.allowed_server_roots):
+            if not root.is_dir():
+                continue
+            for path in sorted(root.rglob("*")):
+                if not path.is_file() or path.suffix.lower() not in _VIDEO_EXTENSIONS:
+                    continue
+                try:
+                    relative = str(path.resolve().relative_to(root))
+                except (OSError, ValueError):
+                    continue
+                files.append(
+                    {
+                        "file_id": _server_file_id(root_index, relative),
+                        "name": path.name,
+                        "size_bytes": path.stat().st_size,
+                    }
+                )
+                if len(files) >= 500:
+                    break
+            if len(files) >= 500:
+                break
+        return _base_response({"files": files})
+
+    async def _register_video_asset(
+        *,
+        destination: Path,
+        asset_id: str,
+        original_name: str,
+    ) -> Any:
+        try:
+            metadata = await probe_video(
+                destination,
+                ffprobe_bin=config.settings.ffprobe_bin,
+            )
+            container = str(metadata.get("container") or "").lower()
+            suffix = destination.suffix.lower()
+            if "webm" in container or suffix == ".webm":
+                safe_mime = "video/webm"
+            elif "matroska" in container or suffix == ".mkv":
+                safe_mime = "video/x-matroska"
+            elif "avi" in container or suffix == ".avi":
+                safe_mime = "video/x-msvideo"
+            elif suffix == ".mov":
+                safe_mime = "video/quicktime"
+            else:
+                safe_mime = "video/mp4"
+            return await asyncio.to_thread(
+                asset_store.create_staged,
+                owner_id=asset_owner_id,
+                kind=DashboardAssetKind.VIDEO,
+                original_name=original_name,
+                mime_type=safe_mime,
+                storage_path=destination,
+                asset_id=asset_id,
+                metadata=metadata,
+            )
+        except BaseException:
+            destination.unlink(missing_ok=True)
+            raise
+
+    @app.post("/api/assets/video/upload")
+    async def upload_video_asset(
+        file: UploadFile = File(...),
+        _: None = Depends(require_write_auth),
+    ) -> dict[str, Any]:
+        extension = Path(file.filename or "driver.mp4").suffix.lower()
+        if extension not in _VIDEO_EXTENSIONS:
+            raise _asset_http_error(MediaIngestError(
+                "INVALID_FORMAT", "Video must be MP4, MOV, WebM, or MKV"
+            ))
+        asset_id, destination = asset_store.allocate_path(
+            DashboardAssetKind.VIDEO,
+            suffix=extension,
+        )
+        try:
+            await stream_upload(file, destination, max_bytes=2 * 1024 * 1024 * 1024)
+            record = await _register_video_asset(
+                destination=destination,
+                asset_id=asset_id,
+                original_name=file.filename or destination.name,
+            )
+        except (DashboardAssetError, MediaIngestError) as exc:
+            raise _asset_http_error(exc) from exc
+        return _base_response({"asset": _asset_payload(record)})
+
+    @app.post("/api/assets/video/from-url")
+    async def import_video_asset_from_url(
+        body: dict[str, Any] = Body(...),
+        _: None = Depends(require_write_auth),
+    ) -> dict[str, Any]:
+        url = str(body.get("url") or "").strip()
+        extension = Path(urlparse(url).path).suffix.lower()
+        if extension not in _VIDEO_EXTENSIONS:
+            extension = ".mp4"
+        asset_id, destination = asset_store.allocate_path(
+            DashboardAssetKind.VIDEO,
+            suffix=extension,
+        )
+        try:
+            _, _, final_url = await download_public_video_url(url, destination)
+            record = await _register_video_asset(
+                destination=destination,
+                asset_id=asset_id,
+                original_name=Path(urlparse(final_url).path).name or "remote-video",
+            )
+        except (DashboardAssetError, MediaIngestError) as exc:
+            raise _asset_http_error(exc) from exc
+        return _base_response({"asset": _asset_payload(record)})
+
+    @app.post("/api/assets/video/from-server-file")
+    async def import_video_asset_from_server(
+        body: dict[str, Any] = Body(...),
+        _: None = Depends(require_write_auth),
+    ) -> dict[str, Any]:
+        destination: Path | None = None
+        try:
+            source = _decode_server_file_id(str(body.get("file_id") or ""))
+            asset_id, destination = asset_store.allocate_path(
+                DashboardAssetKind.VIDEO,
+                suffix=source.suffix.lower(),
+            )
+            await asyncio.to_thread(
+                copy_local_file_limited,
+                source,
+                destination,
+                max_bytes=2 * 1024 * 1024 * 1024,
+            )
+            record = await _register_video_asset(
+                destination=destination,
+                asset_id=asset_id,
+                original_name=source.name,
+            )
+        except (DashboardAssetError, MediaIngestError) as exc:
+            if destination is not None:
+                destination.unlink(missing_ok=True)
+            raise _asset_http_error(exc) from exc
+        return _base_response({"asset": _asset_payload(record)})
+
+    @app.post("/api/assets/image/upload")
+    async def upload_image_asset(
+        file: UploadFile = File(...),
+        purpose: str = Form(default="character"),
+        _: None = Depends(require_write_auth),
+    ) -> dict[str, Any]:
+        extension = Path(file.filename or "image.png").suffix.lower()
+        if extension not in _IMAGE_EXTENSIONS:
+            raise _asset_http_error(MediaIngestError(
+                "INVALID_FORMAT", "Image must be PNG, JPG, JPEG, or WebP"
+            ))
+        if purpose not in {"character", "garment", "accessory"}:
+            raise _asset_http_error(MediaIngestError("INVALID_PURPOSE", "Invalid image purpose"))
+        asset_id, destination = asset_store.allocate_path(
+            DashboardAssetKind.IMAGE,
+            suffix=".png",
+        )
+        incoming = destination.with_suffix(f"{extension}.incoming")
+        try:
+            await stream_upload(file, incoming, max_bytes=25 * 1024 * 1024)
+            metadata = await asyncio.to_thread(normalize_image, incoming, destination)
+            metadata["purpose"] = purpose
+            record = asset_store.create_staged(
+                owner_id=asset_owner_id,
+                kind=DashboardAssetKind.IMAGE,
+                original_name=file.filename or "image.png",
+                mime_type="image/png",
+                storage_path=destination,
+                asset_id=asset_id,
+                metadata=metadata,
+            )
+        except (DashboardAssetError, MediaIngestError) as exc:
+            destination.unlink(missing_ok=True)
+            raise _asset_http_error(exc) from exc
+        finally:
+            incoming.unlink(missing_ok=True)
+        return _base_response({"asset": _asset_payload(record)})
+
+    @app.get("/api/assets/{asset_id}")
+    def get_dashboard_asset(
+        asset_id: str,
+        _: None = Depends(require_write_auth),
+    ) -> dict[str, Any]:
+        try:
+            record, _ = asset_store.resolve(asset_id, owner_id=asset_owner_id)
+        except DashboardAssetError as exc:
+            raise _asset_http_error(exc) from exc
+        return _base_response({"asset": _asset_payload(record)})
+
+    @app.get("/api/assets/{asset_id}/media", include_in_schema=False)
+    def serve_dashboard_asset(asset_id: str, token: str = ""):
+        from fastapi.responses import FileResponse
+
+        expected = _signed_value("asset-media", asset_id)
+        if not token or not secrets.compare_digest(token, expected):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid asset token")
+        try:
+            record, path = asset_store.resolve(asset_id, owner_id=asset_owner_id)
+        except DashboardAssetError as exc:
+            raise _asset_http_error(exc) from exc
+        return FileResponse(
+            str(path),
+            media_type=record.mime_type,
+            headers={
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "private, no-store",
+            },
+        )
+
+    @app.delete("/api/assets/{asset_id}")
+    def delete_dashboard_asset(
+        asset_id: str,
+        _: None = Depends(require_write_auth),
+    ) -> dict[str, Any]:
+        try:
+            deleted = asset_store.delete_staged(asset_id, owner_id=asset_owner_id)
+        except DashboardAssetError as exc:
+            raise _asset_http_error(exc) from exc
+        if not deleted:
+            raise _asset_http_error(DashboardAssetNotFoundError(f"dashboard asset not found: {asset_id}"))
+        return _base_response({"deleted": True, "asset_id": asset_id})
 
     @app.get("/api/local-images")
     def list_local_images(dir: str | None = None) -> dict[str, Any]:
@@ -693,6 +1253,7 @@ def create_app(
         member_id: str = Form(...),
         file: UploadFile = File(...),
         cast_ref: str = Form(default=""),
+        _: None = Depends(require_write_auth),
     ) -> dict[str, Any]:
         if cast_ref:
             from core.models.profile import Cast
@@ -734,6 +1295,7 @@ def create_app(
     @app.post("/api/uploads/wan-animate-driver")
     async def upload_wan_animate_driver(
         file: UploadFile = File(...),
+        _: None = Depends(require_write_auth),
     ) -> dict[str, Any]:
         """Stream a driver video to a server-local, job-safe staging directory."""
         ext = Path(file.filename or "driver.mp4").suffix.lower()
@@ -829,6 +1391,7 @@ def create_app(
         file: UploadFile = File(...),
         cast_ref: str = Form(default=""),
         caption: str = Form(default=""),
+        _: None = Depends(require_write_auth),
     ) -> dict[str, Any]:
         from core.models.profile import Cast
 
@@ -895,9 +1458,197 @@ def create_app(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
                     "code": "RIGHTS_NOT_CLEARED",
-                    "message": "Confirm rights clearance before queueing a real pipeline job.",
+                    "message": "Confirm rights clearance before queueing a real job.",
                     "retryable": False,
                 },
+            )
+
+        if body.workflow_kind == "wan_animate_direct":
+            from core.cast_params import load_cast_params
+            from core.models.profile import Cast
+
+            assert body.animate is not None
+            character = body.animate.character
+            cast_ref = character.cast_ref
+            member_id = character.member_id
+            requires_member = (
+                character.look_source in {"auto_lora", "styled_lora"}
+                or body.animate.audio.mode == "cast_voice"
+            )
+            if bool(cast_ref) != bool(member_id):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "INCOMPLETE_CAST_TARGET",
+                        "message": "Provide both cast and member, or neither for an exact uploaded image.",
+                        "retryable": False,
+                    },
+                )
+            target_cast = config.cast if cast_ref == config.cast.id else None
+            if target_cast is None and cast_ref:
+                for cast_path in sorted(Path("config/casts").glob("*.yaml")):
+                    try:
+                        candidate = load_yaml_model(cast_path, Cast)
+                    except Exception:
+                        continue
+                    if candidate.id == cast_ref:
+                        target_cast = candidate
+                        break
+            if target_cast is None and (requires_member or cast_ref):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "UNKNOWN_CAST",
+                        "message": "Choose a configured cast for the Animate target.",
+                        "retryable": False,
+                    },
+                )
+            member = (
+                next((item for item in target_cast.members if item.id == member_id), None)
+                if target_cast is not None and member_id
+                else None
+            )
+            if member_id and member is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "INVALID_MEMBER",
+                        "message": (
+                            f"Unknown target member {member_id!r} for cast {cast_ref!r}."
+                        ),
+                        "retryable": False,
+                    },
+                )
+
+            params = (
+                load_cast_params(target_cast.id).get(member.id)
+                if target_cast is not None and member is not None
+                else None
+            )
+            if character.look_source in {"auto_lora", "styled_lora"}:
+                assert member is not None
+                effective_render_adapter = (
+                    body.overrides.render_adapter or config.settings.render_adapter
+                )
+                if effective_render_adapter != "musubi_flux":
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={
+                            "code": "FLUX2_RENDERER_REQUIRED",
+                            "message": (
+                                "Generated Animate looks require render_adapter=musubi_flux; "
+                                f"{effective_render_adapter!r} cannot apply the trained FLUX.2 "
+                                "LoRA and complete-look controls reliably."
+                            ),
+                            "retryable": False,
+                        },
+                    )
+                if _existing_lora_path(member, params) is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={
+                            "code": "LORA_NOT_READY",
+                            "message": (
+                                f"The FLUX.2 LoRA for {member.name} is not available under "
+                                f"{config.settings.lora_dir}."
+                            ),
+                            "retryable": False,
+                        },
+                    )
+
+            if body.animate.advanced.use_flux_retarget:
+                flux_ready, flux_reason = wan_flux_retarget_readiness(
+                    config.settings.wan_animate_model_dir
+                )
+                if not flux_ready:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={
+                            "code": "WAN_FLUX_RETARGET_NOT_READY",
+                            "message": flux_reason,
+                            "retryable": False,
+                        },
+                    )
+            if body.animate.audio.mode == "cast_voice":
+                assert member is not None
+                if _existing_voice_path(member, params) is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={
+                            "code": "VOICE_NOT_READY",
+                            "message": f"The configured cast voice for {member.name} is unavailable.",
+                            "retryable": False,
+                        },
+                    )
+
+            wardrobe = character.wardrobe
+            wardrobe_refs = (
+                [*wardrobe.garment_asset_ids, *wardrobe.accessory_asset_ids]
+                if wardrobe is not None
+                else []
+            )
+            if wardrobe_refs and not config.settings.flux2_edit_enabled:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "FLUX2_EDIT_NOT_READY",
+                        "message": (
+                            "Reference-image complete-look styling is disabled. Use text-only "
+                            "styling direction or enable VIDEO_ME_FLUX2_EDIT_ENABLED after a "
+                            "Hopper smoke test."
+                        ),
+                        "retryable": False,
+                    },
+                )
+            max_user_references = max(0, config.settings.flux2_edit_max_references - 1)
+            if len(wardrobe_refs) > max_user_references:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "TOO_MANY_FLUX2_REFERENCES",
+                        "message": (
+                            f"Use at most {max_user_references} complete-look reference images; "
+                            "one FLUX.2 control slot is reserved for cast identity."
+                        ),
+                        "retryable": False,
+                    },
+                )
+
+            try:
+                asset_store.validate_animate_assets(
+                    body.animate,
+                    owner_id=asset_owner_id,
+                )
+            except DashboardAssetError as exc:
+                raise _asset_http_error(exc) from exc
+
+            job_id = make_dashboard_job_id()
+            asset_ids = list(collect_animate_asset_requirements(body.animate))
+            try:
+                asset_store.claim_assets(
+                    asset_ids,
+                    owner_id=asset_owner_id,
+                    job_id=job_id,
+                )
+                job, queue_item = repo.create_queued_job(body, job_id=job_id)
+            except Exception:
+                asset_store.release_claims(
+                    job_id=job_id,
+                    owner_id=asset_owner_id,
+                    asset_ids=asset_ids,
+                )
+                raise
+            return _base_response(
+                {
+                    "job_id": job.job_id,
+                    "status": job.status.value,
+                    "queue_id": queue_item.queue_id,
+                    "links": {
+                        "detail": f"/api/jobs/{job.job_id}",
+                        "events": f"/api/jobs/{job.job_id}/events",
+                        "stream": f"/api/jobs/{job.job_id}/stream",
+                    },
+                }
             )
 
         if body.source.kind in ("story", "story_images") and body.phase in (
@@ -1328,6 +2079,7 @@ def create_app(
                 results[job_id] = "skipped_active"
             else:
                 repo.delete_job(job_id)
+                asset_store.delete_claimed_for_job(job_id)
                 results[job_id] = "deleted"
         return _base_response({"results": results})
 
@@ -1562,6 +2314,64 @@ def create_app(
                 },
             )
 
+        if job.request.get("workflow_kind") == "wan_animate_direct":
+            requested_phase = (body or {}).get("phase", "all")
+            unsupported = set(body or {}) - {"phase"}
+            if requested_phase != "all" or unsupported:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "code": "INVALID_ANIMATE_RETRY",
+                        "message": (
+                            "Direct Animate retries rerun the same versioned request with semantic "
+                            "stage caches. Only phase='all' is valid; create a new Animate job to "
+                            "change its controls."
+                        ),
+                        "retryable": False,
+                    },
+                )
+            try:
+                validated = CreateDashboardJobRequest.model_validate(
+                    {**job.request, "phase": "all"}
+                )
+                assert validated.animate is not None
+                asset_store.validate_animate_assets(
+                    validated.animate,
+                    owner_id=asset_owner_id,
+                    job_id=job_id,
+                )
+            except DashboardAssetError as exc:
+                raise _asset_http_error(exc) from exc
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "INVALID_STORED_ANIMATE_REQUEST",
+                        "message": str(exc),
+                        "retryable": False,
+                    },
+                ) from exc
+            repo.update_job_status(job_id, DashboardJobStatus.QUEUED)
+            queue_item = repo.enqueue_action(
+                job_id,
+                DashboardQueueAction.RESUME,
+                payload=validated.model_dump(mode="json"),
+            )
+            repo.record_event(
+                job_id,
+                "job_retried",
+                f"Direct Animate job re-queued with semantic stage caching (was {job.status.value}).",
+                payload={"phase": "all", "queue_id": queue_item.queue_id},
+            )
+            return _base_response(
+                {
+                    "job_id": job_id,
+                    "phase": "all",
+                    "queue_id": queue_item.queue_id,
+                    "status": DashboardJobStatus.QUEUED.value,
+                }
+            )
+
         rerun_phase = job.phase
         if body and body.get("phase"):
             requested_phase = body["phase"]
@@ -1642,7 +2452,11 @@ def create_app(
     # ------------------------------------------------------------------
 
     @app.post("/api/jobs/{job_id}/chat")
-    async def chat_with_job(job_id: str, body: ChatRequest):
+    async def chat_with_job(
+        job_id: str,
+        body: ChatRequest,
+        _: None = Depends(require_write_auth),
+    ):
         if repo.get_job(job_id) is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -1777,11 +2591,18 @@ def create_app(
 
             path = Path(decoded).resolve()
             data_dir = Path(config.settings.data_dir).resolve()
-            if not path.is_relative_to(data_dir):
-                raise HTTPException(status_code=403, detail="path outside data dir")
+            jobs_dir = (data_dir / "jobs").resolve()
+            # `/img` predates opaque dashboard inputs and is used only for
+            # generated job previews. Never let a caller turn a leaked asset
+            # ID into a predictable dashboard_assets path that bypasses the
+            # signed media URL.
+            if not path.is_relative_to(jobs_dir):
+                raise HTTPException(status_code=403, detail="path outside job preview directory")
             if not path.is_file():
                 raise HTTPException(status_code=404, detail="image not found")
-            return FileResponse(str(path))
+            return FileResponse(
+                str(path), headers={"X-Content-Type-Options": "nosniff"}
+            )
 
         def _render(template_name: str, **ctx_vars: Any):
             from fastapi.responses import HTMLResponse
@@ -1807,6 +2628,16 @@ def create_app(
                 active="jobs",
             )
 
+        @app.get("/animate/new", include_in_schema=False)
+        def ui_new_animate_job():
+            """Dedicated creator for direct Wan 2.2 Animate jobs."""
+            worker_hb = repo.latest_worker_heartbeat()
+            return _render(
+                "animate_new.html",
+                worker=worker_hb,
+                active="animate",
+            )
+
         @app.get("/jobs/{job_id}", include_in_schema=False)
         def ui_job_detail(job_id: str):
             detail = repo.get_job_detail(job_id, event_limit=200)
@@ -1824,6 +2655,7 @@ def create_app(
                 artifact_flags=flags,
                 stepper=_stepper_state(detail.job, flags),
                 cost_summary=cost_summary,
+                artifacts=repo.list_artifacts(job_id),
                 worker=worker_hb,
                 active="jobs",
             )

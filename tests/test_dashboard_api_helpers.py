@@ -288,6 +288,75 @@ def test_stepper_all_queued_job_infers_from_artifacts() -> None:
     assert state["completed"] == ["transcribe"]
 
 
+@pytest.mark.parametrize(
+    ("current_stage", "phase", "completed"),
+    [
+        ("canonical_look", "canonical_look", ["animate_validate"]),
+        (
+            "video_model_load",
+            "animate_generate",
+            [
+                "animate_validate",
+                "canonical_look",
+                "animate_preprocess",
+                "animate_audio",
+            ],
+        ),
+        (
+            "animate_lipsync",
+            "animate_finish",
+            [
+                "animate_validate",
+                "canonical_look",
+                "animate_preprocess",
+                "animate_audio",
+                "animate_generate",
+            ],
+        ),
+    ],
+)
+def test_stepper_direct_animate_maps_internal_stages_to_dashboard_macros(
+    current_stage: str,
+    phase: str,
+    completed: list[str],
+) -> None:
+    job = SimpleNamespace(
+        phase="all",
+        status="running",
+        current_stage=current_stage,
+        completed_phases=[],
+        request={"workflow_kind": "wan_animate_direct"},
+    )
+
+    state = _stepper_state(job, _NO_FLAGS)
+
+    assert state == {"phase": phase, "completed": completed}
+
+
+def test_stepper_completed_direct_animate_marks_every_macro_complete() -> None:
+    job = SimpleNamespace(
+        phase="all",
+        status="completed",
+        current_stage="animate_export",
+        completed_phases=["wan_animate_direct"],
+        request={"workflow_kind": "wan_animate_direct"},
+    )
+
+    state = _stepper_state(job, _NO_FLAGS)
+
+    assert state == {
+        "phase": "animate_finish",
+        "completed": [
+            "animate_validate",
+            "canonical_look",
+            "animate_preprocess",
+            "animate_audio",
+            "animate_generate",
+            "animate_finish",
+        ],
+    }
+
+
 # ---------------------------------------------------------- LoRA training utils
 
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import mimetypes
 import os
 import shlex
 import signal
@@ -28,6 +29,7 @@ from core.models.dashboard import (
     CreateDashboardJobRequest,
     DashboardApprovalKind,
     DashboardApprovalStatus,
+    DashboardArtifactKind,
     DashboardEventLevel,
     DashboardJobStatus,
     DashboardQueueItem,
@@ -47,6 +49,7 @@ _TERMINAL = {
 
 class DashboardWorker:
     HEARTBEAT_INTERVAL = 30  # seconds between worker heartbeats
+    CANCEL_POLL_INTERVAL = 2  # keep operator cancellation responsive during GPU stages
     POLL_INTERVAL = 2        # seconds to wait when queue is empty
     STALL_THRESHOLD = 120    # seconds before a job is flagged stalled in the UI
 
@@ -125,7 +128,14 @@ class DashboardWorker:
 
     async def _run_action(self, action: DashboardQueueItem) -> None:
         job_id = action.job_id
-        req = CreateDashboardJobRequest(**action.payload)
+        try:
+            req = CreateDashboardJobRequest(**action.payload)
+        except Exception as exc:
+            # A malformed/stale queue payload must fail only its own job. Letting
+            # validation escape here terminates the worker loop before its normal
+            # task error handling has even been installed.
+            self._handle_failure(job_id, action.queue_id, exc)
+            return
         logger.info("Worker %s claimed job %s", self.worker_id, job_id)
 
         self.repo.update_job_status(
@@ -224,7 +234,9 @@ class DashboardWorker:
         req = CreateDashboardJobRequest(**action.payload)
         job_id = action.job_id
 
-        if req.phase == "noop":
+        if req.workflow_kind == "wan_animate_direct":
+            await self._run_wan_animate_direct(req, job_id)
+        elif req.phase == "noop":
             await self._run_noop(req, job_id)
         elif req.phase == "lora_train":
             await self._run_lora_training(req, job_id)
@@ -234,6 +246,12 @@ class DashboardWorker:
     def _video_cleanup_target(
         self, req: CreateDashboardJobRequest
     ) -> tuple[str, str, str] | None:
+        if req.workflow_kind == "wan_animate_direct":
+            return (
+                "wan_animate_model_unload",
+                "Wan Animate video model",
+                self.config.settings.wan_animate_base_url,
+            )
         settings = self._config_for_job(req).settings
         if settings.video_adapter == "wan_lightx2v":
             return (
@@ -512,14 +530,18 @@ class DashboardWorker:
         """
         config = self.config
 
-        if req.cast_ref and req.cast_ref != config.cast.id:
+        requested_cast = req.cast_ref
+        if req.workflow_kind == "wan_animate_direct" and req.animate is not None:
+            requested_cast = req.animate.character.cast_ref or requested_cast
+
+        if requested_cast and requested_cast != config.cast.id:
             from pathlib import Path as _Path
             from core.config import load_yaml_model
             from core.models.profile import Cast
 
-            cast_path = _Path(f"config/casts/{req.cast_ref}.yaml")
+            cast_path = _Path(f"config/casts/{requested_cast}.yaml")
             if not cast_path.exists():
-                raise ValueError(f"Unknown cast: {req.cast_ref} (no file at {cast_path})")
+                raise ValueError(f"Unknown cast: {requested_cast} (no file at {cast_path})")
             new_cast = load_yaml_model(cast_path, Cast)
             feedback_dir = _Path(f"assets/{new_cast.id}")
             new_settings = config.settings.model_copy(update={"feedback_log_dir": feedback_dir})
@@ -533,6 +555,134 @@ class DashboardWorker:
             new_settings = config.settings.model_copy(update=updates)
             config = config.model_copy(update={"settings": new_settings})
         return config
+
+    async def _run_wan_animate_direct(
+        self, req: CreateDashboardJobRequest, job_id: str
+    ) -> None:
+        """Run Animate Studio's direct single-video transformation workflow."""
+
+        from adapters.approval.dashboard_image_approval_adapter import (
+            DashboardImageApprovalAdapter,
+        )
+        from core.animate_workflow import run_wan_animate_direct_job
+        from core.storage import create_artifact_store
+        from services.dashboard_assets import DashboardAssetStore, sha256_file
+
+        if req.animate is None:
+            raise ValueError("Direct Wan Animate job is missing animate options")
+
+        job_config = self._config_for_job(req)
+        settings = job_config.settings
+        # The API claims every opaque asset atomically before queueing.  The
+        # worker resolves only under this job ID; staged or cross-job assets
+        # therefore cannot be smuggled into a queued request.
+        asset_store = DashboardAssetStore(
+            db_path=self.repo.db_path,
+            storage_root=Path(settings.data_dir) / "dashboard_assets",
+            allowed_server_roots=[Path(settings.local_video_dir)],
+            max_total_bytes=settings.dashboard_asset_quota_bytes,
+        )
+        image_approval = DashboardImageApprovalAdapter(
+            self.repo,
+            job_id,
+            auto_approve=bool(getattr(settings, "auto_approve_images", False)),
+        )
+        self.repo.record_event(
+            job_id,
+            "phase_started",
+            "Starting direct Wan Animate transformation.",
+            stage_name="wan_animate_direct",
+        )
+        result = await run_wan_animate_direct_job(
+            req,
+            job_config,
+            job_id,
+            asset_store=asset_store,
+            image_approval=image_approval,
+            stage_hook=self._make_stage_hook(job_id),
+        )
+        create_artifact_store(settings).put_json(
+            job_id, "wan_animate_direct", result.model_dump(mode="json")
+        )
+        work_dir = Path(settings.data_dir) / "jobs" / job_id
+        artifact_specs = [
+            (
+                "canonical_look",
+                DashboardArtifactKind.IMAGE,
+                Path(result.canonical_look_uri),
+                None,
+                True,
+                {"role": "canonical_character_look"},
+            ),
+            (
+                "animate_generate",
+                DashboardArtifactKind.VIDEO,
+                Path(result.raw_video_uri),
+                "video/mp4",
+                True,
+                {"role": "raw_wan_animate"},
+            ),
+            (
+                "animate_export",
+                DashboardArtifactKind.VIDEO,
+                Path(result.final_video_uri),
+                "video/mp4",
+                True,
+                {"role": "final_video", "duration_sec": result.duration_sec},
+            ),
+            (
+                "wan_animate_direct",
+                DashboardArtifactKind.JSON,
+                work_dir / "animate_direct_result.json",
+                "application/json",
+                False,
+                {"role": "workflow_result"},
+            ),
+        ]
+        if result.audio_uri:
+            artifact_specs.append(
+                (
+                    "animate_audio",
+                    DashboardArtifactKind.AUDIO,
+                    Path(result.audio_uri),
+                    "audio/wav",
+                    False,
+                    {"role": "selected_audio", "mode": req.animate.audio.mode},
+                )
+            )
+        existing = {
+            (artifact.stage_name, artifact.uri, artifact.sha256)
+            for artifact in self.repo.list_artifacts(job_id)
+        }
+        for stage_name, kind, path, mime_type, previewable, metadata in artifact_specs:
+            if not path.is_file():
+                continue
+            digest = sha256_file(path)
+            key = (stage_name, str(path.resolve()), digest)
+            if key in existing:
+                continue
+            self.repo.record_artifact(
+                job_id,
+                kind,
+                str(path.resolve()),
+                stage_name=stage_name,
+                mime_type=mime_type or mimetypes.guess_type(path.name)[0],
+                size_bytes=path.stat().st_size,
+                sha256=digest,
+                previewable=previewable,
+                metadata=metadata,
+            )
+        self.repo.update_job_status(
+            job_id, DashboardJobStatus.COMPLETED, completed=True
+        )
+        self.repo.append_completed_phase(job_id, "wan_animate_direct")
+        self.repo.record_event(
+            job_id,
+            "phase_completed",
+            "Direct Wan Animate transformation completed.",
+            stage_name="wan_animate_direct",
+            payload={"final_video_uri": result.final_video_uri},
+        )
 
     async def _run_pipeline(self, req: CreateDashboardJobRequest, job_id: str) -> None:
         from core.storage import create_job_store
@@ -915,17 +1065,18 @@ class DashboardWorker:
         self, job_id: str, cancel_event: asyncio.Event
     ) -> None:
         """Send heartbeats while a job runs; set cancel_event when cancel is requested."""
+        next_heartbeat = time.monotonic() + self.HEARTBEAT_INTERVAL
         while True:
-            await asyncio.sleep(self.HEARTBEAT_INTERVAL)
-            self.repo.heartbeat_worker(self.worker_id, current_job_id=job_id)
-            self.repo.heartbeat_job(job_id)
-
-            # Check for operator-requested cancellation.
+            await asyncio.sleep(min(self.CANCEL_POLL_INTERVAL, self.HEARTBEAT_INTERVAL))
             current = self.repo.get_job(job_id)
             if current and current.status == DashboardJobStatus.CANCEL_REQUESTED:
                 logger.info("Cancel requested for job %s — signalling stop.", job_id)
                 cancel_event.set()
                 return
+            if time.monotonic() >= next_heartbeat:
+                self.repo.heartbeat_worker(self.worker_id, current_job_id=job_id)
+                self.repo.heartbeat_job(job_id)
+                next_heartbeat = time.monotonic() + self.HEARTBEAT_INTERVAL
 
     async def _idle_heartbeat(self) -> None:
         """Send periodic heartbeats when no job is running."""

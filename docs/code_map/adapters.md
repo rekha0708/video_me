@@ -297,10 +297,13 @@ Video-generation adapters.
   - `async estimate_cost(self, req: VideoRequest) -> CostEstimate`
   - `async prepare_inputs(self, requests: list[VideoRequest]) -> dict[str, PreparedWanAnimateInput]` — Normalize all driver slices, then run one batch preprocessing process.
   - `async run(self, req: VideoRequest) -> VideoClip`
-  - `_cache_key(self, req: VideoRequest, driver: Path, reference: Path) -> str`
+  - `_cache_key(self, req: VideoRequest, driver: Path, reference: Path, *, driver_sha256: str | None=None, reference_sha256: str | None=None) -> str`
   - `_read_cached(self, path: Path, cache_key: str) -> PreparedWanAnimateInput | None`
   - `async _normalize_driver(self, source: Path, output: Path, start_sec: float, end_sec: float) -> None`
   - `async _probe_duration(self, source: Path) -> float`
+- `_sha256_path(path: Path) -> str`
+- `_revision_hint(path: Path) -> str` — Return a cheap, deterministic revision hint for a repo/model directory.
+- `async _terminate_process_group(process: asyncio.subprocess.Process) -> None` — Terminate a cancelled preprocessor/FFmpeg and every child it spawned.
 - `_local_path(uri: str) -> Path`
 
 ### `adapters/generate_video/wan_lightx2v_adapter.py`
@@ -342,24 +345,27 @@ Lip-sync adapters.
 ### `adapters/lip_sync/latentsync_adapter.py`
 
 - **class `LatentSyncAdapter(LipSync)`** — lip_sync adapter: audio-conditioned LatentSync repair for Wan I2V clips.
-  - `__init__(self, work_dir: Path, base_url: str='http://localhost:8041', inference_steps: int=20, guidance_scale: float=1.5) -> None`
+  - `__init__(self, work_dir: Path, base_url: str='http://localhost:8041', inference_steps: int=20, guidance_scale: float=1.5, job_id: str | None=None) -> None`
   - `async health(self) -> HealthStatus`
   - `async estimate_cost(self, req: LipSyncRequest) -> CostEstimate`
   - `async run(self, req: LipSyncRequest) -> VideoClip`
   - `_check_inputs(self, video_path: Path, audio_path: Path, shot_id: str) -> None`
   - `async _call_latentsync(self, video_path: Path, audio_path: Path, shot_id: str) -> bytes`
+  - `async _cancel_remote_job(self) -> bool` — Best-effort cancellation of this job's active server subprocesses.
   - `_save_clip(self, mp4_bytes: bytes, out_dir: Path) -> Path`
   - `_audio_duration(self, audio_path: Path) -> float`
 
 ### `adapters/lip_sync/lip_sync_adapter.py`
 
 - **class `LipSyncAdapter(LipSync)`** — lip_sync adapter: per-shot mouth alignment via a Wav2Lip-compatible HTTP API.
-  - `__init__(self, work_dir: Path, base_url: str='http://localhost:8040') -> None`
+  - `__init__(self, work_dir: Path, base_url: str='http://localhost:8040', job_id: str | None=None) -> None`
+  - `last_application_status(self) -> str | None` — Whether the service actually applied lip-sync on the last call.
   - `async health(self) -> HealthStatus`
   - `async estimate_cost(self, req: LipSyncRequest) -> CostEstimate`
   - `async run(self, req: LipSyncRequest) -> VideoClip`
   - `_check_inputs(self, video_path: Path, audio_path: Path, shot_id: str) -> None` — Raise FileNotFoundError with a clear stage-ordering message if either input is absent.
   - `async _call_lipsync(self, video_path: Path, audio_path: Path, shot_id: str) -> bytes` — POST to the lip-sync service; return raw MP4 bytes.
+  - `async _cancel_remote_job(self) -> bool` — Best-effort cancellation of this job's active server subprocesses.
   - `_save_clip(self, mp4_bytes: bytes, out_dir: Path) -> Path` — Write synced MP4 bytes to out_dir/synced.mp4 and return the path.
   - `_audio_duration(self, audio_path: Path) -> float` — Read duration from the WAV header; return 0.0 if unreadable.
 
@@ -453,13 +459,14 @@ Character-rendering adapters.
 
 - **class `_RenderEntry`** — One request's bookkeeping inside a batched run_many() call.
 - **class `MusubiFluxAdapter(RenderCharacter)`** — render_character adapter: per-member still images via musubi-tuner
-  - `__init__(self, work_dir: Path, lora_dir: Path=Path('loras'), lora_weight: float=0.9, steps: int=20, width: int=1024, height: int=1024, num_images: int=1, allow_placeholder_lora: bool=False, guidance_scale: float=3.5) -> None`
+  - `__init__(self, work_dir: Path, lora_dir: Path=Path('loras'), lora_weight: float=0.9, steps: int=20, width: int=1024, height: int=1024, num_images: int=1, allow_placeholder_lora: bool=False, guidance_scale: float=3.5, enable_image_edit: bool=False, max_control_images: int=4) -> None`
   - `async health(self) -> HealthStatus`
   - `async estimate_cost(self, req: RenderCharacterRequest) -> CostEstimate`
   - `async run(self, req: RenderCharacterRequest) -> ImageSet`
   - `async run_many(self, requests: list[RenderCharacterRequest]) -> list[ImageSet]` — Render candidates for many requests with ONE model load per LoRA group.
   - `_sanitize_prompt_line(prompt: str) -> str` — Make a prompt safe for the line-oriented --from_file format.
   - `async _generate_group(self, group: list[_RenderEntry]) -> None` — Render every candidate for one LoRA group in a single subprocess.
+  - `_resolve_control_images(self, req: RenderCharacterRequest) -> list[Path]` — Validate FLUX.2 edit references before loading the 32B model.
   - `lora_name(self, lora_ref: str) -> str`
   - `_check_lora(self, req: RenderCharacterRequest) -> Path`
   - `_build_prompt(self, req: RenderCharacterRequest, *, skip_lora: bool) -> str`

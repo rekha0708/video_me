@@ -1,3 +1,4 @@
+import asyncio
 import io
 import sys
 import wave
@@ -74,7 +75,12 @@ def test_latentsync_declares_voice_unload_requirement() -> None:
 
 
 async def test_run_posts_guidance_and_steps(tmp_path: Path) -> None:
-    adapter = _adapter(tmp_path, inference_steps=24, guidance_scale=1.8)
+    adapter = _adapter(
+        tmp_path,
+        inference_steps=24,
+        guidance_scale=1.8,
+        job_id="job-token",
+    )
     fake_httpx, mock_client = _mock_httpx()
 
     with patch.dict(sys.modules, {"httpx": fake_httpx}):
@@ -84,6 +90,7 @@ async def test_run_posts_guidance_and_steps(tmp_path: Path) -> None:
     assert clip.uri.endswith("synced.mp4")
     data = mock_client.post.call_args.kwargs["data"]
     assert data["shot_id"] == "s01"
+    assert data["job_id"] == "job-token"
     assert data["inference_steps"] == "24"
     assert data["guidance_scale"] == "1.8"
 
@@ -101,3 +108,42 @@ async def test_health_down_when_service_unreachable(tmp_path: Path) -> None:
     with patch.dict(sys.modules, {"httpx": fake_httpx}):
         health = await _adapter(tmp_path).health()
     assert health.status == "down"
+
+
+async def test_run_cancellation_requests_remote_job_cancel(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path, job_id="job-cancel")
+    started = asyncio.Event()
+    never = asyncio.Event()
+
+    async def hanging_call(*_args):
+        started.set()
+        await never.wait()
+
+    with (
+        patch.object(adapter, "_call_latentsync", side_effect=hanging_call),
+        patch.object(
+            adapter,
+            "_cancel_remote_job",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as cancel_remote,
+    ):
+        task = asyncio.create_task(adapter.run(_request(tmp_path)))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    cancel_remote.assert_awaited_once_with()
+
+
+async def test_remote_cancel_posts_job_token(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path, job_id="job-token")
+    fake_httpx, mock_client = _mock_httpx()
+
+    with patch.dict(sys.modules, {"httpx": fake_httpx}):
+        assert await adapter._cancel_remote_job() is True
+
+    call = mock_client.post.call_args
+    assert call.args[0].endswith("/cancel")
+    assert call.kwargs["data"] == {"job_id": "job-token"}

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -116,6 +117,42 @@ def test_complete_and_fail_queue_actions(tmp_path: Path) -> None:
     assert item2.status == DashboardQueueStatus.FAILED
     assert item2.error is not None
     assert item2.error["code"] == "ERR"
+
+
+@pytest.mark.asyncio
+async def test_run_action_marks_malformed_direct_payload_failed_without_raising(
+    tmp_path: Path,
+) -> None:
+    worker, repo = _make_worker(tmp_path)
+    job, queued = repo.create_queued_job(_noop_request())
+    malformed_direct_payload = {
+        "workflow_kind": "wan_animate_direct",
+        "rights_cleared": True,
+        "animate": {"mode": "replace"},
+    }
+    with repo._connect() as conn:
+        conn.execute(
+            "UPDATE job_queue SET payload_json = ? WHERE queue_id = ?",
+            (json.dumps(malformed_direct_payload), queued.queue_id),
+        )
+
+    action = repo.claim_next_action(worker.worker_id)
+    assert action is not None
+
+    # Validation errors in a stale/malformed queue row are terminal for that
+    # item, but must not escape and terminate the long-running worker loop.
+    await worker._run_action(action)
+
+    persisted_job = repo.get_job(job.job_id)
+    persisted_action = repo.get_queue_item(action.queue_id)
+    assert persisted_job is not None
+    assert persisted_job.status == DashboardJobStatus.FAILED
+    assert persisted_job.terminal_error is not None
+    assert persisted_job.terminal_error["code"] == "ValidationError"
+    assert persisted_action is not None
+    assert persisted_action.status == DashboardQueueStatus.FAILED
+    assert persisted_action.error is not None
+    assert persisted_action.error["code"] == "ValidationError"
 
 
 def test_reclaim_orphaned_jobs_requeues_dead_workers_claim_and_logs_event(

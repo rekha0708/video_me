@@ -4,7 +4,9 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 from pathlib import Path
+import signal
 from urllib.parse import unquote, urlparse
 
 from core.capabilities.base import GenerateVideo
@@ -13,6 +15,57 @@ from core.models.common import CostEstimate, HealthStatus
 from core.observability import log_event
 
 logger = logging.getLogger(__name__)
+
+_PREPROCESS_CONTRACT_VERSION = 2
+
+
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(8 * 1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _revision_hint(path: Path) -> str:
+    """Return a cheap, deterministic revision hint for a repo/model directory."""
+    root = path.expanduser().resolve()
+    head = root / ".git" / "HEAD"
+    try:
+        value = head.read_text(encoding="utf-8").strip()
+        if value.startswith("ref: "):
+            ref = root / ".git" / value.removeprefix("ref: ")
+            if ref.is_file():
+                value = ref.read_text(encoding="utf-8").strip()
+        if value:
+            return value
+    except OSError:
+        pass
+    for candidate in (root / "model_index.json", root / "config.json", root):
+        try:
+            stat = candidate.stat()
+            return f"{root}:{stat.st_size}:{stat.st_mtime_ns}"
+        except OSError:
+            continue
+    return str(root)
+
+
+async def _terminate_process_group(process: asyncio.subprocess.Process) -> None:
+    """Terminate a cancelled preprocessor/FFmpeg and every child it spawned."""
+    if process.returncode is not None:
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except (AttributeError, ProcessLookupError, PermissionError):
+        process.kill()
+    try:
+        await asyncio.wait_for(process.wait(), timeout=5.0)
+    except asyncio.TimeoutError:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (AttributeError, ProcessLookupError, PermissionError):
+            process.kill()
+        await process.wait()
 
 
 def _local_path(uri: str) -> Path:
@@ -27,7 +80,7 @@ def _local_path(uri: str) -> Path:
 class WanAnimateAdapter(GenerateVideo):
     """Official Wan2.2 Animate motion-transfer/character-replacement backend."""
 
-    version = "1.0.0"
+    version = "1.1.0"
     managed_vram = True
     native_lipsync = False
 
@@ -81,6 +134,8 @@ class WanAnimateAdapter(GenerateVideo):
         self._ffmpeg_bin = ffmpeg_bin
         self._ffprobe_bin = ffprobe_bin
         self._prepared: dict[str, PreparedWanAnimateInput] = {}
+        self._wan_revision = _revision_hint(self._wan_dir)
+        self._model_revision = _revision_hint(self._model_dir)
 
         if mode not in {"animate", "replace"}:
             raise ValueError(f"Unknown Wan Animate mode: {mode}")
@@ -146,6 +201,8 @@ class WanAnimateAdapter(GenerateVideo):
         self.preprocess_dir.mkdir(parents=True, exist_ok=True)
         pending: list[dict] = []
         driver_durations: dict[Path, float] = {}
+        driver_hashes: dict[Path, str] = {}
+        reference_hashes: dict[Path, str] = {}
 
         for req in requests:
             if req.driver is None:
@@ -160,6 +217,10 @@ class WanAnimateAdapter(GenerateVideo):
                 raise ValueError(f"Invalid driver range for {req.shot_id}")
             if driver not in driver_durations:
                 driver_durations[driver] = await self._probe_duration(driver)
+            if driver not in driver_hashes:
+                driver_hashes[driver] = await asyncio.to_thread(_sha256_path, driver)
+            if reference not in reference_hashes:
+                reference_hashes[reference] = await asyncio.to_thread(_sha256_path, reference)
             available = driver_durations[driver]
             if req.driver.end_sec > available + 0.05:
                 raise ValueError(
@@ -170,7 +231,13 @@ class WanAnimateAdapter(GenerateVideo):
             shot_dir = self.preprocess_dir / req.shot_id
             shot_dir.mkdir(parents=True, exist_ok=True)
             normalized = shot_dir / "driver_normalized.mp4"
-            cache_key = self._cache_key(req, driver, reference)
+            cache_key = self._cache_key(
+                req,
+                driver,
+                reference,
+                driver_sha256=driver_hashes[driver],
+                reference_sha256=reference_hashes[reference],
+            )
             manifest_path = shot_dir / "manifest.json"
             cached = self._read_cached(manifest_path, cache_key)
             if cached is not None:
@@ -220,8 +287,13 @@ class WanAnimateAdapter(GenerateVideo):
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True,
             )
-            stdout, _ = await process.communicate()
+            try:
+                stdout, _ = await process.communicate()
+            except asyncio.CancelledError:
+                await _terminate_process_group(process)
+                raise
             if process.returncode != 0:
                 raise RuntimeError(
                     "Wan Animate preprocessing failed: "
@@ -256,34 +328,55 @@ class WanAnimateAdapter(GenerateVideo):
 
         import httpx
         log_event(logger, "generate_video_started", adapter="wan_animate", shot_id=req.shot_id)
-        async with httpx.AsyncClient(timeout=7200.0) as client:
-            response = await client.post(
-                f"{self._base_url}/generate",
-                data={
-                    "prepared_dir": prepared.prepared_dir,
-                    "mode": self.mode,
-                    "fps": str(self.fps),
-                    "refert_num": str(self.refert_num),
-                    "sampling_steps": str(self.sampling_steps),
-                    "seed": "-1",
-                },
-            )
-            if response.status_code >= 400:
-                logger.error("Wan Animate error %s: %s", response.status_code, response.text[:2000])
-            response.raise_for_status()
         out_dir = self.work_dir / req.shot_id
         out_dir.mkdir(parents=True, exist_ok=True)
         output = out_dir / "clip.mp4"
-        output.write_bytes(response.content)
+        output.unlink(missing_ok=True)
+        try:
+            async with httpx.AsyncClient(timeout=7200.0) as client:
+                async with client.stream(
+                    "POST",
+                    f"{self._base_url}/generate",
+                    data={
+                        "prepared_dir": prepared.prepared_dir,
+                        "mode": self.mode,
+                        "fps": str(self.fps),
+                        "refert_num": str(self.refert_num),
+                        "sampling_steps": str(self.sampling_steps),
+                        "seed": "-1",
+                    },
+                ) as response:
+                    if response.status_code >= 400:
+                        detail = (await response.aread()).decode(errors="replace")[:2000]
+                        logger.error(
+                            "Wan Animate error %s: %s", response.status_code, detail
+                        )
+                    response.raise_for_status()
+                    with output.open("wb") as handle:
+                        async for chunk in response.aiter_bytes(8 * 1024 * 1024):
+                            handle.write(chunk)
+        except BaseException:
+            output.unlink(missing_ok=True)
+            raise
         return VideoClip(uri=str(output), duration_sec=req.duration_sec, shot_id=req.shot_id)
 
-    def _cache_key(self, req: VideoRequest, driver: Path, reference: Path) -> str:
+    def _cache_key(
+        self,
+        req: VideoRequest,
+        driver: Path,
+        reference: Path,
+        *,
+        driver_sha256: str | None = None,
+        reference_sha256: str | None = None,
+    ) -> str:
         assert req.driver is not None
         payload = {
-            "driver": str(driver),
-            "driver_size": driver.stat().st_size,
-            "driver_mtime_ns": driver.stat().st_mtime_ns,
-            "reference_sha256": hashlib.sha256(reference.read_bytes()).hexdigest(),
+            "preprocess_contract_version": _PREPROCESS_CONTRACT_VERSION,
+            "adapter_version": self.version,
+            "wan_revision": self._wan_revision,
+            "model_revision": self._model_revision,
+            "driver_sha256": driver_sha256 or _sha256_path(driver),
+            "reference_sha256": reference_sha256 or _sha256_path(reference),
             "start": req.driver.start_sec,
             "end": req.driver.end_sec,
             "mode": self.mode,
@@ -326,9 +419,16 @@ class WanAnimateAdapter(GenerateVideo):
             "-metadata:s:v:0", "rotate=0", "-movflags", "+faststart", str(output),
         ]
         process = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
         )
-        _, stderr = await process.communicate()
+        try:
+            _, stderr = await process.communicate()
+        except asyncio.CancelledError:
+            await _terminate_process_group(process)
+            raise
         if process.returncode != 0:
             raise RuntimeError(
                 f"Failed to normalize driver video: {stderr.decode(errors='replace')[-2000:]}"

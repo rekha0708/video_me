@@ -5,6 +5,7 @@ import shutil
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from core.capabilities.base import RenderCharacter
 from core.models.capabilities import ImageSet, RenderCharacterRequest
@@ -61,6 +62,9 @@ class _RenderEntry:
     lora_weight: float
     steps: int
     guidance_scale: float
+    num_images: int
+    control_image_paths: list[Path] = field(default_factory=list)
+    negative_prompt: str = ""
     image_uris: list[str] = field(default_factory=list)
 
 
@@ -84,7 +88,7 @@ class MusubiFluxAdapter(RenderCharacter):
         guidance_scale: Flux guidance scale.
     """
 
-    version = "1.1.0"
+    version = "1.2.0"
     # Checked with `is True` by the workflow (MagicMock attrs are truthy but not
     # True) — opts Phase A into cross-shot batching via run_many().
     supports_batch = True
@@ -100,6 +104,8 @@ class MusubiFluxAdapter(RenderCharacter):
         num_images: int = 1,
         allow_placeholder_lora: bool = False,
         guidance_scale: float = 3.5,
+        enable_image_edit: bool = False,
+        max_control_images: int = 4,
     ) -> None:
         self.work_dir = work_dir
         self._lora_dir = lora_dir
@@ -110,6 +116,8 @@ class MusubiFluxAdapter(RenderCharacter):
         self._num_images = num_images
         self._allow_placeholder_lora = allow_placeholder_lora
         self._guidance_scale = guidance_scale
+        self._enable_image_edit = enable_image_edit
+        self._max_control_images = max(1, int(max_control_images))
 
     async def health(self) -> HealthStatus:
         missing = []
@@ -125,6 +133,30 @@ class MusubiFluxAdapter(RenderCharacter):
             missing.append(str(_TEXT_ENCODER))
         if missing:
             return HealthStatus(status="down", reason=f"Missing: {', '.join(missing)}")
+        process = await asyncio.create_subprocess_exec(
+            str(_MUSUBI_PYTHON),
+            "-c",
+            (
+                "import flash_attn, torch; "
+                "assert torch.cuda.is_available(), 'CUDA unavailable'; "
+                "assert torch.cuda.get_device_capability() >= (9, 0), "
+                "'FLUX2 Musubi requires Hopper or newer'"
+            ),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            output, _ = await asyncio.wait_for(process.communicate(), timeout=30.0)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            return HealthStatus(status="down", reason="Musubi flash_attn CUDA smoke check timed out")
+        if process.returncode != 0:
+            reason = output.decode(errors="replace")[-800:].strip()
+            return HealthStatus(
+                status="down",
+                reason=f"Musubi flash_attn CUDA smoke check failed: {reason}",
+            )
         return HealthStatus(status="ok")
 
     async def estimate_cost(self, req: RenderCharacterRequest) -> CostEstimate:
@@ -156,6 +188,7 @@ class MusubiFluxAdapter(RenderCharacter):
 
         entries: list[_RenderEntry] = []
         for req in requests:
+            control_image_paths = self._resolve_control_images(req)
             lora_path = self._check_lora(req)
             placeholder = _is_placeholder_lora(lora_path)
             if placeholder and not self._allow_placeholder_lora:
@@ -202,6 +235,9 @@ class MusubiFluxAdapter(RenderCharacter):
                         if req.guidance_scale is not None
                         else self._guidance_scale
                     ),
+                    num_images=req.num_images or self._num_images,
+                    control_image_paths=control_image_paths,
+                    negative_prompt=self._sanitize_prompt_line(req.negative_prompt),
                 )
             )
 
@@ -250,13 +286,18 @@ class MusubiFluxAdapter(RenderCharacter):
         lines: list[str] = []
         seed_map: dict[int, tuple[_RenderEntry, int]] = {}
         for entry in group:
-            for cand_idx in range(self._num_images):
+            for cand_idx in range(entry.num_images):
                 seed = len(lines)
                 seed_map[seed] = (entry, cand_idx)
-                lines.append(
+                line = (
                     f"{self._sanitize_prompt_line(entry.prompt)}"
                     f" --d {seed} --s {entry.steps} --g {entry.guidance_scale}"
                 )
+                if entry.negative_prompt:
+                    line += f" --n {entry.negative_prompt}"
+                for control_path in entry.control_image_paths:
+                    line += f" --ci {control_path}"
+                lines.append(line)
         prompts_file = scratch_dir / "prompts.txt"
         prompts_file.write_text("\n".join(lines) + "\n")
 
@@ -330,9 +371,46 @@ class MusubiFluxAdapter(RenderCharacter):
 
         for entry in group:
             entry.image_uris = [
-                str(entry.out_dir / f"render_{i:02d}.png") for i in range(self._num_images)
+                str(entry.out_dir / f"render_{i:02d}.png") for i in range(entry.num_images)
             ]
         shutil.rmtree(scratch_dir, ignore_errors=True)
+
+    def _resolve_control_images(self, req: RenderCharacterRequest) -> list[Path]:
+        """Validate FLUX.2 edit references before loading the 32B model.
+
+        Musubi's line-oriented batch parser accepts repeated ``--ci`` options.
+        Only local files are allowed here: dashboard asset IDs must already be
+        resolved by the worker, and remote URLs must never reach a model CLI.
+        """
+        if not req.control_image_uris:
+            return []
+        if not self._enable_image_edit:
+            raise RuntimeError(
+                "FLUX.2 reference-image editing is disabled. Complete the Hopper "
+                "smoke test, then set VIDEO_ME_FLUX2_EDIT_ENABLED=true."
+            )
+        if len(req.control_image_uris) > self._max_control_images:
+            raise ValueError(
+                f"FLUX.2 edit accepts at most {self._max_control_images} reference "
+                f"images in this deployment (got {len(req.control_image_uris)})."
+            )
+
+        paths: list[Path] = []
+        for uri in req.control_image_uris:
+            parsed = urlparse(uri)
+            if parsed.scheme == "file":
+                raw = unquote(parsed.path)
+            elif not parsed.scheme:
+                raw = uri
+            else:
+                raise ValueError(f"FLUX.2 control image must be a local file: {uri}")
+            if "\n" in raw or "\r" in raw or " --" in raw:
+                raise ValueError("FLUX.2 control image path contains unsafe prompt tokens")
+            path = Path(raw).expanduser().resolve()
+            if not path.is_file():
+                raise FileNotFoundError(f"FLUX.2 control image not found: {path}")
+            paths.append(path)
+        return paths
 
     def lora_name(self, lora_ref: str) -> str:
         parts = Path(lora_ref).parts

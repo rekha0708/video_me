@@ -6,6 +6,7 @@
 
 ## core/
 
+- `core.animate_workflow` → `adapters.generate_video.wan_animate_adapter`, `adapters.transcribe.whisper_adapter`, `core.cast_params`, `core.gpu_sequencer`, `core.models.capabilities`, `core.models.content`, `core.models.dashboard`, `core.wan_animate_readiness`, `core.workflow`
 - `core.capabilities` → `core.capabilities.base`
 - `core.capabilities.base` → `core.models.capabilities`, `core.models.common`, `core.models.content`
 - `core.config` → `core.models.profile`
@@ -58,9 +59,11 @@
 ## services/
 
 - `services.chat_service` → `core.models.dashboard`, `services.dashboard_repository`
-- `services.dashboard_api` → `core.config`, `core.models.dashboard`, `core.models.profile`, `core.storage`, `scripts.check_runtime_readiness`, `services.chat_service`, `services.dashboard_repository`, `services.gpu_status`, `services.gpu_watermarks`
+- `services.dashboard_api` → `core.cast_params`, `core.config`, `core.models.dashboard`, `core.models.profile`, `core.storage`, `core.wan_animate_readiness`, `scripts.check_runtime_readiness`, `services.chat_service`, `services.dashboard_assets`, `services.dashboard_media`, `services.dashboard_repository`, `services.gpu_status`, `services.gpu_watermarks`
+- `services.dashboard_assets` → `core.models.dashboard`
 - `services.dashboard_repository` → `core.models.dashboard`
-- `services.dashboard_worker` → `adapters.approval.dashboard_approval_adapter`, `adapters.approval.dashboard_image_approval_adapter`, `adapters.story_ingest.llm_adapter`, `adapters.story_ingest.parser`, `adapters.transcript_refine.llm_adapter`, `core.config`, `core.gpu_sequencer`, `core.models.capabilities`, `core.models.dashboard`, `core.models.profile`, `core.storage`, `core.workflow`, `services.dashboard_api`, `services.dashboard_repository`
+- `services.dashboard_worker` → `adapters.approval.dashboard_approval_adapter`, `adapters.approval.dashboard_image_approval_adapter`, `adapters.story_ingest.llm_adapter`, `adapters.story_ingest.parser`, `adapters.transcript_refine.llm_adapter`, `core.animate_workflow`, `core.config`, `core.gpu_sequencer`, `core.models.capabilities`, `core.models.dashboard`, `core.models.profile`, `core.storage`, `core.workflow`, `services.dashboard_api`, `services.dashboard_assets`, `services.dashboard_repository`
+- `services.wan_animate_server` → `core.wan_animate_readiness`
 
 ## scripts/
 

@@ -43,3 +43,4 @@ downloads/instagram/wan2.2_with_lipSync.mp4
 downloads/instagram/wan2.2_with_museTalk_lipsync.mp4
 # ignore the claude settings file, which contains the API key
 .claude/settings.local.json
+nohup.out

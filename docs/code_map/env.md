@@ -37,6 +37,9 @@
 | `VIDEO_ME_CHAT_BASE_URL` | `str` | `'http://localhost:11434/v1'` |
 | `VIDEO_ME_CHAT_API_KEY` | `str` | `'ollama'` |
 | `VIDEO_ME_RENDER_ADAPTER` | `Literal['a1111', 'comfyui_flux', 'musubi_flux']` | `'musubi_flux'` |
+| `VIDEO_ME_FLUX2_EDIT_ENABLED` | `bool` | `False` |
+| `VIDEO_ME_FLUX2_EDIT_MAX_REFERENCES` | `int` | `4` |
+| `VIDEO_ME_DASHBOARD_ASSET_QUOTA_BYTES` | `int` | `50 * 1024 * 1024 * 1024` |
 | `VIDEO_ME_SD_BASE_URL` | `str` | `'http://localhost:7860'` |
 | `VIDEO_ME_COMFYUI_BASE_URL` | `str` | `'http://localhost:8188'` |
 | `VIDEO_ME_VIDEO_ADAPTER` | `Literal['wan_s2v', 'wan', 'wan_lightx2v', 'wan_animate', 'ltx']` | `'wan_s2v'` |

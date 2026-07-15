@@ -199,6 +199,8 @@ def _make_render_adapter(s, work_dir: Path):
             lora_dir=s.lora_dir,
             num_images=s.image_candidates,
             allow_placeholder_lora=s.render_allow_placeholder_lora,
+            enable_image_edit=s.flux2_edit_enabled,
+            max_control_images=s.flux2_edit_max_references,
         )
     if s.render_adapter == "comfyui_flux":
         from adapters.render_character.comfyui_flux_adapter import ComfyUIFluxAdapter

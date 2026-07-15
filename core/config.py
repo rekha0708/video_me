@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     chat_api_key: str = "ollama"
     # --- render_character backend ("a1111", "comfyui_flux", or "musubi_flux") ---
     render_adapter: Literal["a1111", "comfyui_flux", "musubi_flux"] = "musubi_flux"
+    # Musubi FLUX.2 single/multi-reference image editing is experimental. The
+    # source default stays off; setup_gpu enables it for the testing stack only
+    # when the installed Musubi checkout exposes the required edit interface.
+    flux2_edit_enabled: bool = False
+    flux2_edit_max_references: int = 4
+    dashboard_asset_quota_bytes: int = 50 * 1024 * 1024 * 1024
     sd_base_url: str = "http://localhost:7860"       # AUTOMATIC1111 (kept for fallback)
     comfyui_base_url: str = "http://localhost:8188"  # ComfyUI (legacy LTX + comfyui_flux fallback)
 

@@ -48,6 +48,7 @@ WHISPER_DOWNLOAD_ROOT="${VIDEO_ME_WHISPER_DOWNLOAD_ROOT:-}"
 WHISPER_MODEL_REVISION="${VIDEO_ME_WHISPER_MODEL_REVISION:-}"
 SKIP_WHISPER_MODEL=0
 DOWNLOAD_RIFE_MODEL_ONLY=0
+FLUX2_EDIT_ENABLED=false
 
 usage() {
   cat <<'EOF'
@@ -617,9 +618,21 @@ setup_musubi_tuner() {
 
   local pip="$venv_dir/bin/pip"
   run "$pip" install --upgrade pip
-  run "$pip" install accelerate hf_transfer flash-attn --no-build-isolation || \
-      warn "flash-attn build failed — training will be slower without it"
-  run "$pip" install -e "$musubi_dir" || warn "musubi-tuner install failed"
+  run "$pip" install accelerate hf_transfer safetensors
+  run "$pip" install flash-attn --no-build-isolation || \
+      die "Musubi FLUX.2 requires flash-attn, but its installation failed"
+  run "$pip" install -e "$musubi_dir" || die "musubi-tuner install failed"
+  if [[ "$DRY_RUN" == "0" ]]; then
+    "$venv_dir/bin/python" -c \
+      'import flash_attn; from flash_attn import flash_attn_func; assert callable(flash_attn_func)' || \
+      die "Musubi FLUX.2 requires an importable flash_attn runtime"
+    ok "Musubi flash-attn import verified"
+  fi
+
+  # Animate Studio's garment/accessory path uses Musubi FLUX.2 multi-reference
+  # image editing. The flag is assigned only after the interface and every
+  # runtime model asset are checked below.
+  local flux2_generate="$musubi_dir/src/musubi_tuner/flux_2_generate_image.py"
 
   # Configure accelerate for single-GPU bf16
   if [[ "$DRY_RUN" == "0" ]]; then
@@ -630,9 +643,26 @@ setup_musubi_tuner() {
   # Used only for LoRA training (musubi-tuner). ComfyUI inference uses T5+CLIP.
   # Stored at $WORKSPACE/FLUX2-text-encoder/text_encoder/ and tokenizer/.
   local te_shard="$text_enc_dir/text_encoder/model-00001-of-00010.safetensors"
-  if [[ ! -f "$te_shard" ]]; then
+  local text_encoder_complete=1
+  local shard
+  local required
+  for shard in 01 02 03 04 05 06 07 08 09 10; do
+    if [[ ! -s "$text_enc_dir/text_encoder/model-000${shard}-of-00010.safetensors" ]]; then
+      text_encoder_complete=0
+    fi
+  done
+  for required in \
+      "$text_enc_dir/text_encoder/config.json" \
+      "$text_enc_dir/text_encoder/model.safetensors.index.json" \
+      "$text_enc_dir/tokenizer/tokenizer.json" \
+      "$text_enc_dir/tokenizer/tokenizer_config.json"; do
+    if [[ ! -s "$required" ]]; then
+      text_encoder_complete=0
+    fi
+  done
+  if [[ "$text_encoder_complete" == "0" ]]; then
     if [[ -n "$HF_TOKEN" ]]; then
-      log "Downloading Mistral 3 text encoder for Flux 2.0 training (~45 GB, 10 shards)"
+      log "Downloading/resuming Mistral 3 text encoder for Flux 2.0 (~45 GB, 10 shards)"
       if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$text_enc_dir"; fi
       run env HF_HUB_ENABLE_HF_TRANSFER=0 HF_TOKEN="$HF_TOKEN" \
           hf download black-forest-labs/FLUX.2-dev \
@@ -646,6 +676,60 @@ setup_musubi_tuner() {
     fi
   else
     ok "Mistral 3 text encoder already at $text_enc_dir"
+  fi
+
+  # Do not advertise the dashboard edit path based solely on CLI syntax. A
+  # single existing text-encoder shard was previously enough to enable a path
+  # that then failed after loading tens of gigabytes. Verify the DiT, AE, all
+  # ten Mistral shards/index/config, and tokenizer before writing the env flag.
+  local flux2_assets_ready=1
+  local -a flux2_required_assets=(
+    "$WORKSPACE/ComfyUI/models/diffusion_models/flux2-dev.safetensors"
+    "$WORKSPACE/ComfyUI/models/diffusion_models/ae.safetensors"
+    "$text_enc_dir/text_encoder/config.json"
+    "$text_enc_dir/text_encoder/model.safetensors.index.json"
+    "$text_enc_dir/tokenizer/tokenizer.json"
+    "$text_enc_dir/tokenizer/tokenizer_config.json"
+  )
+  for shard in 01 02 03 04 05 06 07 08 09 10; do
+    flux2_required_assets+=(
+      "$text_enc_dir/text_encoder/model-000${shard}-of-00010.safetensors"
+    )
+  done
+  for required in "${flux2_required_assets[@]}"; do
+    if [[ ! -s "$required" ]]; then
+      warn "Musubi FLUX.2 runtime asset missing or empty: $required"
+      flux2_assets_ready=0
+    fi
+  done
+  if [[ "$DRY_RUN" == "0" && "$flux2_assets_ready" == "1" ]]; then
+    if ! "$venv_dir/bin/python" -c \
+      'import json, pathlib, sys
+from safetensors import safe_open
+for path in (pathlib.Path(value) for value in sys.argv[1:]):
+    if path.suffix == ".json":
+        json.loads(path.read_text())
+    elif path.suffix == ".safetensors":
+        with safe_open(path, framework="pt", device="cpu") as handle:
+            if not list(handle.keys()):
+                raise ValueError(f"empty safetensors file: {path}")' \
+      "${flux2_required_assets[@]}"; then
+      warn "Musubi FLUX.2 model/header validation failed"
+      flux2_assets_ready=0
+    else
+      ok "Musubi FLUX.2 model headers and JSON metadata verified"
+    fi
+  fi
+
+  if [[ -f "$flux2_generate" ]] \
+      && grep -q "control_image_path" "$flux2_generate" \
+      && grep -q -- "--ci" "$flux2_generate" \
+      && [[ "$flux2_assets_ready" == "1" ]]; then
+    FLUX2_EDIT_ENABLED=true
+    ok "Musubi FLUX.2 multi-reference edit runtime verified"
+  else
+    FLUX2_EDIT_ENABLED=false
+    warn "Musubi FLUX.2 edit runtime is incomplete — dashboard image references stay disabled"
   fi
 
   ok "musubi-tuner setup complete"
@@ -859,7 +943,7 @@ setup_wan() {
   if "$venv_dir/bin/python" -c "$fa3_sm90_check" 2>/dev/null; then
     ok "FlashAttention-3 verified with a BF16 kernel on Hopper sm_90a"
   else
-    warn "FlashAttention-3 sm_90a verification failed — Wan I2V/S2V will refuse to load while WAN_REQUIRE_FLASH_ATTN_3=true"
+    warn "FlashAttention-3 sm_90a verification failed — Wan I2V/S2V/Animate will refuse to load while WAN_REQUIRE_FLASH_ATTN_3=true"
   fi
 
   if [[ ! -d "$wan_s2v_model_dir" ]] || [[ -z "$(ls -A "$wan_s2v_model_dir" 2>/dev/null)" ]]; then
@@ -905,10 +989,15 @@ setup_wan_animate() {
   # explicitly remove the CPU distribution to prevent silent CPU fallback.
   run "$pip" uninstall -y onnxruntime || true
   run "$pip" install \
-      opencv-python "numpy>=2.0,<2.3" decord peft "diffusers>=0.31.0" \
-      "transformers>=4.49.0,<=4.51.3" accelerate pandas matplotlib loguru \
-      sentencepiece moviepy fastapi uvicorn python-multipart \
+      opencv-python "numpy>=1.24.4,<2" decord peft "diffusers>=0.31.0" \
+      "transformers>=4.49.0,<=4.51.3" "tokenizers>=0.20.3" accelerate \
+      easydict ftfy tqdm Pillow hydra-core iopath pandas matplotlib loguru \
+      sentencepiece moviepy "imageio[ffmpeg]" imageio-ffmpeg dashscope einops \
+      fastapi uvicorn python-multipart \
       "huggingface_hub>=0.30.0,<1.0" onnxruntime-gpu
+  # SAM2 is installed without dependency resolution so it cannot replace the
+  # pod's CUDA torch build.  Its official runtime dependencies are installed
+  # explicitly above (numpy/tqdm/hydra-core/iopath/pillow).
   run "$pip" install --no-deps \
       "git+https://github.com/facebookresearch/sam2.git@0e78a118995e66bb27d78518c4bd9a3e95b4e266"
 
@@ -916,6 +1005,15 @@ setup_wan_animate() {
     local site_packages
     site_packages="$("$venv_dir/bin/python" -c 'import site; print(site.getsitepackages()[0])')"
     printf '%s\n' "$wan_dir" > "$site_packages/wan2_2_repo.pth"
+  fi
+
+  if [[ "$DRY_RUN" == "0" ]]; then
+    "$venv_dir/bin/python" -c \
+      'import cv2, decord, diffusers, easydict, ftfy, hydra, iopath, loguru, onnxruntime, peft, PIL, sam2, torch, transformers, wan; from wan.configs import WAN_CONFIGS; assert "animate-14B" in WAN_CONFIGS' || \
+      die "Wan Animate Python import smoke failed"
+    ok "Wan Animate runtime imports verified"
+  else
+    ok "[dry run] would verify Wan Animate runtime imports"
   fi
 
   local fa3_sm90_check
@@ -926,20 +1024,29 @@ setup_wan_animate() {
   fi
   if [[ "$DRY_RUN" == "0" ]]; then
     "$venv_dir/bin/python" -c "$fa3_sm90_check" || die "Wan Animate FA3 sm_90a verification failed"
-    "$venv_dir/bin/python" -c 'import onnxruntime as ort; assert "CUDAExecutionProvider" in ort.get_available_providers(), ort.get_available_providers()' || \
-      die "Wan Animate ONNX CUDAExecutionProvider is unavailable"
   fi
 
-  if [[ ! -d "$model_dir" ]] || [[ -z "$(ls -A "$model_dir" 2>/dev/null)" ]]; then
-    log "Downloading Wan2.2-Animate-14B (~72.4 GB)"
-    if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$model_dir"; fi
-    run env HF_HUB_ENABLE_HF_TRANSFER=0 ${HF_TOKEN:+HF_TOKEN="$HF_TOKEN"} \
-        hf download Wan-AI/Wan2.2-Animate-14B --local-dir "$model_dir"
-  else
-    ok "Wan2.2 Animate model already at $model_dir"
-  fi
+  # `hf download` resumes .incomplete files and verifies repository metadata.
+  # Invoke it on every setup run: a merely non-empty 72 GB directory may still
+  # be a partial download from an interrupted pod.
+  log "Verifying/resuming Wan2.2-Animate-14B download (~72.4 GB total)"
+  if [[ "$DRY_RUN" == "0" ]]; then mkdir -p "$model_dir"; fi
+  run env HF_HUB_ENABLE_HF_TRANSFER=0 ${HF_TOKEN:+HF_TOKEN="$HF_TOKEN"} \
+      hf download Wan-AI/Wan2.2-Animate-14B --local-dir "$model_dir"
 
   local checkpoints=(
+    "$model_dir/config.json"
+    "$model_dir/diffusion_pytorch_model-00001-of-00004.safetensors"
+    "$model_dir/diffusion_pytorch_model-00002-of-00004.safetensors"
+    "$model_dir/diffusion_pytorch_model-00003-of-00004.safetensors"
+    "$model_dir/diffusion_pytorch_model-00004-of-00004.safetensors"
+    "$model_dir/diffusion_pytorch_model.safetensors.index.json"
+    "$model_dir/models_t5_umt5-xxl-enc-bf16.pth"
+    "$model_dir/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth"
+    "$model_dir/Wan2.1_VAE.pth"
+    "$model_dir/relighting_lora.ckpt"
+    "$model_dir/google/umt5-xxl/spiece.model"
+    "$model_dir/xlm-roberta-large/sentencepiece.bpe.model"
     "$model_dir/process_checkpoint/pose2d/vitpose_h_wholebody.onnx"
     "$model_dir/process_checkpoint/det/yolov10m.onnx"
     "$model_dir/process_checkpoint/sam2/sam2_hiera_large.pt"
@@ -947,15 +1054,31 @@ setup_wan_animate() {
   if [[ "$DRY_RUN" == "0" ]]; then
     local checkpoint
     for checkpoint in "${checkpoints[@]}"; do
-      [[ -f "$checkpoint" ]] || die "Wan Animate checkpoint missing: $checkpoint"
+      [[ -s "$checkpoint" ]] || die "Wan Animate checkpoint missing or empty: $checkpoint"
     done
+    "$venv_dir/bin/python" -c \
+      'import json, pathlib, sys; root=pathlib.Path(sys.argv[1]); index=json.loads((root / "diffusion_pytorch_model.safetensors.index.json").read_text()); shards=set(index["weight_map"].values()); missing=[name for name in shards if not (root / name).is_file() or (root / name).stat().st_size == 0]; assert not missing, f"missing indexed DiT shards: {missing}"' \
+      "$model_dir" || die "Wan Animate DiT shard index verification failed"
+    ok "Wan Animate core model and preprocessing checkpoints verified"
+
+    # Provider-list checks are insufficient: the CPU distribution can coexist
+    # and a broken CUDA provider may still be advertised. Construct both real
+    # preprocessing sessions with CUDA first and require it to remain active.
+    "$venv_dir/bin/python" -c \
+      'import onnxruntime as ort, sys; expected="CUDAExecutionProvider"; assert expected in ort.get_available_providers(), ort.get_available_providers(); sessions=[ort.InferenceSession(path, providers=[expected, "CPUExecutionProvider"]) for path in sys.argv[1:]]; assert all(s.get_providers() and s.get_providers()[0] == expected for s in sessions), [s.get_providers() for s in sessions]' \
+      "$model_dir/process_checkpoint/det/yolov10m.onnx" \
+      "$model_dir/process_checkpoint/pose2d/vitpose_h_wholebody.onnx" || \
+      die "Wan Animate detector/pose ONNX CUDA session smoke failed"
+    ok "Wan Animate detector and pose ONNX CUDA sessions verified"
   fi
 
   if [[ "$SKIP_WAN_ANIMATE_FLUX" == "0" ]]; then
     local flux_dir="$model_dir/process_checkpoint/FLUX.1-Kontext-dev"
-    if [[ ! -d "$flux_dir" ]] || [[ -z "$(ls -A "$flux_dir" 2>/dev/null)" ]]; then
-      run env HF_HUB_ENABLE_HF_TRANSFER=0 ${HF_TOKEN:+HF_TOKEN="$HF_TOKEN"} \
-          hf download black-forest-labs/FLUX.1-Kontext-dev --local-dir "$flux_dir"
+    run env HF_HUB_ENABLE_HF_TRANSFER=0 ${HF_TOKEN:+HF_TOKEN="$HF_TOKEN"} \
+        hf download black-forest-labs/FLUX.1-Kontext-dev --local-dir "$flux_dir"
+    if [[ "$DRY_RUN" == "0" ]]; then
+      [[ -s "$flux_dir/model_index.json" ]] || \
+        die "Wan Animate optional FLUX retarget model is incomplete: $flux_dir"
     fi
   fi
   ok "Wan2.2 Animate environment ready"
@@ -1433,6 +1556,8 @@ VIDEO_ME_CRITIQUE_BASE_URL=http://localhost:11434/v1
 
 # Render: musubi Flux 2.0 Dev (default) | a1111/comfyui_flux (fallback)
 VIDEO_ME_RENDER_ADAPTER=musubi_flux
+VIDEO_ME_FLUX2_EDIT_ENABLED=$FLUX2_EDIT_ENABLED
+VIDEO_ME_FLUX2_EDIT_MAX_REFERENCES=4
 VIDEO_ME_COMFYUI_BASE_URL=http://localhost:8188
 
 # Video: Wan2.2 S2V image+audio singing video (default) | wan_lightx2v fast I2V | wan I2V | ltx legacy
@@ -1447,6 +1572,8 @@ VIDEO_ME_WAN_ANIMATE_DATA_ROOT=$WORKSPACE/video_me/data
 VIDEO_ME_WAN_S2V_FPS=16
 WAN_S2V_OFFLOAD_MODEL=false
 WAN_I2V_OFFLOAD_MODEL=false
+WAN_ANIMATE_OFFLOAD_MODEL=true
+WAN_REQUIRE_FLASH_ATTN_3=true
 LIGHTX2V_I2V_OFFLOAD_MODEL=false
 LIGHTX2V_I2V_WIDTH=400
 LIGHTX2V_I2V_HEIGHT=704

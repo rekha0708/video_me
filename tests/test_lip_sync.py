@@ -1,3 +1,4 @@
+import asyncio
 import io
 import sys
 import wave
@@ -57,6 +58,7 @@ def _mock_httpx(
     *,
     get_error: Exception | None = None,
     post_error: Exception | None = None,
+    lipsync_status: str | None = None,
 ):
     mock_get_resp = MagicMock()
     mock_get_resp.raise_for_status = MagicMock()
@@ -64,6 +66,9 @@ def _mock_httpx(
     mock_post_resp = MagicMock()
     mock_post_resp.raise_for_status = MagicMock()
     mock_post_resp.content = mp4_bytes
+    mock_post_resp.headers = (
+        {"X-Video-Me-Lipsync": lipsync_status} if lipsync_status else {}
+    )
 
     mock_client = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -201,6 +206,16 @@ async def test_run_output_is_synced_mp4(tmp_path: Path) -> None:
     assert clip.uri.endswith("synced.mp4")
 
 
+async def test_run_exposes_service_passthrough_status(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    fake_httpx, _ = _mock_httpx(lipsync_status="passthrough")
+
+    with patch.dict(sys.modules, {"httpx": fake_httpx}):
+        await adapter.run(_request(tmp_path))
+
+    assert adapter.last_application_status == "passthrough"
+
+
 async def test_run_duration_comes_from_audio(tmp_path: Path) -> None:
     adapter = _adapter(tmp_path)
     audio = tmp_path / "precise.wav"
@@ -252,7 +267,7 @@ async def test_run_posts_to_lipsync_endpoint(tmp_path: Path) -> None:
 
 
 async def test_run_sends_shot_id_in_payload(tmp_path: Path) -> None:
-    adapter = _adapter(tmp_path)
+    adapter = _adapter(tmp_path, job_id="job-token")
     req = _request(tmp_path, shot_id="s09")
     fake_httpx, mock_client = _mock_httpx()
 
@@ -261,6 +276,56 @@ async def test_run_sends_shot_id_in_payload(tmp_path: Path) -> None:
 
     data = mock_client.post.call_args.kwargs.get("data") or {}
     assert data.get("shot_id") == "s09"
+    assert data.get("job_id") == "job-token"
+
+
+async def test_musetalk_http_timeout_exceeds_server_timeout(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    fake_httpx, _ = _mock_httpx()
+
+    with patch.dict(sys.modules, {"httpx": fake_httpx}):
+        await adapter.run(_request(tmp_path))
+
+    assert fake_httpx.AsyncClient.call_args.kwargs["timeout"] > 600
+
+
+async def test_run_cancellation_requests_remote_job_cancel(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path, job_id="job-cancel")
+    started = asyncio.Event()
+    never = asyncio.Event()
+
+    async def hanging_call(*_args):
+        started.set()
+        await never.wait()
+
+    with (
+        patch.object(adapter, "_call_lipsync", side_effect=hanging_call),
+        patch.object(
+            adapter,
+            "_cancel_remote_job",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as cancel_remote,
+    ):
+        task = asyncio.create_task(adapter.run(_request(tmp_path)))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    cancel_remote.assert_awaited_once_with()
+
+
+async def test_remote_cancel_posts_job_token(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path, job_id="job-token")
+    fake_httpx, mock_client = _mock_httpx()
+
+    with patch.dict(sys.modules, {"httpx": fake_httpx}):
+        assert await adapter._cancel_remote_job() is True
+
+    call = mock_client.post.call_args
+    assert call.args[0].endswith("/cancel")
+    assert call.kwargs["data"] == {"job_id": "job-token"}
 
 
 async def test_run_propagates_api_error(tmp_path: Path) -> None:

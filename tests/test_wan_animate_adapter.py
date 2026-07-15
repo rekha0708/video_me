@@ -57,18 +57,33 @@ async def test_run_posts_prepared_directory(tmp_path: Path) -> None:
         shot_id="s01", prepared_dir=str(prepared_dir), driver_uri=str(tmp_path / "driver.mp4"),
         start_sec=0, end_sec=2, frame_count=60, fps=30, width=720, height=1280,
     )
-    response = MagicMock(status_code=200, content=b"mp4")
+    response = MagicMock(status_code=200)
     response.raise_for_status = MagicMock()
+    response.aread = AsyncMock(return_value=b"")
+
+    async def chunks(_size):
+        yield b"mp"
+        yield b"4"
+
+    response.aiter_bytes = chunks
+
+    class StreamContext:
+        async def __aenter__(self):
+            return response
+
+        async def __aexit__(self, *_args):
+            return None
+
     client = AsyncMock()
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=None)
-    client.post = AsyncMock(return_value=response)
+    client.stream = MagicMock(return_value=StreamContext())
     fake_httpx = MagicMock(AsyncClient=MagicMock(return_value=client))
 
     with patch.dict(sys.modules, {"httpx": fake_httpx}):
         clip = await adapter.run(_request(tmp_path))
 
-    data = client.post.call_args.kwargs["data"]
+    data = client.stream.call_args.kwargs["data"]
     assert data["mode"] == "replace"
     assert data["refert_num"] == "5"
     assert data["prepared_dir"] == str(prepared_dir)

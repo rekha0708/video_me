@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import uuid
 import wave
 from pathlib import Path
 
@@ -8,6 +10,8 @@ from core.models.common import CostEstimate, HealthStatus
 from core.observability import log_event
 
 logger = logging.getLogger(__name__)
+
+_REMOTE_CANCEL_TIMEOUT_SEC = 15.0
 
 
 class LatentSyncAdapter(LipSync):
@@ -28,11 +32,13 @@ class LatentSyncAdapter(LipSync):
         base_url: str = "http://localhost:8041",
         inference_steps: int = 20,
         guidance_scale: float = 1.5,
+        job_id: str | None = None,
     ) -> None:
         self.work_dir = work_dir
         self._base_url = base_url.rstrip("/")
         self._inference_steps = inference_steps
         self._guidance_scale = guidance_scale
+        self._job_id = (job_id or "").strip() or uuid.uuid4().hex
 
     async def health(self) -> HealthStatus:
         try:
@@ -78,7 +84,11 @@ class LatentSyncAdapter(LipSync):
             guidance_scale=self._guidance_scale,
         )
 
-        mp4_bytes = await self._call_latentsync(video_path, audio_path, req.shot_id)
+        try:
+            mp4_bytes = await self._call_latentsync(video_path, audio_path, req.shot_id)
+        except asyncio.CancelledError:
+            await asyncio.shield(self._cancel_remote_job())
+            raise
         synced_path = self._save_clip(mp4_bytes, out_dir)
         duration = self._audio_duration(audio_path)
 
@@ -115,6 +125,7 @@ class LatentSyncAdapter(LipSync):
                     f"{self._base_url}/lipsync",
                     data={
                         "shot_id": shot_id,
+                        "job_id": self._job_id,
                         "inference_steps": str(self._inference_steps),
                         "guidance_scale": str(self._guidance_scale),
                     },
@@ -127,6 +138,26 @@ class LatentSyncAdapter(LipSync):
                 logger.error("LatentSync service error %s: %s", resp.status_code, resp.text[:1000])
             resp.raise_for_status()
         return resp.content
+
+    async def _cancel_remote_job(self) -> bool:
+        """Best-effort cancellation of this job's active server subprocesses."""
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=_REMOTE_CANCEL_TIMEOUT_SEC) as client:
+                resp = await client.post(
+                    f"{self._base_url}/cancel",
+                    data={"job_id": self._job_id},
+                )
+                resp.raise_for_status()
+            return True
+        except Exception as exc:
+            logger.warning(
+                "Could not confirm LatentSync cancellation for job %s: %s",
+                self._job_id,
+                exc,
+            )
+            return False
 
     def _save_clip(self, mp4_bytes: bytes, out_dir: Path) -> Path:
         path = out_dir / "synced.mp4"

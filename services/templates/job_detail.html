@@ -4,6 +4,7 @@
 
 {% block content %}
 {% set status = job.status | string %}
+{% set is_direct_animate = job.request.get('workflow_kind') == 'wan_animate_direct' %}
 
 <!-- Stall warning banner (shown by JS when heartbeat is stale) -->
 <div id="stall-banner" class="stall-banner">
@@ -36,9 +37,16 @@
       {% endif %}
       &nbsp;{{ job.source_url | truncate(72) }} &nbsp;·&nbsp; phase: {{ job.phase }}
       &nbsp;·&nbsp; lang: {{ job.target_language }}
-      {% set cast_ref = job.request.get('cast_ref') %}
+      {% set direct_options = job.request.get('animate', {}) if is_direct_animate else {} %}
+      {% set direct_character = direct_options.get('character', {}) %}
+      {% set cast_ref = direct_character.get('cast_ref') if is_direct_animate else job.request.get('cast_ref') %}
       {% if cast_ref %}
         &nbsp;·&nbsp; cast: <span class="td-mono">{{ cast_ref }}</span>
+      {% endif %}
+      {% if is_direct_animate %}
+        &nbsp;·&nbsp; mode: <span class="td-mono">{{ direct_options.get('mode', 'animate') | replace('_', ' ') }}</span>
+        &nbsp;·&nbsp; look: <span class="td-mono">{{ direct_character.get('look_source', 'auto_lora') | replace('_', ' ') }}</span>
+        &nbsp;·&nbsp; audio: <span class="td-mono">{{ direct_options.get('audio', {}).get('mode', 'driver') | replace('_', ' ') }}</span>
       {% endif %}
       {% set overrides = job.request.get('overrides', {}) %}
       {% set video_override = overrides.get('video_adapter') %}
@@ -80,12 +88,23 @@
 #}
 {% set phased_modes = ['transcribe','script_plan','render','assemble'] %}
 {% if job.phase in phased_modes or job.phase == 'all' %}
+{% if is_direct_animate %}
+{% set phase_labels = [
+  ('animate_validate',   'Validate'),
+  ('canonical_look',     'Character look'),
+  ('animate_preprocess', 'Motion prep'),
+  ('animate_audio',      'Audio'),
+  ('animate_generate',   'Animate'),
+  ('animate_finish',     'Finish'),
+] %}
+{% else %}
 {% set phase_labels = [
   ('transcribe',  'Transcribe'),
   ('script_plan', 'Script + Plan'),
   ('render',      'Render'),
   ('assemble',    'Assemble'),
 ] %}
+{% endif %}
 {% set completed_phases = stepper.completed %}
 <div class="card" style="padding:16px 20px">
   <div class="phase-stepper">
@@ -133,7 +152,15 @@
   {# Re-run controls — show when the job is FAILED or COMPLETED.
      Lets the operator pick which phase to start from and optionally swap
      the video/lip-sync model while keeping cached renders. #}
-  {% if status in ('failed', 'completed') %}
+  {% if status in ('failed', 'completed') and is_direct_animate %}
+  <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+    <button class="btn btn-primary" id="retry-btn" data-direct-animate="true"
+            onclick="retryJob('{{ job.job_id }}', this)">↻ Re-run Animate job</button>
+    <span class="text-muted" style="margin-left:10px;font-size:12px">
+      Reuses only semantic caches whose driver, look, audio, model, and output inputs still match.
+    </span>
+  </div>
+  {% elif status in ('failed', 'completed') %}
   <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
     <div class="flex items-center gap-8" style="flex-wrap:wrap">
       <label style="font-size:13px;font-weight:500">Re-run from</label>
@@ -470,7 +497,6 @@
 
 <!-- ── Artifacts ────────────────────────────────────────────────────── -->
 {% if detail.job.job_id %}
-{% set artifacts = [] %}
 {% if artifacts %}
 <div class="card">
   <div class="card-title">Artifacts</div>
@@ -484,7 +510,13 @@
         <tr>
           <td>{{ a.kind.value }}</td>
           <td class="td-muted">{{ a.stage_name or '—' }}</td>
-          <td class="td-mono td-muted">{{ a.uri | truncate(50) }}</td>
+          <td class="td-mono td-muted">
+            {% if a.previewable %}
+              <a href="/img/{{ a.uri | b64path }}" target="_blank" rel="noopener">Preview {{ a.kind.value }}</a>
+            {% else %}
+              {{ a.uri | truncate(50) }}
+            {% endif %}
+          </td>
           <td class="td-muted">{{ (a.size_bytes // 1024) ~ ' KB' if a.size_bytes else '—' }}</td>
         </tr>
         {% endfor %}
@@ -721,24 +753,27 @@ async function advancePhase(jobId, btn) {
 }
 
 async function retryJob(jobId, btn) {
+  const directAnimate = btn.dataset.directAnimate === "true";
   const phase = document.getElementById("rerun-phase")?.value || "";
   const videoAdapter = document.getElementById("rerun-video-adapter")?.value || "";
   const lipsyncAdapter = document.getElementById("rerun-lipsync-adapter")?.value || "";
   const videoUpscale = document.getElementById("rerun-video-upscale")?.checked || false;
   const videoEnhance = document.getElementById("rerun-video-enhance")?.checked || false;
   const videoEnhanceAdapter = document.getElementById("rerun-video-enhance-adapter")?.value || "";
-  const phaseLabel = phase || "same phase";
+  const phaseLabel = directAnimate ? "Animate workflow" : (phase || "same phase");
   if (!confirm(`Re-run job ${jobId} from "${phaseLabel}"?\n\nStages that already completed will be skipped.`)) return;
   const label = btn.textContent;
   btn.disabled = true;
   btn.textContent = "Queuing…";
-  const body = {};
-  if (phase) body.phase = phase;
-  if (videoAdapter) body.video_adapter = videoAdapter;
-  if (lipsyncAdapter) body.lipsync_adapter = lipsyncAdapter;
-  body.video_upscale_enabled = videoUpscale;
-  body.video_enhance_enabled = videoEnhance;
-  if (videoEnhanceAdapter) body.video_enhance_adapter = videoEnhanceAdapter;
+  const body = directAnimate ? {phase: "all"} : {};
+  if (!directAnimate) {
+    if (phase) body.phase = phase;
+    if (videoAdapter) body.video_adapter = videoAdapter;
+    if (lipsyncAdapter) body.lipsync_adapter = lipsyncAdapter;
+    body.video_upscale_enabled = videoUpscale;
+    body.video_enhance_enabled = videoEnhance;
+    if (videoEnhanceAdapter) body.video_enhance_adapter = videoEnhanceAdapter;
+  }
   try {
     const res = await fetch(`/api/jobs/${jobId}/retry`, {
       method: "POST",

@@ -2,11 +2,21 @@
 
 # Dashboard API routes (`services/dashboard_api.py`)
 
-43 routes.
+53 routes.
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
 | GET | `/` | `ui_jobs_list` |  |
+| GET | `/animate/new` | `ui_new_animate_job` | Dedicated creator for direct Wan 2.2 Animate jobs. |
+| GET | `/api/animate/options` | `animate_options` |  |
+| POST | `/api/assets/image/upload` | `upload_image_asset` |  |
+| POST | `/api/assets/video/from-server-file` | `import_video_asset_from_server` |  |
+| POST | `/api/assets/video/from-url` | `import_video_asset_from_url` |  |
+| GET | `/api/assets/video/server-files` | `list_server_video_assets` |  |
+| POST | `/api/assets/video/upload` | `upload_video_asset` |  |
+| DELETE | `/api/assets/{asset_id}` | `delete_dashboard_asset` |  |
+| GET | `/api/assets/{asset_id}` | `get_dashboard_asset` |  |
+| GET | `/api/assets/{asset_id}/media` | `serve_dashboard_asset` |  |
 | GET | `/api/casts` | `list_casts` |  |
 | GET | `/api/config/defaults` | `config_defaults` |  |
 | GET | `/api/health/live` | `live` |  |

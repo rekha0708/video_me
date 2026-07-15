@@ -15,6 +15,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE="${WORKSPACE:-/workspace}"
 LOG_DIR="$WORKSPACE/logs"
 DASHBOARD_PORT="${DASHBOARD_PORT:-8765}"
+DASHBOARD_HOST="${DASHBOARD_HOST:-${VIDEO_ME_DASHBOARD_HOST:-127.0.0.1}}"
 mkdir -p "$LOG_DIR"
 
 log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
@@ -64,7 +65,7 @@ cd "$ROOT_DIR"
 
 log "Starting Dashboard API (port $DASHBOARD_PORT)"
 nohup .venv/bin/uvicorn services.dashboard_api:create_app --factory \
-  --port "$DASHBOARD_PORT" --host 0.0.0.0 \
+  --port "$DASHBOARD_PORT" --host "$DASHBOARD_HOST" \
   >"$LOG_DIR/dashboard_api.log" 2>&1 &
 disown
 ok "Dashboard API starting (log: $LOG_DIR/dashboard_api.log)"

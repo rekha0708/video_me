@@ -46,13 +46,74 @@ Chatterbox TTS HTTP service wrapper.
 - `_make_repository(config: AppConfig) -> DashboardRepository`
 - `create_app(*, repository: DashboardRepository | None=None, config_loader: Callable[[], AppConfig]=load_app_config)` — Create the dashboard FastAPI app.
 
+### `services/dashboard_assets.py`
+
+Opaque, durable media assets for dashboard jobs.
+
+- **class `DashboardAssetError(RuntimeError)`** — Base class for errors that API routes can map to stable HTTP codes.
+- **class `DashboardAssetNotFoundError(DashboardAssetError)`**
+- **class `DashboardAssetAccessError(DashboardAssetError)`**
+- **class `DashboardAssetStateError(DashboardAssetError)`**
+- **class `DashboardAssetKindError(DashboardAssetError)`**
+- **class `DashboardAssetPathError(DashboardAssetError)`**
+- **class `DashboardAssetMetadataError(DashboardAssetError)`**
+- **class `DashboardAssetQuotaError(DashboardAssetError)`**
+- **class `DashboardAssetStore`** — SQLite-backed staged/claimed asset registry.
+  - `__init__(self, db_path: Path, storage_root: Path, allowed_server_roots: Iterable[Path]=(), *, default_ttl: timedelta=timedelta(hours=24), max_total_bytes: int=50 * 1024 * 1024 * 1024) -> None`
+  - `_connect(self) -> sqlite3.Connection`
+  - `_init_schema(self) -> None`
+  - `allocate_path(self, kind: DashboardAssetKind | str, *, suffix: str, asset_id: str | None=None) -> tuple[str, Path]` — Allocate a collision-resistant destination for a streamed upload.
+  - `validate_server_path(self, candidate: str | Path, *, expected_kind: DashboardAssetKind | str | None=None) -> Path` — Resolve a server-file selection under an explicitly allowed root.
+  - `create_staged(self, *, owner_id: str, kind: DashboardAssetKind | str, original_name: str, mime_type: str, storage_path: Path, sha256: str | None=None, size_bytes: int | None=None, metadata: Mapping[str, Any] | None=None, asset_id: str | None=None, expires_at: datetime | None=None, now: datetime | None=None) -> DashboardAssetRecord` — Register a fully streamed and validated file as a staged asset.
+  - `get(self, asset_id: str) -> DashboardAssetRecord | None`
+  - `update_metadata(self, asset_id: str, *, owner_id: str, metadata: Mapping[str, Any] | None=None, mime_type: str | None=None, merge: bool=True, now: datetime | None=None) -> DashboardAssetRecord` — Save normalized probe/decode metadata while an asset is staged.
+  - `resolve_asset(self, asset_id: str, *, expected_kind: DashboardAssetKind | str | None=None, owner_id: str | None=None, job_id: str | None=None, now: datetime | None=None) -> tuple[DashboardAssetRecord, Path]` — Authorize an asset and return its record plus safe server path.
+  - `validate_animate_assets(self, options: WanAnimateJobOptions, *, owner_id: str, job_id: str | None=None, now: datetime | None=None) -> list[DashboardAssetRecord]` — Validate ownership/kinds and metadata needed by Animate semantics.
+  - `claim_assets(self, asset_ids: Iterable[str], *, owner_id: str, job_id: str, now: datetime | None=None) -> list[DashboardAssetRecord]` — Atomically claim all assets for one job or claim none of them.
+  - `release_claims(self, *, job_id: str, owner_id: str | None=None, asset_ids: Iterable[str] | None=None, extend_ttl: bool=True, now: datetime | None=None) -> list[DashboardAssetRecord]` — Roll back claims after queue creation fails.
+  - `expire_staged(self, *, now: datetime | None=None, delete_files: bool=False) -> list[DashboardAssetRecord]` — Mark overdue staged assets expired and optionally remove their files.
+  - `delete_staged(self, asset_id: str, *, owner_id: str) -> bool` — Delete an unclaimed staged/expired record and its managed file.
+  - `delete_claimed_for_job(self, job_id: str) -> list[DashboardAssetRecord]` — Delete immutable inputs after their terminal dashboard job is deleted.
+  - `delete_orphaned_claims(self) -> list[DashboardAssetRecord]` — Repair a crash between asset claim and dashboard-job creation.
+  - `_validate_asset_id(asset_id: str) -> None`
+  - `_safe_original_name(original_name: str) -> str`
+  - `_utc(value: datetime) -> datetime`
+  - `_dt(value: datetime) -> str`
+  - `_is_within(path: Path, root: Path) -> bool`
+  - `_storage_path(self, path: Path, *, must_exist: bool) -> Path`
+  - `_require_owner(record: DashboardAssetRecord, owner_id: str) -> None`
+  - `_require_row(row: sqlite3.Row | None, asset_id: str) -> DashboardAssetRecord`
+  - `_get_required(self, asset_id: str) -> DashboardAssetRecord`
+  - `_mark_expired(self, asset_id: str) -> None`
+  - `_delete_record_files(self, records: Iterable[DashboardAssetRecord]) -> None`
+  - `_from_row(row: sqlite3.Row) -> DashboardAssetRecord`
+- `make_dashboard_asset_id() -> str` — Return an opaque, URL-safe identifier with 192 bits of randomness.
+- `sha256_file(path: Path, *, chunk_size: int=1024 * 1024) -> str` — Hash a file without loading it into memory.
+- `collect_animate_asset_requirements(options: WanAnimateJobOptions) -> dict[str, DashboardAssetKind]` — Collect every opaque asset referenced by a direct Animate request.
+
+### `services/dashboard_media.py`
+
+Safe media ingestion helpers for dashboard-owned opaque assets.
+
+- **class `MediaIngestError(ValueError)`**
+  - `__init__(self, code: str, message: str) -> None`
+- `async stream_upload(upload: Any, destination: Path, *, max_bytes: int) -> int` — Stream an UploadFile-like object to disk with a hard byte limit.
+- `copy_local_file_limited(source: Path, destination: Path, *, max_bytes: int) -> int` — Copy one validated server file through a no-follow descriptor with a hard cap.
+- `_fraction(value: str | None) -> float`
+- `async probe_video(path: Path, *, ffprobe_bin: str, max_duration_sec: float=600.0, min_short_side: int=256, max_long_side: int=8192, max_fps: float=240.0, timeout_sec: float=30.0) -> dict[str, Any]` — Decode/probe a driver and return normalized client-safe metadata.
+- `normalize_image(source: Path, destination: Path, *, max_pixels: int=50000000, min_short_side: int=128) -> dict[str, Any]` — Decode, orient, RGB-normalize, and strip metadata into a canonical PNG.
+- `async _assert_public_http_url(url: str) -> tuple[ParseResult, list[str]]`
+- `_pinned_url(parsed: ParseResult, address: str) -> str` — Replace only the connection host while retaining path/query semantics.
+- `_original_host_header(parsed: ParseResult) -> str`
+- `async download_public_video_url(url: str, destination: Path, *, max_bytes: int=2 * 1024 * 1024 * 1024, max_redirects: int=5) -> tuple[int, str, str]` — Download a direct public video URL while re-checking every redirect.
+
 ### `services/dashboard_repository.py`
 
 - **class `DashboardRepository`** — SQLite-backed dashboard store.
   - `__init__(self, db_path: Path) -> None`
   - `_connect(self) -> sqlite3.Connection`
   - `_init_schema(self) -> None`
-  - `create_queued_job(self, request: CreateDashboardJobRequest, *, priority: int=100) -> tuple[DashboardJobRecord, DashboardQueueItem]`
+  - `create_queued_job(self, request: CreateDashboardJobRequest, *, priority: int=100, job_id: str | None=None) -> tuple[DashboardJobRecord, DashboardQueueItem]`
   - `get_job(self, job_id: str) -> DashboardJobRecord | None`
   - `save_job(self, job: DashboardJobRecord) -> DashboardJobRecord` — Persist an edited dashboard record, including its request payload.
   - `list_jobs(self, *, limit: int=50) -> list[DashboardJobRecord]`
@@ -117,6 +178,7 @@ Dashboard worker — claims queued jobs, runs the pipeline, emits events.
   - `async _run_lora_subprocess(self, job_id: str, stage_name: str, cmd: list[str]) -> None` — Run one LoRA pipeline step (cache latents/text-encoder or train), streaming
   - `_make_stage_hook(self, job_id: str)` — Return a callback that writes per-stage events to the dashboard repo.
   - `_config_for_job(self, req: CreateDashboardJobRequest) -> AppConfig` — Apply the job's per-request overrides (model/adapter choices) on top
+  - `async _run_wan_animate_direct(self, req: CreateDashboardJobRequest, job_id: str) -> None` — Run Animate Studio's direct single-video transformation workflow.
   - `async _run_pipeline(self, req: CreateDashboardJobRequest, job_id: str) -> None`
   - `async _seed_story_job(self, req: CreateDashboardJobRequest, job_id: str) -> dict[str, str] | None` — Pre-seed fetch_media + transcribe artifacts from the pasted story.
   - `async _run_transcript_review_gate(self, req: CreateDashboardJobRequest, job_id: str) -> None` — Pause after transcribe, let operator review/refine the transcript, then mark done.
@@ -186,11 +248,20 @@ High/low watermark tracking for the GPU/VRAM stats the dashboard already
 
 LatentSync lip-sync HTTP service wrapper.
 
+- **class `JobCancelledError(RuntimeError)`** — Raised inside a request after its job was cancelled via /cancel.
+- `_validated_job_id(job_id: str) -> str`
+- `_register_process(job_id: str | None, process: asyncio.subprocess.Process) -> None`
+- `_unregister_process(job_id: str | None, process: asyncio.subprocess.Process) -> None`
 - `async lifespan(app: FastAPI)`
+- `async _job_cancelled_handler(_request: Request, exc: JobCancelledError) -> JSONResponse`
+- `async _terminate_process_group(process: asyncio.subprocess.Process) -> None` — Terminate a child process and all descendants in its process group.
+- `async _run_subprocess(cmd: list[str], *, cwd: Path | None=None, env: dict[str, str] | None=None, timeout: float, job_id: str | None=None) -> tuple[int, bytes, bytes]` — Run a cancellable subprocess in its own process group.
+- `async _cancel_active_job(job_id: str) -> int` — Mark a job cancelled and terminate every currently registered child.
+- `async cancel_job(job_id: str=Form(...)) -> JSONResponse`
 - `_resolve_repo_path(value: str) -> Path`
 - `health() -> JSONResponse`
-- `async lipsync(video: UploadFile=File(...), audio: UploadFile=File(...), shot_id: str=Form(...), inference_steps: int=Form(20), guidance_scale: float=Form(1.5)) -> Response`
-- `_normalize_inputs(raw_video: Path, raw_audio: Path, video_path: Path, audio_path: Path) -> None` — Match LatentSync's documented preprocessing assumptions: 25 FPS + 16 kHz mono audio.
+- `async lipsync(video: UploadFile=File(...), audio: UploadFile=File(...), shot_id: str=Form(...), job_id: str=Form(...), inference_steps: int=Form(20), guidance_scale: float=Form(1.5)) -> Response`
+- `async _normalize_inputs(raw_video: Path, raw_audio: Path, video_path: Path, audio_path: Path, *, job_id: str) -> None` — Match LatentSync's documented preprocessing assumptions: 25 FPS + 16 kHz mono audio.
 
 ### `services/musetalk_compat/sitecustomize.py`
 
@@ -202,10 +273,19 @@ PyTorch 2.6+ changed torch.load's weights_only default from False to True,
 
 MuseTalk lip-sync HTTP service wrapper.
 
+- **class `JobCancelledError(RuntimeError)`** — Raised inside a request after its job was cancelled via /cancel.
+- `_validated_job_id(job_id: str) -> str`
+- `_register_process(job_id: str | None, process: asyncio.subprocess.Process) -> None`
+- `_unregister_process(job_id: str | None, process: asyncio.subprocess.Process) -> None`
 - `async lifespan(app: FastAPI)`
+- `async _job_cancelled_handler(_request: Request, exc: JobCancelledError) -> JSONResponse`
+- `async _terminate_process_group(process: asyncio.subprocess.Process) -> None` — Terminate a child process and all descendants in its process group.
+- `async _run_subprocess(cmd: list[str], *, cwd: Path | None=None, env: dict[str, str] | None=None, timeout: float, job_id: str | None=None) -> tuple[int, bytes, bytes]` — Run a cancellable subprocess in its own process group.
+- `async _cancel_active_job(job_id: str) -> int` — Mark a job cancelled and terminate every currently registered child.
+- `async cancel_job(job_id: str=Form(...)) -> JSONResponse`
 - `health() -> JSONResponse`
-- `async lipsync(video: UploadFile=File(...), audio: UploadFile=File(...), shot_id: str=Form(...)) -> Response`
-- `_convert_to_mp4(avi: Path, out: Path) -> Path`
+- `async lipsync(video: UploadFile=File(...), audio: UploadFile=File(...), shot_id: str=Form(...), job_id: str=Form(...)) -> Response`
+- `async _convert_to_mp4(avi: Path, out: Path, *, job_id: str) -> Path`
 
 ### `services/wan_animate_preprocess.py`
 
@@ -218,15 +298,21 @@ Short-lived batch preprocessor for official Wan2.2 Animate inputs.
 
 Deferred-loading HTTP service for official Wan2.2-Animate-14B.
 
+- `_probe_flash_attn_3() -> dict[str, object]`
+- `_flash_attn_3_readiness(*, refresh: bool=False) -> dict[str, object]`
+- `_model_readiness_error() -> str | None`
+- `_normalize_seed(seed: int) -> int`
+- `_validate_encoded_video(path: Path) -> None`
 - `_load_pipeline(mode: str) -> None`
 - `_unload_pipeline() -> None`
 - `_safe_prepared_dir(value: str) -> Path`
-- `_inference(prepared_dir: Path, mode: str, fps: int, refert_num: int, sampling_steps: int, seed: int) -> bytes`
+- `_inference(prepared_dir: Path, mode: str, fps: int, refert_num: int, sampling_steps: int, seed: int) -> Path`
+- `_delete_response_file(path: Path) -> None`
 - `async lifespan(_: FastAPI)`
 - `health() -> JSONResponse`
 - `async load(mode: str=Form('animate')) -> JSONResponse`
 - `async unload() -> JSONResponse`
-- `async generate(prepared_dir: str=Form(...), mode: str=Form('animate'), fps: int=Form(30), refert_num: int=Form(1), sampling_steps: int=Form(20), seed: int=Form(-1)) -> Response`
+- `async generate(prepared_dir: str=Form(...), mode: str=Form('animate'), fps: int=Form(30), refert_num: int=Form(1), sampling_steps: int=Form(20), seed: int=Form(-1)) -> FileResponse`
 
 ### `services/wan_lightx2v_server.py`
 

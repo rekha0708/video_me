@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import uuid
 import wave
 from pathlib import Path
 
@@ -8,6 +10,9 @@ from core.models.common import CostEstimate, HealthStatus
 from core.observability import log_event
 
 logger = logging.getLogger(__name__)
+
+_MUSETALK_HTTP_TIMEOUT_SEC = 1200.0
+_REMOTE_CANCEL_TIMEOUT_SEC = 15.0
 
 
 class LipSyncAdapter(LipSync):
@@ -25,6 +30,7 @@ class LipSyncAdapter(LipSync):
                          audio  (file, WAV),
                          shot_id (str)
                        → raw MP4 bytes
+      POST /cancel   → form data: job_id (str)
 
     Output duration is read from the audio WAV header — the synced clip is
     trimmed/padded by the service to match the dialogue, so audio length
@@ -43,9 +49,21 @@ class LipSyncAdapter(LipSync):
         self,
         work_dir: Path,
         base_url: str = "http://localhost:8040",
+        job_id: str | None = None,
     ) -> None:
         self.work_dir = work_dir
         self._base_url = base_url.rstrip("/")
+        # Adapter instances are job-scoped.  The opaque token lets a cancelled
+        # client request stop every server-side child process for this job,
+        # without exposing a dashboard job ID or a local filesystem path.
+        self._job_id = (job_id or "").strip() or uuid.uuid4().hex
+        self._last_application_status: str | None = None
+
+    @property
+    def last_application_status(self) -> str | None:
+        """Whether the service actually applied lip-sync on the last call."""
+
+        return self._last_application_status
 
     async def health(self) -> HealthStatus:
         try:
@@ -89,7 +107,15 @@ class LipSyncAdapter(LipSync):
             audio=str(audio_path),
         )
 
-        mp4_bytes = await self._call_lipsync(video_path, audio_path, req.shot_id)
+        try:
+            mp4_bytes = await self._call_lipsync(video_path, audio_path, req.shot_id)
+        except asyncio.CancelledError:
+            # Cancelling an HTTP client request is not guaranteed to cancel the
+            # FastAPI handler.  Use a separate request to kill the registered
+            # MuseTalk/ffmpeg process group, and wait for that acknowledgement
+            # before allowing the dashboard worker to start another GPU job.
+            await asyncio.shield(self._cancel_remote_job())
+            raise
         synced_path = self._save_clip(mp4_bytes, out_dir)
         duration = self._audio_duration(audio_path)
 
@@ -132,18 +158,42 @@ class LipSyncAdapter(LipSync):
         """POST to the lip-sync service; return raw MP4 bytes."""
         import httpx
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        async with httpx.AsyncClient(timeout=_MUSETALK_HTTP_TIMEOUT_SEC) as client:
             with video_path.open("rb") as vf, audio_path.open("rb") as af:
                 resp = await client.post(
                     f"{self._base_url}/lipsync",
-                    data={"shot_id": shot_id},
+                    data={"shot_id": shot_id, "job_id": self._job_id},
                     files={
                         "video": (video_path.name, vf, "video/mp4"),
                         "audio": (audio_path.name, af, "audio/wav"),
                     },
                 )
             resp.raise_for_status()
+            status = resp.headers.get("X-Video-Me-Lipsync", "").strip().lower()
+            self._last_application_status = status if status in {"applied", "passthrough"} else None
         return resp.content
+
+    async def _cancel_remote_job(self) -> bool:
+        """Best-effort cancellation of this job's active server subprocesses."""
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=_REMOTE_CANCEL_TIMEOUT_SEC) as client:
+                resp = await client.post(
+                    f"{self._base_url}/cancel",
+                    data={"job_id": self._job_id},
+                )
+                resp.raise_for_status()
+            return True
+        except Exception as exc:
+            # The public outcome must remain CancelledError even if the service
+            # disappeared while we were cancelling it.
+            logger.warning(
+                "Could not confirm MuseTalk cancellation for job %s: %s",
+                self._job_id,
+                exc,
+            )
+            return False
 
     def _save_clip(self, mp4_bytes: bytes, out_dir: Path) -> Path:
         """Write synced MP4 bytes to out_dir/synced.mp4 and return the path."""

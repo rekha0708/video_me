@@ -1,0 +1,527 @@
+{% extends "base.html" %}
+{% block title %}Animate Studio{% endblock %}
+
+{% block content %}
+<main class="animate-page" id="animate-studio"
+      data-options-url="/api/animate/options"
+      data-create-url="/api/jobs">
+  <header class="animate-hero">
+    <div class="animate-hero-copy">
+      <div class="animate-eyebrow">Wan 2.2 Animate</div>
+      <h1>Animate Studio</h1>
+      <p>Transfer motion or replace one person using a driving video and a locked character look.</p>
+    </div>
+    <div class="animate-readiness" id="animate-readiness" aria-live="polite">
+      <span class="animate-status-dot" aria-hidden="true"></span>
+      <span id="animate-readiness-label">Checking readiness…</span>
+    </div>
+  </header>
+
+  <form id="animate-job-form" novalidate>
+    <div class="animate-layout">
+      <div class="animate-sections">
+        <section class="animate-section" aria-labelledby="animate-mode-heading">
+          <div class="animate-section-heading">
+            <span class="animate-section-number">1</span>
+            <div>
+              <h2 id="animate-mode-heading">Choose a mode</h2>
+              <p>Use the driver’s performance, or replace the selected person while retaining the scene.</p>
+            </div>
+          </div>
+
+          <div class="animate-choice-grid animate-choice-grid-3">
+            <label class="animate-choice-card">
+              <input type="radio" name="animate_mode" value="animate" checked>
+              <span class="animate-choice-icon" aria-hidden="true">↗</span>
+              <span class="animate-choice-copy">
+                <strong>Motion transfer</strong>
+                <small>Apply body and facial motion to your cast character.</small>
+              </span>
+              <span class="animate-pill animate-pill-blue">Recommended</span>
+            </label>
+            <label class="animate-choice-card">
+              <input type="radio" name="animate_mode" value="replace">
+              <span class="animate-choice-icon" aria-hidden="true">◫</span>
+              <span class="animate-choice-copy">
+                <strong>Character replacement</strong>
+                <small>Replace one person and preserve the driving background.</small>
+              </span>
+            </label>
+          </div>
+        </section>
+
+        <section class="animate-section" aria-labelledby="animate-driver-heading">
+          <div class="animate-section-heading">
+            <span class="animate-section-number">2</span>
+            <div>
+              <h2 id="animate-driver-heading">Add a driving video</h2>
+              <p>The video supplies the scene, timing, and motion. Short clips of 3–10 seconds work best.</p>
+            </div>
+          </div>
+
+          <div class="animate-tabs" role="tablist" aria-label="Driving video source">
+            <button type="button" class="animate-tab active" id="driver-tab-url" role="tab"
+                    aria-selected="true" aria-controls="driver-panel-url" data-driver-tab="url">URL</button>
+            <button type="button" class="animate-tab" id="driver-tab-upload" role="tab"
+                    aria-selected="false" aria-controls="driver-panel-upload" data-driver-tab="upload">Upload</button>
+            <button type="button" class="animate-tab" id="driver-tab-server" role="tab"
+                    aria-selected="false" aria-controls="driver-panel-server" data-driver-tab="server">Server file</button>
+          </div>
+
+          <div class="animate-tab-panel" id="driver-panel-url" role="tabpanel" aria-labelledby="driver-tab-url">
+            <div class="animate-input-action">
+              <div class="animate-input-wrap">
+                <label for="animate-driver-url">Video URL</label>
+                <input type="url" id="animate-driver-url" autocomplete="url"
+                       placeholder="https://cdn.example.com/driver.mp4">
+              </div>
+              <button type="button" class="btn btn-primary" id="animate-import-url">Inspect video</button>
+            </div>
+            <div class="form-hint">Direct public HTTP(S) video URLs only. Social/video page URLs are not supported in this release.</div>
+          </div>
+
+          <div class="animate-tab-panel" id="driver-panel-upload" role="tabpanel"
+               aria-labelledby="driver-tab-upload" hidden>
+            <label class="animate-dropzone" id="animate-driver-dropzone" for="animate-driver-file">
+              <input type="file" id="animate-driver-file"
+                     accept="video/mp4,video/quicktime,video/webm,.mkv" hidden>
+              <span class="animate-dropzone-icon" aria-hidden="true">⇧</span>
+              <span><strong>Choose a video</strong> or drag it here</span>
+              <small>MP4, MOV, WebM, or MKV · up to 2 GiB</small>
+            </label>
+          </div>
+
+          <div class="animate-tab-panel" id="driver-panel-server" role="tabpanel"
+               aria-labelledby="driver-tab-server" hidden>
+            <div class="animate-input-action">
+              <div class="animate-input-wrap">
+                <label for="animate-server-file">Allowlisted server video</label>
+                <select id="animate-server-file" disabled>
+                  <option value="">Loading server files…</option>
+                </select>
+              </div>
+              <button type="button" class="btn btn-primary" id="animate-use-server-file" disabled>Use video</button>
+              <button type="button" class="btn btn-outline animate-icon-button" id="animate-refresh-server-files"
+                      aria-label="Refresh server files" title="Refresh server files">↻</button>
+            </div>
+            <div class="form-hint">Only files inside server-configured media roots are shown.</div>
+          </div>
+
+          <div class="animate-progress" id="animate-driver-progress" hidden
+               role="progressbar" aria-label="Video upload progress" aria-valuemin="0" aria-valuemax="100">
+            <div class="animate-progress-track"><span id="animate-driver-progress-bar"></span></div>
+            <span id="animate-driver-progress-label">Preparing…</span>
+          </div>
+
+          <div class="animate-field-error" id="animate-driver-error" role="alert" hidden></div>
+
+          <div class="animate-media-card" id="animate-driver-preview-card" hidden>
+            <div class="animate-video-frame">
+              <video id="animate-driver-preview" controls playsinline preload="metadata"></video>
+            </div>
+            <div class="animate-media-details">
+              <div class="animate-media-title-row">
+                <strong id="animate-driver-name">Driving video</strong>
+                <span class="animate-pill animate-pill-green">Staged</span>
+              </div>
+              <div class="animate-metadata" id="animate-driver-metadata"></div>
+              <p id="animate-driver-guidance" class="form-hint"></p>
+              <button type="button" class="animate-text-button" id="animate-remove-driver">Remove and choose another</button>
+            </div>
+          </div>
+
+          <label class="animate-warning-confirm" id="animate-target-confirm" hidden>
+            <input type="checkbox" id="animate-target-confirmed">
+            <span>
+              <strong>Confirm the person to track.</strong>
+              I reviewed the driver preview and the selected target rule identifies the intended person throughout the clip.
+              Use footage with one unambiguous primary person; crossings, occlusion, or people swapping prominence can switch the target.
+            </span>
+          </label>
+
+          <label class="animate-warning-confirm" id="animate-long-driver-confirm" hidden>
+            <input type="checkbox" id="animate-long-driver-ack">
+            <span>
+              <strong>This is a long, GPU-intensive driver.</strong>
+              I understand it will be split into several generation chunks and may need continuity review.
+            </span>
+          </label>
+        </section>
+
+        <section class="animate-section" aria-labelledby="animate-character-heading">
+          <div class="animate-section-heading">
+            <span class="animate-section-number">3</span>
+            <div>
+              <h2 id="animate-character-heading">Select the character and look</h2>
+              <p>Generated looks use one cast member. An exact uploaded character can be used as-is without selecting a cast.</p>
+            </div>
+          </div>
+
+          <div class="animate-form-grid animate-form-grid-2">
+            <div class="animate-field">
+              <label for="animate-cast">Cast <span class="form-optional">optional for exact image</span></label>
+              <select id="animate-cast" disabled><option value="">Loading casts…</option></select>
+            </div>
+            <div class="animate-field">
+              <label for="animate-member">Target member <span class="form-optional">optional for exact image</span></label>
+              <select id="animate-member" disabled><option value="">Choose a cast first</option></select>
+              <div class="form-hint" id="animate-member-capabilities"></div>
+            </div>
+          </div>
+          <div class="animate-field-error" id="animate-target-error" role="alert" hidden></div>
+
+          <fieldset class="animate-fieldset">
+            <legend>Character look</legend>
+            <div class="animate-choice-grid animate-choice-grid-3">
+              <label class="animate-choice-card animate-choice-card-compact">
+                <input type="radio" name="look_source" value="auto_lora" checked>
+                <span class="animate-choice-copy">
+                  <strong>Auto-generate</strong>
+                  <small>FLUX.2 + cast LoRA</small>
+                </span>
+                <span class="animate-pill animate-pill-blue">Default</span>
+              </label>
+              <label class="animate-choice-card animate-choice-card-compact">
+                <input type="radio" name="look_source" value="styled_lora">
+                <span class="animate-choice-copy">
+                  <strong>Design complete look</strong>
+                  <small>Clothing, jewelry, bags, shoes &amp; makeup</small>
+                </span>
+              </label>
+              <label class="animate-choice-card animate-choice-card-compact">
+                <input type="radio" name="look_source" value="exact_image">
+                <span class="animate-choice-copy">
+                  <strong>Exact image</strong>
+                  <small>Use an uploaded reference</small>
+                </span>
+              </label>
+            </div>
+          </fieldset>
+
+          <div class="animate-look-panel" id="animate-look-auto">
+            <div class="animate-info-strip">
+              <span aria-hidden="true">✦</span>
+              <p>The selected member’s LoRA keeps identity. FLUX.2 creates the complete look once, then pauses for look approval before Animate runs.</p>
+            </div>
+          </div>
+
+          <div class="animate-look-panel" id="animate-look-styled" hidden>
+            <fieldset class="animate-style-scope">
+              <legend>What should FLUX.2 change?</legend>
+              <p class="form-hint">Choose every part of the cast look that may change. Reference-guided edits preserve unchecked parts from the identity base; text-only generation uses coherent defaults for unspecified styling.</p>
+              <div class="animate-style-targets">
+                <label class="animate-style-target"><input type="checkbox" name="style_change_target" value="clothing"><span>Clothing / dress</span></label>
+                <label class="animate-style-target"><input type="checkbox" name="style_change_target" value="jewelry"><span>Jewelry</span></label>
+                <label class="animate-style-target"><input type="checkbox" name="style_change_target" value="bags"><span>Bags</span></label>
+                <label class="animate-style-target"><input type="checkbox" name="style_change_target" value="footwear"><span>Footwear</span></label>
+                <label class="animate-style-target"><input type="checkbox" name="style_change_target" value="makeup"><span>Makeup / lipstick</span></label>
+                <label class="animate-style-target"><input type="checkbox" name="style_change_target" value="hair"><span>Hair</span></label>
+                <label class="animate-style-target"><input type="checkbox" name="style_change_target" value="other"><span>Other styling</span></label>
+              </div>
+            </fieldset>
+
+            <div class="animate-form-grid animate-form-grid-2">
+              <div class="animate-field">
+                <label for="wardrobe-clothing-type">Clothing / dress</label>
+                <input type="text" id="wardrobe-clothing-type" maxlength="160"
+                       placeholder="e.g. tailored pantsuit, summer dress">
+              </div>
+              <div class="animate-field">
+                <label for="wardrobe-primary-color">Clothing color / palette</label>
+                <input type="text" id="wardrobe-primary-color" maxlength="80" placeholder="e.g. emerald green with gold accents">
+              </div>
+              <div class="animate-field">
+                <label for="wardrobe-material-pattern">Material or pattern</label>
+                <input type="text" id="wardrobe-material-pattern" maxlength="160" placeholder="e.g. matte linen, subtle pinstripe">
+              </div>
+              <div class="animate-field">
+                <label for="wardrobe-jewelry">Jewelry</label>
+                <input type="text" id="wardrobe-jewelry" maxlength="240" placeholder="Comma-separated, e.g. gold hoops, layered necklace">
+              </div>
+              <div class="animate-field">
+                <label for="wardrobe-bags">Bags</label>
+                <input type="text" id="wardrobe-bags" maxlength="240" placeholder="Comma-separated, e.g. black clutch, tan shoulder bag">
+              </div>
+              <div class="animate-field">
+                <label for="wardrobe-footwear">Footwear</label>
+                <input type="text" id="wardrobe-footwear" maxlength="160" placeholder="e.g. strappy sandals, ankle boots">
+              </div>
+              <div class="animate-field">
+                <label for="wardrobe-makeup">Makeup / lipstick</label>
+                <input type="text" id="wardrobe-makeup" maxlength="300" placeholder="e.g. soft glam, deep berry lipstick">
+              </div>
+              <div class="animate-field">
+                <label for="wardrobe-hair">Hair styling</label>
+                <input type="text" id="wardrobe-hair" maxlength="300" placeholder="e.g. loose low bun, glossy waves">
+              </div>
+              <div class="animate-field">
+                <label for="wardrobe-accessories">Other accessories</label>
+                <input type="text" id="wardrobe-accessories" maxlength="240" placeholder="Comma-separated, e.g. watch, belt, sunglasses">
+              </div>
+              <div class="animate-field">
+                <label for="wardrobe-negative">Avoid</label>
+                <input type="text" id="wardrobe-negative" maxlength="240" placeholder="e.g. no logos, no hat">
+              </div>
+              <div class="animate-field animate-field-full">
+                <label for="wardrobe-details">Custom styling &amp; preservation directions</label>
+                <textarea id="wardrobe-details" rows="3" maxlength="600"
+                          placeholder="Add fit or layering notes within selected categories, plus anything that must stay exactly as-is"></textarea>
+              </div>
+            </div>
+
+            <div class="animate-asset-grid">
+              <div class="animate-asset-uploader">
+                <div>
+                  <strong>Clothing / dress references</strong>
+                  <p class="form-hint" id="wardrobe-garment-hint">Optional. FLUX.2 uses these only for the requested clothing change.</p>
+                </div>
+                <label class="btn btn-outline" id="wardrobe-garment-button" for="wardrobe-garment-files">Add clothing</label>
+                <input type="file" id="wardrobe-garment-files" accept="image/png,image/jpeg,image/webp" multiple hidden>
+                <div class="animate-thumbnail-list" id="wardrobe-garment-list"></div>
+              </div>
+              <div class="animate-asset-uploader">
+                <div>
+                  <strong>Styling detail references</strong>
+                  <p class="form-hint" id="wardrobe-accessory-hint">Optional. Add jewelry, bag, footwear, makeup, or other visual references.</p>
+                </div>
+                <label class="btn btn-outline" id="wardrobe-accessory-button" for="wardrobe-accessory-files">Add styling refs</label>
+                <input type="file" id="wardrobe-accessory-files" accept="image/png,image/jpeg,image/webp" multiple hidden>
+                <div class="animate-thumbnail-list" id="wardrobe-accessory-list"></div>
+              </div>
+            </div>
+            <div class="animate-info-strip animate-feature-note" id="animate-flux2-edit-note" hidden>
+              <span aria-hidden="true">i</span>
+              <p id="animate-flux2-edit-message">Image-guided complete-look references are unavailable. Text-directed styling still works.</p>
+            </div>
+            <div class="animate-field-error" id="animate-wardrobe-error" role="alert" hidden></div>
+          </div>
+
+          <div class="animate-look-panel" id="animate-look-exact" hidden>
+            <label class="animate-image-dropzone" id="animate-character-dropzone" for="animate-character-file">
+              <input type="file" id="animate-character-file" accept="image/png,image/jpeg,image/webp" hidden>
+              <span class="animate-image-placeholder" id="animate-character-placeholder" aria-hidden="true">＋</span>
+              <img id="animate-character-preview" alt="Uploaded character reference preview" hidden>
+              <span class="animate-image-dropzone-copy">
+                <strong>Upload one clear character image</strong>
+                <small>Full-body or three-quarter framing with a visible face works best.</small>
+                <span class="btn btn-outline">Choose image</span>
+              </span>
+            </label>
+            <div class="animate-upload-status" id="animate-character-upload-status" aria-live="polite"></div>
+            <div class="animate-field-error" id="animate-character-error" role="alert" hidden></div>
+          </div>
+        </section>
+
+        <section class="animate-section" aria-labelledby="animate-audio-heading">
+          <div class="animate-section-heading">
+            <span class="animate-section-number">4</span>
+            <div>
+              <h2 id="animate-audio-heading">Choose audio and lip-sync</h2>
+              <p>Keep the driver’s soundtrack, re-voice its words with the cast, or export silently.</p>
+            </div>
+          </div>
+
+          <div class="animate-segmented animate-segmented-3" role="radiogroup" aria-label="Audio source">
+            <label><input type="radio" name="audio_mode" value="driver" checked><span>Driving audio</span></label>
+            <label><input type="radio" name="audio_mode" value="cast_voice"><span>Cast voice</span></label>
+            <label><input type="radio" name="audio_mode" value="none"><span>No audio</span></label>
+          </div>
+          <p class="form-hint" id="animate-audio-hint">Preserves the driving video’s audio and timing.</p>
+          <div class="animate-field-error" id="animate-audio-error" role="alert" hidden></div>
+
+          <div class="animate-inline-setting">
+            <div>
+              <label class="animate-switch-label" for="animate-lipsync-enabled">Lip-sync repair</label>
+              <p class="form-hint" id="animate-lipsync-hint">Off by default for transferred source audio to protect identity.</p>
+            </div>
+            <label class="animate-switch">
+              <input type="checkbox" id="animate-lipsync-enabled" role="switch">
+              <span aria-hidden="true"></span>
+            </label>
+          </div>
+          <div class="animate-field animate-inline-select" id="animate-lipsync-backend-row" hidden>
+            <label for="animate-lipsync-backend">Repair backend</label>
+            <select id="animate-lipsync-backend">
+              <option value="latentsync">LatentSync — stronger repair</option>
+              <option value="musetalk">MuseTalk — faster fallback</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="animate-section" aria-labelledby="animate-output-heading">
+          <div class="animate-section-heading">
+            <span class="animate-section-number">5</span>
+            <div>
+              <h2 id="animate-output-heading">Set output quality</h2>
+              <p>Generation quality controls Wan; export choices are applied after Animate and lip-sync unload.</p>
+            </div>
+          </div>
+
+          <div class="animate-form-grid animate-form-grid-2">
+            <div class="animate-field">
+              <label for="animate-generation-area">Generate at</label>
+              <select id="animate-generation-area">
+                <option value="720p" selected>720p area — best quality</option>
+                <option value="480p">480p area — faster, lower VRAM</option>
+              </select>
+            </div>
+            <div class="animate-field">
+              <label for="animate-target-fps">Frame rate</label>
+              <select id="animate-target-fps">
+                <option value="generated" selected>Leave as generated</option>
+                <option value="48">Smooth to 48 FPS</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="animate-choice-grid animate-choice-grid-2">
+            <label class="animate-choice-card animate-choice-card-compact">
+              <input type="radio" name="export_mode" value="generated" checked>
+              <span class="animate-choice-copy">
+                <strong>Leave as generated</strong>
+                <small>Keep dimensions and aspect ratio</small>
+              </span>
+              <span class="animate-pill animate-pill-blue">Default</span>
+            </label>
+            <label class="animate-choice-card animate-choice-card-compact">
+              <input type="radio" name="export_mode" value="scale_1080p">
+              <span class="animate-choice-copy">
+                <strong>Scale to 1080p long edge</strong>
+                <small>Aspect-preserving final scale</small>
+              </span>
+            </label>
+            <label class="animate-choice-card animate-choice-card-compact">
+              <input type="radio" name="export_mode" value="vertical_1080x1920">
+              <span class="animate-choice-copy">
+                <strong>Fit inside 1080 × 1920</strong>
+                <small>9:16 canvas, no crop or stretch</small>
+              </span>
+            </label>
+          </div>
+        </section>
+
+        <details class="animate-section animate-advanced" id="animate-advanced">
+          <summary>
+            <span class="animate-section-number">6</span>
+            <span><strong>Advanced controls</strong><small>Timeline, target selection, continuity, sampling, and masks</small></span>
+            <span class="animate-chevron" aria-hidden="true">⌄</span>
+          </summary>
+          <div class="animate-advanced-content">
+            <div class="animate-form-grid animate-form-grid-2">
+              <div class="animate-field">
+                <label for="animate-timeline">Driver range</label>
+                <select id="animate-timeline">
+                  <option value="full_driver" selected>Use full driver</option>
+                  <option value="selected_range">Use selected time range</option>
+                </select>
+                <div class="form-hint">Use up to 30 seconds per job; longer source videos require a selected range.</div>
+              </div>
+              <div class="animate-field" id="animate-subject-row">
+                <label for="animate-subject">Target person</label>
+                <select id="animate-subject">
+                  <option value="largest" selected>Largest detected person</option>
+                  <option value="center">Person nearest center</option>
+                </select>
+              </div>
+              <div class="animate-range-fields animate-field-full" id="animate-range-fields" hidden>
+                <div class="animate-field">
+                  <label for="animate-start-sec">Start (seconds)</label>
+                  <input type="number" id="animate-start-sec" min="0" step="0.1" value="0">
+                </div>
+                <div class="animate-field">
+                  <label for="animate-end-sec">End (seconds)</label>
+                  <input type="number" id="animate-end-sec" min="0.1" step="0.1" placeholder="End of video">
+                </div>
+              </div>
+              <div class="animate-field">
+                <label for="animate-refert-num">Temporal reference</label>
+                <select id="animate-refert-num">
+                  <option value="1" selected>1 frame — faster</option>
+                  <option value="5">5 frames — stronger continuity</option>
+                </select>
+              </div>
+              <div class="animate-field">
+                <label for="animate-sampling-steps">Sampling steps</label>
+                <input type="number" id="animate-sampling-steps" min="10" max="40" step="1" value="20">
+              </div>
+            </div>
+
+            <div class="animate-mode-advanced" id="animate-motion-advanced">
+              <label class="checkbox-row">
+                <input type="checkbox" id="animate-retarget-pose">
+                <span>Retarget pose proportions to the character</span>
+              </label>
+              <label class="checkbox-row animate-suboption" id="animate-flux-retarget-row" hidden>
+                <input type="checkbox" id="animate-flux-retarget">
+                <span>Use FLUX retarget refinement</span>
+              </label>
+              <div class="form-hint" id="animate-flux-retarget-hint" hidden></div>
+            </div>
+
+            <div class="animate-mode-advanced" id="animate-replace-advanced" hidden>
+              <p class="animate-control-label">Replacement mask cleanup</p>
+              <div class="animate-form-grid animate-form-grid-3">
+                <div class="animate-field">
+                  <label for="animate-mask-iterations">Iterations</label>
+                  <input type="number" id="animate-mask-iterations" min="0" max="10" value="3">
+                </div>
+                <div class="animate-field">
+                  <label for="animate-mask-kernel">Kernel</label>
+                  <input type="number" id="animate-mask-kernel" min="1" max="31" step="2" value="7">
+                </div>
+                <div class="animate-field">
+                  <label for="animate-mask-width">Width blend</label>
+                  <input type="number" id="animate-mask-width" min="1" max="8" value="1">
+                </div>
+                <div class="animate-field">
+                  <label for="animate-mask-height">Height blend</label>
+                  <input type="number" id="animate-mask-height" min="1" max="8" value="1">
+                </div>
+              </div>
+            </div>
+
+            <div class="animate-field-error" id="animate-advanced-error" role="alert" hidden></div>
+          </div>
+        </details>
+      </div>
+
+      <aside class="animate-summary" aria-labelledby="animate-summary-heading">
+        <div class="animate-summary-header">
+          <div>
+            <span class="animate-eyebrow">Configuration</span>
+            <h2 id="animate-summary-heading">Job summary</h2>
+          </div>
+          <span class="animate-pill animate-pill-amber">GPU intensive</span>
+        </div>
+
+        <dl class="animate-summary-list">
+          <div><dt>Mode</dt><dd id="summary-mode">Motion transfer</dd></div>
+          <div><dt>Driver</dt><dd id="summary-driver">Not selected</dd></div>
+          <div><dt>Target</dt><dd id="summary-target">Not selected</dd></div>
+          <div><dt>Look</dt><dd id="summary-look">Auto-generate with LoRA</dd></div>
+          <div><dt>Audio</dt><dd id="summary-audio">Driving audio</dd></div>
+          <div><dt>Lip-sync</dt><dd id="summary-lipsync">Off</dd></div>
+          <div><dt>Output</dt><dd id="summary-output">720p · generated size/FPS</dd></div>
+        </dl>
+
+        <div class="animate-readiness-list" id="animate-readiness-list" aria-live="polite"></div>
+
+        <label class="animate-rights">
+          <input type="checkbox" id="animate-rights-cleared">
+          <span>I confirm I have permission to use the driving video, character, voice, and reference assets.</span>
+        </label>
+
+        <div class="alert alert-error" id="animate-submit-error" role="alert" hidden></div>
+        <button type="submit" class="btn btn-primary animate-submit" id="animate-submit" disabled>
+          Create Animate job
+        </button>
+        <p class="animate-submit-hint">Generated looks pause for approval before Wan loads.</p>
+      </aside>
+    </div>
+  </form>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/animate.js?v=1" defer></script>
+{% endblock %}

@@ -2,6 +2,16 @@
 
 # Pydantic models
 
+### `AnimateWorkflowResult` (BaseModel) — `core/animate_workflow.py`
+
+- `job_id: str`
+- `raw_video_uri: str`
+- `final_video_uri: str`
+- `canonical_look_uri: str`
+- `audio_uri: str | None` = `None`
+- `duration_sec: float`
+- `manifests_dir: str`
+
 ### `CastMemberParams` (BaseModel) — `core/cast_params.py`
 
 - `lora_file: str` = `''`
@@ -56,6 +66,9 @@
 - `chat_base_url: str` = `'http://localhost:11434/v1'`
 - `chat_api_key: str` = `'ollama'`
 - `render_adapter: Literal['a1111', 'comfyui_flux', 'musubi_flux']` = `'musubi_flux'`
+- `flux2_edit_enabled: bool` = `False`
+- `flux2_edit_max_references: int` = `4`
+- `dashboard_asset_quota_bytes: int` = `50 * 1024 * 1024 * 1024`
 - `sd_base_url: str` = `'http://localhost:7860'`
 - `comfyui_base_url: str` = `'http://localhost:8188'`
 - `video_adapter: Literal['wan_s2v', 'wan', 'wan_lightx2v', 'wan_animate', 'ltx']` = `'wan_s2v'`
@@ -278,6 +291,9 @@ A rendered overlay PNG + the absolute time window it is visible in the final vid
 - `guidance_scale: float | None` = `None`
 - `trigger: str` = `''`
 - `style_suffix: str` = `''`
+- `control_image_uris: list[str]` = `Field(default_factory=list)`
+- `negative_prompt: str` = `''`
+- `num_images: int | None` = `Field(default=None, ge=1, le=10)`
 
 ### `ImageSet` (BaseModel) — `core/models/capabilities.py`
 
@@ -561,7 +577,7 @@ LLM-authored chart/diagram panel composited over the upper third of the shot.
 
 ### `DashboardSource` (BaseModel) — `core/models/dashboard.py`
 
-- `kind: Literal['url', 'upload', 'file', 'story', 'story_images', 'lora_training']` = `'url'`
+- `kind: Literal['url', 'upload', 'file', 'story', 'story_images', 'lora_training', 'animate']` = `'url'`
 - `url: str` = `''`
 
 ### `DashboardJobOverrides` (BaseModel) — `core/models/dashboard.py`
@@ -609,9 +625,107 @@ LLM-authored chart/diagram panel composited over the upper third of the shot.
 - `cast_member_id: str` = `''`
 - `image_paths: list[str]` = `Field(default_factory=list)`
 
+### `AnimateDriverInput` (BaseModel) — `core/models/dashboard.py`
+The already-ingested driving video and optional selected range.
+
+- `asset_id: str` = `Field(min_length=24, max_length=68, pattern=_ASSET_ID_PATTERN)`
+- `target_confirmed: Literal[True]`
+- `timeline: Literal['full_driver', 'selected_range']` = `'full_driver'`
+- `start_sec: float | None` = `Field(default=None, ge=0.0)`
+- `end_sec: float | None` = `Field(default=None, gt=0.0)`
+- `subject_selection: Literal['largest', 'center']` = `'largest'`
+
+### `WardrobeSpec` (BaseModel) — `core/models/dashboard.py`
+Complete-look controls for a FLUX.2 LoRA render or reference edit.
+
+- `change_targets: list[AnimateStylingTarget]` = `Field(default_factory=list, max_length=7)`
+- `clothing_type: str` = `Field(default='', max_length=200)`
+- `primary_color: str` = `Field(default='', max_length=100)`
+- `material_pattern: str` = `Field(default='', max_length=200)`
+- `jewelry: list[str]` = `Field(default_factory=list, max_length=12)`
+- `bags: list[str]` = `Field(default_factory=list, max_length=8)`
+- `footwear: str` = `Field(default='', max_length=200)`
+- `makeup: str` = `Field(default='', max_length=400)`
+- `hair: str` = `Field(default='', max_length=400)`
+- `accessories: list[str]` = `Field(default_factory=list, max_length=12)`
+- `details: str` = `Field(default='', max_length=1000)`
+- `negative_constraints: str` = `Field(default='', max_length=1000)`
+- `garment_asset_ids: list[str]` = `Field(default_factory=list, max_length=8)`
+- `accessory_asset_ids: list[str]` = `Field(default_factory=list, max_length=8)`
+
+### `AnimateCharacterOptions` (BaseModel) — `core/models/dashboard.py`
+
+- `look_source: Literal['auto_lora', 'styled_lora', 'exact_image']` = `'auto_lora'`
+- `cast_ref: str | None` = `Field(default=None, max_length=200)`
+- `member_id: str | None` = `Field(default=None, max_length=200)`
+- `exact_image_asset_id: str | None` = `Field(default=None, min_length=24, max_length=68, pattern=_ASSET_ID_PATTERN)`
+- `wardrobe: WardrobeSpec | None` = `None`
+- `consistency: Literal['job']` = `'job'`
+
+### `AnimateAudioOptions` (BaseModel) — `core/models/dashboard.py`
+
+- `mode: Literal['driver', 'cast_voice', 'none']` = `'driver'`
+- `voice_member_id: str | None` = `Field(default=None, max_length=200)`
+- `script_policy: Literal['verbatim']` = `'verbatim'`
+- `timing: Literal['match_driver']` = `'match_driver'`
+
+### `AnimateLipSyncOptions` (BaseModel) — `core/models/dashboard.py`
+
+- `enabled: bool` = `False`
+- `backend: Literal['latentsync', 'musetalk']` = `'latentsync'`
+
+### `AnimateOutputOptions` (BaseModel) — `core/models/dashboard.py`
+
+- `generation_area: Literal['480p', '720p']` = `'720p'`
+- `export: Literal['generated', 'scale_1080p', 'vertical_1080x1920']` = `'generated'`
+- `preserve_aspect: Literal[True]` = `True`
+- `target_fps: Literal['generated', 48]` = `'generated'`
+
+### `AnimateAdvancedOptions` (BaseModel) — `core/models/dashboard.py`
+Mode-specific Wan controls kept out of the primary dashboard form.
+
+- `retarget_pose: bool` = `False`
+- `use_flux_retarget: bool` = `False`
+- `refert_num: Literal[1, 5]` = `1`
+- `sampling_steps: int` = `Field(default=20, ge=10, le=40)`
+- `mask_iterations: int | None` = `Field(default=None, ge=0, le=10)`
+- `mask_kernel: int | None` = `Field(default=None, ge=1, le=31)`
+- `mask_w_len: int | None` = `Field(default=None, ge=1, le=8)`
+- `mask_h_len: int | None` = `Field(default=None, ge=1, le=8)`
+
+### `WanAnimateJobOptions` (BaseModel) — `core/models/dashboard.py`
+
+- `schema_version: Literal[1]` = `1`
+- `mode: Literal['animate', 'replace']` = `'animate'`
+- `driver: AnimateDriverInput`
+- `character: AnimateCharacterOptions`
+- `audio: AnimateAudioOptions` = `Field(default_factory=AnimateAudioOptions)`
+- `lipsync: AnimateLipSyncOptions` = `Field(default_factory=AnimateLipSyncOptions)`
+- `output: AnimateOutputOptions` = `Field(default_factory=AnimateOutputOptions)`
+- `advanced: AnimateAdvancedOptions` = `Field(default_factory=AnimateAdvancedOptions)`
+
+### `DashboardAssetRecord` (BaseModel) — `core/models/dashboard.py`
+Durable asset metadata; the server path is never serialized to clients.
+
+- `asset_id: str` = `Field(min_length=24, max_length=68, pattern=_ASSET_ID_PATTERN)`
+- `owner_id: str` = `Field(min_length=1, max_length=200)`
+- `kind: DashboardAssetKind`
+- `status: DashboardAssetStatus` = `DashboardAssetStatus.STAGED`
+- `original_name: str` = `Field(min_length=1, max_length=255)`
+- `mime_type: str` = `Field(min_length=1, max_length=200)`
+- `sha256: str` = `Field(pattern='^[0-9a-f]{64}$')`
+- `size_bytes: int` = `Field(ge=0)`
+- `metadata: dict[str, Any]` = `Field(default_factory=dict)`
+- `created_at: datetime` = `Field(default_factory=utc_now)`
+- `expires_at: datetime`
+- `claimed_job_id: str | None` = `None`
+- `claimed_at: datetime | None` = `None`
+- `storage_path: str` = `Field(exclude=True, repr=False)`
+
 ### `CreateDashboardJobRequest` (BaseModel) — `core/models/dashboard.py`
 
-- `source: DashboardSource`
+- `workflow_kind: Literal['pipeline', 'wan_animate_direct']` = `'pipeline'`
+- `source: DashboardSource | None` = `None`
 - `rights_cleared: bool` = `False`
 - `target_language: Literal['en', 'hi', 'both']` = `'en'`
 - `mode: Literal['standard', 'critique']` = `'standard'`
@@ -626,12 +740,13 @@ LLM-authored chart/diagram panel composited over the upper third of the shot.
 - `story_text: str | None` = `None`
 - `character_images: dict[str, str]` = `Field(default_factory=dict)`
 - `lora_training: LoraTrainingRequest | None` = `None`
+- `animate: WanAnimateJobOptions | None` = `None`
 
 ### `DashboardJobRecord` (BaseModel) — `core/models/dashboard.py`
 
 - `job_id: str`
 - `source_url: str`
-- `source_kind: Literal['url', 'upload', 'file', 'story', 'story_images', 'lora_training']`
+- `source_kind: Literal['url', 'upload', 'file', 'story', 'story_images', 'lora_training', 'animate']`
 - `status: DashboardJobStatus`
 - `phase: str`
 - `target_language: str`

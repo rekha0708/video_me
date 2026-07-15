@@ -109,9 +109,32 @@ class WhisperAdapter(Transcribe):
             isolate_vocals=req.isolate_vocals,
         )
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
+        # ``run_in_executor`` cannot stop the underlying native/GPU work when
+        # its asyncio wrapper is cancelled.  Shield the wrapper, and if the
+        # caller cancels us, drain it before propagating cancellation.  This
+        # prevents the next dashboard job from loading another GPU model while
+        # the cancelled Whisper thread is still using CUDA in the background.
+        work = loop.run_in_executor(
             None, self._transcribe, req.audio_uri, req.isolate_vocals
         )
+        try:
+            result = await asyncio.shield(work)
+        except asyncio.CancelledError:
+            log_event(
+                logger,
+                "transcribe_cancellation_waiting",
+                audio_uri=req.audio_uri,
+                model=self._model_size,
+            )
+            try:
+                await asyncio.shield(work)
+            except Exception:
+                # Cancellation remains the public outcome even if the native
+                # transcription failed while we were waiting for it to exit.
+                logger.exception(
+                    "Whisper executor work failed while draining a cancelled request"
+                )
+            raise
         log_event(
             logger,
             "transcribe_completed",
