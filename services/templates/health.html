@@ -36,7 +36,7 @@
   <div class="check-row">
     <span class="check-name">{{ result.name }}</span>
     <span class="check-detail">{{ result.detail or '' }}</span>
-    <span class="check-status-{% if st == 'ok' %}ok{% elif st == 'warn' %}warn{% else %}fail{% endif %}">
+    <span class="check-status-{% if st == 'ok' or st == 'pass' %}ok{% elif st == 'warn' %}warn{% else %}fail{% endif %}">
       {{ result.status }}
     </span>
   </div>
