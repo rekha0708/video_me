@@ -998,7 +998,13 @@ setup_wan_animate() {
   # SAM2 is installed without dependency resolution so it cannot replace the
   # pod's CUDA torch build.  Its official runtime dependencies are installed
   # explicitly above (numpy/tqdm/hydra-core/iopath/pillow).
-  run "$pip" install --no-deps \
+  # --no-build-isolation is required too: SAM2's build backend otherwise
+  # fetches its own torch wheel into an ephemeral build env to compile its
+  # CUDA extension, which can land a different CUDA build (e.g. cu130) than
+  # the pod's nvcc (12.8) / the venv's inherited system torch (cu128),
+  # causing "detected CUDA version mismatches the version used to compile
+  # PyTorch". --no-build-isolation makes it reuse the venv's own torch.
+  run "$pip" install --no-deps --no-build-isolation \
       "git+https://github.com/facebookresearch/sam2.git@0e78a118995e66bb27d78518c4bd9a3e95b4e266"
 
   if [[ "$DRY_RUN" == "0" ]]; then
