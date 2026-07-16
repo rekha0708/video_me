@@ -4,7 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}video_me{% endblock %} — Dashboard</title>
-  <link rel="stylesheet" href="/static/app.css?v=9">
+  <link rel="stylesheet" href="/static/app.css?v=10">
+  <script>
+    (function(){var s=localStorage.getItem('vm-theme');var t=s||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');document.documentElement.setAttribute('data-theme',t)})();
+  </script>
 </head>
 <body>
 
@@ -29,13 +32,16 @@
     <button class="sidebar-link sidebar-chat-btn" id="chat-toggle-btn" onclick="openChatDrawer()" title="Pipeline Assistant">
       <span class="icon">💬</span> Chat
     </button>
+    <button class="sidebar-link theme-toggle" id="theme-toggle" title="Toggle dark mode">
+      <span class="icon" id="theme-icon">◐</span> <span id="theme-label">Dark mode</span>
+    </button>
   </div>
   <div class="sidebar-footer">
     {% if worker %}
       Worker active<br>
       <span class="font-mono">{{ worker.worker_id[:24] }}</span>
     {% else %}
-      <span style="color:#ef4444">No worker running</span>
+      <span class="text-danger">No worker running</span>
     {% endif %}
   </div>
 </nav>
@@ -54,7 +60,7 @@
   {% block content %}{% endblock %}
 </div>
 
-<script src="/static/app.js?v=9"></script>
+<script src="/static/app.js?v=10"></script>
 {% block scripts %}{% endblock %}
 
 <!-- Chat drawer — slides in from left next to sidebar -->

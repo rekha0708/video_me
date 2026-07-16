@@ -1,5 +1,32 @@
 /* video_me dashboard — vanilla JS, no build step */
 
+// ---------------------------------------------------------------------------
+// Theme toggle (dark / light)
+// ---------------------------------------------------------------------------
+
+(function initThemeToggle() {
+  document.addEventListener("DOMContentLoaded", function () {
+    var btn   = document.getElementById("theme-toggle");
+    var icon  = document.getElementById("theme-icon");
+    var label = document.getElementById("theme-label");
+    if (!btn) return;
+
+    function updateUI() {
+      var isDark = document.documentElement.getAttribute("data-theme") === "dark";
+      icon.textContent  = isDark ? "☀" : "◐";
+      label.textContent = isDark ? "Light mode" : "Dark mode";
+    }
+    updateUI();
+
+    btn.addEventListener("click", function () {
+      var next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", next);
+      localStorage.setItem("vm-theme", next);
+      updateUI();
+    });
+  });
+})();
+
 const STALL_THRESHOLD_SEC = 120;
 const POLL_INTERVAL_MS    = 3000;
 const DASHBOARD_TIME_ZONE = "America/Los_Angeles";
