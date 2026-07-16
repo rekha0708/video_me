@@ -20,7 +20,10 @@ from fastapi import FastAPI, Form, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.background import BackgroundTask
 
-from core.wan_animate_readiness import WAN_ANIMATE_REQUIRED_MODEL_FILES
+from core.wan_animate_readiness import (
+    WAN_ANIMATE_REQUIRED_MODEL_FILES,
+    wan_animate_component_ready,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -99,11 +102,7 @@ def _model_readiness_error() -> str | None:
     missing: list[str] = []
     for relative in _MODEL_REQUIRED_FILES:
         path = WAN_ANIMATE_MODEL_DIR / relative
-        try:
-            valid = path.is_file() and path.stat().st_size > 0
-        except OSError:
-            valid = False
-        if not valid:
+        if not wan_animate_component_ready(path):
             missing.append(relative)
     if missing:
         shown = ", ".join(missing[:4])

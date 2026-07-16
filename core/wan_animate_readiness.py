@@ -24,6 +24,25 @@ WAN_ANIMATE_REQUIRED_MODEL_FILES = (
 )
 
 
+def wan_animate_component_ready(path: Path) -> bool:
+    """Check one required Animate checkpoint path is present and non-empty.
+
+    ONNX external-data checkpoints (e.g. process_checkpoint/pose2d/vitpose_h_wholebody.onnx)
+    ship upstream on HF Hub as a directory of tensor blobs plus an end2end.onnx graph
+    file, not a single file — mirror the os.path.isdir() resolution that
+    wan/modules/animate/preprocess/pose2d.py:SimpleOnnxInference already does at
+    load time, so a correctly-installed directory isn't flagged as missing.
+    """
+
+    try:
+        if path.is_dir():
+            graph = path / "end2end.onnx"
+            return graph.is_file() and graph.stat().st_size > 0
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
 def wan_animate_model_readiness(model_dir: str | Path) -> tuple[bool, str]:
     """Reject partial Animate snapshots rather than treating a directory as ready."""
 
@@ -31,11 +50,7 @@ def wan_animate_model_readiness(model_dir: str | Path) -> tuple[bool, str]:
     missing: list[str] = []
     for relative in WAN_ANIMATE_REQUIRED_MODEL_FILES:
         path = root / relative
-        try:
-            valid = path.is_file() and path.stat().st_size > 0
-        except OSError:
-            valid = False
-        if not valid:
+        if not wan_animate_component_ready(path):
             missing.append(relative)
     if missing:
         shown = ", ".join(missing[:4])
@@ -89,6 +104,7 @@ def wan_flux_retarget_readiness(model_dir: str | Path) -> tuple[bool, str]:
 
 __all__ = [
     "WAN_ANIMATE_REQUIRED_MODEL_FILES",
+    "wan_animate_component_ready",
     "wan_animate_model_readiness",
     "wan_flux_retarget_readiness",
 ]

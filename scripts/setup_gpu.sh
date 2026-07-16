@@ -1078,8 +1078,13 @@ setup_wan_animate() {
     # Provider-list checks are insufficient: the CPU distribution can coexist
     # and a broken CUDA provider may still be advertised. Construct both real
     # preprocessing sessions with CUDA first and require it to remain active.
+    # vitpose_h_wholebody.onnx is shipped upstream as a directory of external-data
+    # tensor blobs plus an end2end.onnx graph file (HF Xet storage layout, not a
+    # corrupt download) — mirror the os.path.isdir() resolution that
+    # wan/modules/animate/preprocess/pose2d.py:SimpleOnnxInference already does,
+    # since raw ort.InferenceSession() cannot open a directory path directly.
     "$venv_dir/bin/python" -c \
-      'import onnxruntime as ort, sys; expected="CUDAExecutionProvider"; assert expected in ort.get_available_providers(), ort.get_available_providers(); sessions=[ort.InferenceSession(path, providers=[expected, "CPUExecutionProvider"]) for path in sys.argv[1:]]; assert all(s.get_providers() and s.get_providers()[0] == expected for s in sessions), [s.get_providers() for s in sessions]' \
+      'import onnxruntime as ort, os, sys; expected="CUDAExecutionProvider"; assert expected in ort.get_available_providers(), ort.get_available_providers(); paths=[os.path.join(path, "end2end.onnx") if os.path.isdir(path) else path for path in sys.argv[1:]]; sessions=[ort.InferenceSession(path, providers=[expected, "CPUExecutionProvider"]) for path in paths]; assert all(s.get_providers() and s.get_providers()[0] == expected for s in sessions), [s.get_providers() for s in sessions]' \
       "$model_dir/process_checkpoint/det/yolov10m.onnx" \
       "$model_dir/process_checkpoint/pose2d/vitpose_h_wholebody.onnx" || \
       die "Wan Animate detector/pose ONNX CUDA session smoke failed"
