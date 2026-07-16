@@ -988,13 +988,17 @@ setup_wan_animate() {
   # pose2d.py requests CUDAExecutionProvider. Install the GPU distribution and
   # explicitly remove the CPU distribution to prevent silent CPU fallback.
   run "$pip" uninstall -y onnxruntime || true
+  # onnxruntime-gpu>=1.21 default PyPI wheels link against CUDA 13
+  # (libcudart.so.13), which isn't present on this pod's CUDA 12.8 stack —
+  # pin to the last CUDA-12-linked release (verified: CUDAExecutionProvider
+  # loads cleanly against libcudart.so.12 here).
   run "$pip" install \
       opencv-python "numpy>=1.24.4,<2" decord peft "diffusers>=0.31.0" \
       "transformers>=4.49.0,<=4.51.3" "tokenizers>=0.20.3" accelerate \
       easydict ftfy tqdm Pillow hydra-core iopath pandas matplotlib loguru \
       sentencepiece moviepy "imageio[ffmpeg]" imageio-ffmpeg dashscope einops \
       fastapi uvicorn python-multipart \
-      "huggingface_hub>=0.30.0,<1.0" onnxruntime-gpu
+      "huggingface_hub>=0.30.0,<1.0" "onnxruntime-gpu==1.20.1"
   # SAM2 is installed without dependency resolution so it cannot replace the
   # pod's CUDA torch build.  Its official runtime dependencies are installed
   # explicitly above (numpy/tqdm/hydra-core/iopath/pillow).
