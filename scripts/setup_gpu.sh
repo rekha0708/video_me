@@ -979,6 +979,63 @@ setup_wan_animate() {
   if [[ ! -d "$wan_dir" ]]; then
     run git clone https://github.com/Wan-Video/Wan2.2.git "$wan_dir"
   fi
+
+  # Upstream get_mask_boxes()/get_aug_mask() assume SAM2 always returns a
+  # non-empty body mask. When the subject is briefly lost/occluded in the
+  # driver clip, SAM2 can hand back an all-zero mask for that frame, and
+  # np.nonzero(mask) then feeds .min()/.max() an empty array — crashing
+  # preprocessing with "ValueError: zero-size array to reduction operation
+  # minimum which has no identity" partway through a real job. Patch in a
+  # None-bbox short-circuit (skip augmentation for that frame) idempotently.
+  if [[ "$DRY_RUN" == "0" ]] && [[ -f "$wan_dir/wan/modules/animate/preprocess/utils.py" ]] \
+      && ! grep -q "SAM2 produced no foreground pixels" "$wan_dir/wan/modules/animate/preprocess/utils.py"; then
+    log "Patching Wan2.2 Animate preprocess utils.py for empty SAM2 masks"
+    python3 - "$wan_dir/wan/modules/animate/preprocess/utils.py" <<'PYEOF'
+import sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+old = '''    y_coords, x_coords = np.nonzero(mask)
+    x_min = x_coords.min()
+    x_max = x_coords.max()
+    y_min = y_coords.min()
+    y_max = y_coords.max()
+    bbox = np.array([x_min, y_min, x_max, y_max]).astype(np.int32)
+    return bbox
+
+
+def get_aug_mask(body_mask, w_len=10, h_len=20):
+    body_bbox = get_mask_boxes(body_mask)
+
+    bbox_wh = body_bbox[2:4] - body_bbox[0:2]
+    w_slice = np.int32(bbox_wh[0] / w_len)
+    h_slice = np.int32(bbox_wh[1] / h_len)'''
+new = '''    y_coords, x_coords = np.nonzero(mask)
+    if x_coords.size == 0 or y_coords.size == 0:
+        return None
+    x_min = x_coords.min()
+    x_max = x_coords.max()
+    y_min = y_coords.min()
+    y_max = y_coords.max()
+    bbox = np.array([x_min, y_min, x_max, y_max]).astype(np.int32)
+    return bbox
+
+
+def get_aug_mask(body_mask, w_len=10, h_len=20):
+    body_bbox = get_mask_boxes(body_mask)
+    if body_bbox is None:
+        # SAM2 produced no foreground pixels for this frame (subject briefly
+        # lost/occluded) -- nothing to augment, keep the mask as-is.
+        return body_mask
+
+    bbox_wh = body_bbox[2:4] - body_bbox[0:2]
+    w_slice = max(np.int32(bbox_wh[0] / w_len), 1)
+    h_slice = max(np.int32(bbox_wh[1] / h_len), 1)'''
+assert old in text, "get_mask_boxes/get_aug_mask source has changed upstream — update the patch"
+open(path, "w", encoding="utf-8").write(text.replace(old, new))
+PYEOF
+    ok "Wan2.2 Animate preprocess utils.py patched"
+  fi
+
   if [[ ! -d "$venv_dir" ]]; then
     run python3 -m venv --system-site-packages "$venv_dir"
   fi
@@ -1047,6 +1104,20 @@ setup_wan_animate() {
     ok "Wan Animate runtime imports verified"
   else
     ok "[dry run] would verify Wan Animate runtime imports"
+  fi
+
+  # FlashAttention-2 fallback: wan/modules/animate/clip.py's CLIP visual
+  # encoder hardcodes flash_attention(..., version=2), which asserts
+  # FLASH_ATTN_2_AVAILABLE unconditionally — it never falls back to FA3 even
+  # when FA3 is installed and working. Without flash-attn (v2), Wan Animate
+  # generation crashes with a bare AssertionError deep in attention.py the
+  # first time a shot actually renders.
+  if ! "$venv_dir/bin/python" -c "import flash_attn" 2>/dev/null; then
+    log "Building FlashAttention-2 fallback for Wan Animate (~10-15 min, CUDA compilation)"
+    run "$pip" install flash-attn --no-build-isolation || \
+        warn "flash_attn build failed — Wan Animate's CLIP visual encoder requires FA2 and will fail at generation time"
+  else
+    ok "FlashAttention-2 fallback already installed"
   fi
 
   local fa3_sm90_check
