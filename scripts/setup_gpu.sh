@@ -1019,6 +1019,25 @@ setup_wan_animate() {
     local site_packages
     site_packages="$("$venv_dir/bin/python" -c 'import site; print(site.getsitepackages()[0])')"
     printf '%s\n' "$wan_dir" > "$site_packages/wan2_2_repo.pth"
+
+    # Upstream's `pip install git+...` ships an EMPTY sam2_configs package: the
+    # Hydra YAML configs (sam2_hiera_l.yaml etc.) live in a top-level
+    # sam2_configs/ directory in the source tree but no package_data rule
+    # bundles them into site-packages. Without this, the first real Wan
+    # Animate preprocessing run dies with hydra.errors.MissingConfigException:
+    # "Cannot find primary config 'sam2_hiera_l.yaml'".
+    local sam2_configs_dir sam2_src_dir
+    sam2_configs_dir="$("$venv_dir/bin/python" -c 'import sam2_configs, os; print(os.path.dirname(sam2_configs.__file__))')"
+    if [[ -z "$(find "$sam2_configs_dir" -maxdepth 1 -iname '*.yaml' -print -quit)" ]]; then
+      log "Populating sam2_configs Hydra YAML files (upstream pip package ships them empty)"
+      sam2_src_dir="$WORKSPACE/.cache/sam2_configs_src"
+      if [[ ! -d "$sam2_src_dir" ]]; then
+        run git clone https://github.com/facebookresearch/sam2.git "$sam2_src_dir"
+      fi
+      run git -C "$sam2_src_dir" checkout 0e78a118995e66bb27d78518c4bd9a3e95b4e266
+      run cp "$sam2_src_dir/sam2_configs/"*.yaml "$sam2_configs_dir/"
+      ok "sam2_configs Hydra YAML files installed"
+    fi
   fi
 
   if [[ "$DRY_RUN" == "0" ]]; then
