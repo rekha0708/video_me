@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "workflow_version": "3",
+  "stage": "animate_export",
+  "fingerprint": "28a3773ef6de886eedbc02d968ad6fa068878e4a34ce55a97a27d958b222ffa7",
+  "inputs": {
+    "selected_sha256": "fb1f6873d286070141eba908ba5a057a37cac38c85d0316427dcb034623a0f01",
+    "output": {
+      "generation_area": "480p",
+      "export": "generated",
+      "preserve_aspect": true,
+      "target_fps": "generated"
+    },
+    "audio_mode": "driver"
+  },
+  "outputs": {
+    "final_video": {
+      "path": "/workspace/video_me/data/jobs/20260716-195002-pdf/assembled/final.mp4",
+      "sha256": "fb1f6873d286070141eba908ba5a057a37cac38c85d0316427dcb034623a0f01",
+      "size_bytes": 12560592
+    }
+  },
+  "metadata": {},
+  "created_at": "2026-07-16T20:31:16.762166+00:00"
+}

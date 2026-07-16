@@ -1,0 +1,63 @@
+{
+  "shot_id": "s04",
+  "latest": {
+    "attempt_index": 1,
+    "shot_id": "s04",
+    "render_mode": "source_audio",
+    "native_lipsync": false,
+    "requested_duration_sec": 4.920000000000002,
+    "source_start_sec": 16.18,
+    "source_end_sec": 21.1,
+    "raw_clip_uri": "/workspace/video_me/data/jobs/20260712-235100-1up/video/wan_lightx2v/s04/clip.mp4",
+    "selected_clip_uri": "/workspace/video_me/data/jobs/20260712-235100-1up/video/wan_lightx2v/s04/clip.mp4",
+    "audio_uri": "/workspace/video_me/data/jobs/20260712-235100-1up/audio/source_slices/s04.wav",
+    "raw_clip_snapshot_uri": "/workspace/video_me/data/jobs/20260712-235100-1up/shot_attempts/s04/attempt_01/raw.mp4",
+    "selected_clip_snapshot_uri": "/workspace/video_me/data/jobs/20260712-235100-1up/shot_attempts/s04/attempt_01/selected.mp4",
+    "audio_snapshot_uri": "/workspace/video_me/data/jobs/20260712-235100-1up/shot_attempts/s04/attempt_01/audio.wav",
+    "raw_clip_duration_sec": 5.0625,
+    "selected_clip_duration_sec": 5.0625,
+    "audio_duration_sec": 4.92263,
+    "av_duration_delta_sec": 0.14,
+    "av_duration_tolerance_sec": 0.35,
+    "qa_status": "pass",
+    "lipsync_failure_policy": "fallback_raw",
+    "lipsync_attempts": [
+      {
+        "attempt": 1,
+        "status": "failed",
+        "error": "Server error '500 Internal Server Error' for url 'http://localhost:8041/lipsync'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "attempt_index": 1,
+      "shot_id": "s04",
+      "render_mode": "source_audio",
+      "native_lipsync": false,
+      "requested_duration_sec": 4.920000000000002,
+      "source_start_sec": 16.18,
+      "source_end_sec": 21.1,
+      "raw_clip_uri": "/workspace/video_me/data/jobs/20260712-235100-1up/video/wan_lightx2v/s04/clip.mp4",
+      "selected_clip_uri": "/workspace/video_me/data/jobs/20260712-235100-1up/video/wan_lightx2v/s04/clip.mp4",
+      "audio_uri": "/workspace/video_me/data/jobs/20260712-235100-1up/audio/source_slices/s04.wav",
+      "raw_clip_snapshot_uri": "/workspace/video_me/data/jobs/20260712-235100-1up/shot_attempts/s04/attempt_01/raw.mp4",
+      "selected_clip_snapshot_uri": "/workspace/video_me/data/jobs/20260712-235100-1up/shot_attempts/s04/attempt_01/selected.mp4",
+      "audio_snapshot_uri": "/workspace/video_me/data/jobs/20260712-235100-1up/shot_attempts/s04/attempt_01/audio.wav",
+      "raw_clip_duration_sec": 5.0625,
+      "selected_clip_duration_sec": 5.0625,
+      "audio_duration_sec": 4.92263,
+      "av_duration_delta_sec": 0.14,
+      "av_duration_tolerance_sec": 0.35,
+      "qa_status": "pass",
+      "lipsync_failure_policy": "fallback_raw",
+      "lipsync_attempts": [
+        {
+          "attempt": 1,
+          "status": "failed",
+          "error": "Server error '500 Internal Server Error' for url 'http://localhost:8041/lipsync'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/500"
+        }
+      ]
+    }
+  ]
+}

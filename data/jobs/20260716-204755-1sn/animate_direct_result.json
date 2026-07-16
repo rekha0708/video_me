@@ -1,0 +1,9 @@
+{
+  "job_id": "20260716-204755-1sn",
+  "raw_video_uri": "/workspace/video_me/data/jobs/20260716-204755-1sn/video/wan_animate/animate_direct/clip.mp4",
+  "final_video_uri": "/workspace/video_me/data/jobs/20260716-204755-1sn/assembled/final.mp4",
+  "canonical_look_uri": "/workspace/video_me/data/jobs/20260716-204755-1sn/canonical_look/reference.png",
+  "audio_uri": "/workspace/video_me/data/jobs/20260716-204755-1sn/audio/driver_audio.wav",
+  "duration_sec": 14.1,
+  "manifests_dir": "/workspace/video_me/data/jobs/20260716-204755-1sn/animate_manifests"
+}

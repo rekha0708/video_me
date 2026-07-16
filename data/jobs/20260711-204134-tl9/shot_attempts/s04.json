@@ -1,0 +1,65 @@
+{
+  "shot_id": "s04",
+  "latest": {
+    "attempt_index": 1,
+    "shot_id": "s04",
+    "render_mode": "source_audio",
+    "native_lipsync": true,
+    "requested_duration_sec": 2.831999999999999,
+    "source_start_sec": 12.4,
+    "source_end_sec": 15.232,
+    "raw_clip_uri": "/workspace/video_me/data/jobs/20260711-204134-tl9/video/wan_s2v/s04/clip.mp4",
+    "selected_clip_uri": "/workspace/video_me/data/jobs/20260711-204134-tl9/video/wan_s2v/s04/clip.mp4",
+    "audio_uri": "/workspace/video_me/data/jobs/20260711-204134-tl9/audio/source_slices/s04.wav",
+    "raw_clip_snapshot_uri": "/workspace/video_me/data/jobs/20260711-204134-tl9/shot_attempts/s04/attempt_01/raw.mp4",
+    "selected_clip_snapshot_uri": "/workspace/video_me/data/jobs/20260711-204134-tl9/shot_attempts/s04/attempt_01/selected.mp4",
+    "audio_snapshot_uri": "/workspace/video_me/data/jobs/20260711-204134-tl9/shot_attempts/s04/attempt_01/audio.wav",
+    "raw_clip_duration_sec": 2.625,
+    "selected_clip_duration_sec": 2.625,
+    "audio_duration_sec": 2.832834,
+    "av_duration_delta_sec": 0.208,
+    "av_duration_tolerance_sec": 0.35,
+    "qa_status": "pass",
+    "lipsync_failure_policy": "fallback_raw",
+    "lipsync_attempts": [
+      {
+        "attempt": 1,
+        "status": "skipped",
+        "reason": "native_lipsync",
+        "clip_uri": "/workspace/video_me/data/jobs/20260711-204134-tl9/video/wan_s2v/s04/clip.mp4"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "attempt_index": 1,
+      "shot_id": "s04",
+      "render_mode": "source_audio",
+      "native_lipsync": true,
+      "requested_duration_sec": 2.831999999999999,
+      "source_start_sec": 12.4,
+      "source_end_sec": 15.232,
+      "raw_clip_uri": "/workspace/video_me/data/jobs/20260711-204134-tl9/video/wan_s2v/s04/clip.mp4",
+      "selected_clip_uri": "/workspace/video_me/data/jobs/20260711-204134-tl9/video/wan_s2v/s04/clip.mp4",
+      "audio_uri": "/workspace/video_me/data/jobs/20260711-204134-tl9/audio/source_slices/s04.wav",
+      "raw_clip_snapshot_uri": "/workspace/video_me/data/jobs/20260711-204134-tl9/shot_attempts/s04/attempt_01/raw.mp4",
+      "selected_clip_snapshot_uri": "/workspace/video_me/data/jobs/20260711-204134-tl9/shot_attempts/s04/attempt_01/selected.mp4",
+      "audio_snapshot_uri": "/workspace/video_me/data/jobs/20260711-204134-tl9/shot_attempts/s04/attempt_01/audio.wav",
+      "raw_clip_duration_sec": 2.625,
+      "selected_clip_duration_sec": 2.625,
+      "audio_duration_sec": 2.832834,
+      "av_duration_delta_sec": 0.208,
+      "av_duration_tolerance_sec": 0.35,
+      "qa_status": "pass",
+      "lipsync_failure_policy": "fallback_raw",
+      "lipsync_attempts": [
+        {
+          "attempt": 1,
+          "status": "skipped",
+          "reason": "native_lipsync",
+          "clip_uri": "/workspace/video_me/data/jobs/20260711-204134-tl9/video/wan_s2v/s04/clip.mp4"
+        }
+      ]
+    }
+  ]
+}

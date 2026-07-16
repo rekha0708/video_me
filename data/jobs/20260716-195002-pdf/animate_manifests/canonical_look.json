@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "workflow_version": "3",
+  "stage": "canonical_look",
+  "fingerprint": "87aaf96d91e82dfc54d9fcdd125c3b7510643cb89824f4ec7228e4c5e4571e31",
+  "inputs": {
+    "character": {
+      "look_source": "auto_lora",
+      "cast_ref": "lady_model",
+      "member_id": "Meera",
+      "exact_image_asset_id": null,
+      "wardrobe": null,
+      "consistency": "job"
+    },
+    "provenance": {
+      "asset_sha256": {},
+      "member": {
+        "id": "Meera",
+        "name": "Meera",
+        "gender": "female",
+        "visual_descriptor": "An adult Indian woman model, mid-to-late 20s, confident and elegant. She has warm brown skin, expressive almond-shaped dark brown eyes, bold defined eyebrows, sharp facial features, and a magnetic gaze. Her eyes look confident, intense, slightly mysterious, and glamorous. She has long, healthy black hair styled in soft waves with a polished, modern look. Her makeup is refined and glamorous, with strong eyeliner, defined lashes, glowing skin, and a soft nude or rose-toned lip. She wears a stylish modern outfit with subtle Indian elegance, such as a fitted dress, statement earrings, or a chic Indo-western look. Her posture is upright, graceful, and composed. Overall vibe: attractive, confident, elegant, feminine, charismatic, polished, and high-fashion.\n",
+        "lora_ref": "loras/lady_model/meera",
+        "voice_profile_ref": "voices/lady_model/meera",
+        "personality": "She is confident, stylish, emotionally strong, composed, and self-assured. She carries herself with quiet confidence and calm control. She is graceful, intelligent, charming, and slightly mysterious. Her presence feels magnetic and cinematic. She blends modern global fashion poise with Indian cultural elegance. She is attractive but sophisticated, playful but composed, expressive but never aggressive. Her actions should stay calm, graceful, controlled, and safe: no running, lunging, shoving, sharp pointing, slamming, fighting, scolding, intimidating, or threatening gestures. When singing or lip-syncing, her mouth movement should stay soft, relaxed, and elegant: no shouting, no yelling expression, no aggressive rap delivery, and no wide-open mouth shapes. She expresses confidence through subtle smiles, relaxed posture, slow head turns, gentle hand gestures, and smooth high-fashion movement.\n",
+        "signature_expressions": [
+          "Direct confident eye contact",
+          "Intense glamorous gaze",
+          "Slight mysterious smile",
+          "Soft confident smirk",
+          "Raised eyebrow when amused",
+          "Calm composed face with expressive eyes",
+          "Warm elegant smile",
+          "Soft singing mouth shape with relaxed lips",
+          "Chin slightly lifted with self-assurance",
+          "Slow eye movement toward the camera",
+          "Playful but classy expression"
+        ],
+        "signature_moves": [
+          "Walks slowly and confidently toward the camera",
+          "Turns her head slightly while maintaining eye contact",
+          "Brushes hair back gracefully with one hand",
+          "Adjusts statement earrings or bracelet elegantly",
+          "Poses with one hand on waist",
+          "Looks over her shoulder with a confident gaze",
+          "Gives a subtle smirk before looking away",
+          "Sings softly with relaxed lips and minimal mouth opening",
+          "Stands tall with relaxed shoulders and lifted chin",
+          "Moves with smooth, controlled, high-fashion body language",
+          "Enters the frame with calm confidence and polished presence"
+        ]
+      },
+      "render_params": {
+        "lora_file": "lady_model_meera.safetensors",
+        "lora_weight": 0.9,
+        "steps": 20,
+        "guidance_scale": 3.5,
+        "trigger": "",
+        "voice_file": "voices/lady_model/meera",
+        "style_suffix": "photorealistic, cinematic lighting, natural skin texture, sharp focus, high detail, realistic photography"
+      },
+      "lora": {
+        "path": "/workspace/video_me/loras/lady_model_meera.safetensors",
+        "sha256": "a221690b5b603ef1eb28cfe1ef23bcac9042ffd23949b3b393eeffff7b3a6d63",
+        "source": "cast_params"
+      }
+    },
+    "renderer": {
+      "class": "adapters.render_character.musubi_flux_adapter.MusubiFluxAdapter",
+      "version": "1.2.0",
+      "parameters": {
+        "lora_dir": "/workspace/video_me/loras",
+        "lora_weight": 0.9,
+        "steps": 20,
+        "width": 1024,
+        "height": 1024,
+        "num_images": 1,
+        "allow_placeholder_lora": false,
+        "guidance_scale": 3.5,
+        "enable_image_edit": false,
+        "max_control_images": 4
+      },
+      "implementation": {
+        "path": "/workspace/video_me/adapters/render_character/musubi_flux_adapter.py",
+        "size": 19420,
+        "sha256": "aa299ce3786b0d368bb4d346a60e5cdb4ec62309813d66ba26b11826b55ed030"
+      },
+      "runtime_files": {
+        "musubi_script": {
+          "path": "/workspace/musubi-tuner/src/musubi_tuner/flux_2_generate_image.py",
+          "size": 47396,
+          "sha256": "35233e994a58a67e078e2925ea02e365e06617cf203fe6c4c0e50f89a6da88eb"
+        },
+        "dit": {
+          "path": "/workspace/ComfyUI/models/diffusion_models/flux2-dev.safetensors",
+          "size": 64446596128
+        },
+        "vae": {
+          "path": "/workspace/ComfyUI/models/diffusion_models/ae.safetensors",
+          "size": 336211292
+        },
+        "text_encoder": {
+          "path": "/workspace/FLUX2-text-encoder/text_encoder/model-00001-of-00010.safetensors",
+          "size": 4883550696
+        }
+      }
+    },
+    "render_settings": {
+      "render_adapter": "musubi_flux",
+      "image_candidates": 1,
+      "render_allow_placeholder_lora": false,
+      "lora_dir": "/workspace/video_me/loras",
+      "flux2_edit_enabled": false,
+      "flux2_edit_max_references": 4
+    }
+  },
+  "outputs": {
+    "reference": {
+      "path": "/workspace/video_me/data/jobs/20260716-195002-pdf/canonical_look/reference.png",
+      "sha256": "f8c90eb269482fee363a2ea8510cdb4fa2d2db3ebfa838e87dc416c81ba275f8",
+      "size_bytes": 883436
+    }
+  },
+  "metadata": {
+    "look_source": "auto_lora"
+  },
+  "created_at": "2026-07-16T19:57:16.935110+00:00"
+}

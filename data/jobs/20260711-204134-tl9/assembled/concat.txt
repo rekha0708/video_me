@@ -1,0 +1,4 @@
+file '/workspace/video_me/data/jobs/20260711-204134-tl9/video/wan_s2v/s01/clip.mp4'
+file '/workspace/video_me/data/jobs/20260711-204134-tl9/video/wan_s2v/s02/clip.mp4'
+file '/workspace/video_me/data/jobs/20260711-204134-tl9/video/wan_s2v/s03/clip.mp4'
+file '/workspace/video_me/data/jobs/20260711-204134-tl9/video/wan_s2v/s04/clip.mp4'

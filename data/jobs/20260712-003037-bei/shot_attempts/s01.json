@@ -1,0 +1,65 @@
+{
+  "shot_id": "s01",
+  "latest": {
+    "attempt_index": 1,
+    "shot_id": "s01",
+    "render_mode": "source_audio",
+    "native_lipsync": true,
+    "requested_duration_sec": 4.56,
+    "source_start_sec": 0.0,
+    "source_end_sec": 4.56,
+    "raw_clip_uri": "/workspace/video_me/data/jobs/20260712-003037-bei/video/wan_s2v/s01/clip.mp4",
+    "selected_clip_uri": "/workspace/video_me/data/jobs/20260712-003037-bei/video/wan_s2v/s01/clip.mp4",
+    "audio_uri": "/workspace/video_me/data/jobs/20260712-003037-bei/audio/source_slices/s01.wav",
+    "raw_clip_snapshot_uri": "/workspace/video_me/data/jobs/20260712-003037-bei/shot_attempts/s01/attempt_01/raw.mp4",
+    "selected_clip_snapshot_uri": "/workspace/video_me/data/jobs/20260712-003037-bei/shot_attempts/s01/attempt_01/selected.mp4",
+    "audio_snapshot_uri": "/workspace/video_me/data/jobs/20260712-003037-bei/shot_attempts/s01/attempt_01/audio.wav",
+    "raw_clip_duration_sec": 4.597007,
+    "selected_clip_duration_sec": 4.597007,
+    "audio_duration_sec": 4.597551,
+    "av_duration_delta_sec": 0.001,
+    "av_duration_tolerance_sec": 0.35,
+    "qa_status": "pass",
+    "lipsync_failure_policy": "fallback_raw",
+    "lipsync_attempts": [
+      {
+        "attempt": 1,
+        "status": "skipped",
+        "reason": "native_lipsync",
+        "clip_uri": "/workspace/video_me/data/jobs/20260712-003037-bei/video/wan_s2v/s01/clip.mp4"
+      }
+    ]
+  },
+  "runs": [
+    {
+      "attempt_index": 1,
+      "shot_id": "s01",
+      "render_mode": "source_audio",
+      "native_lipsync": true,
+      "requested_duration_sec": 4.56,
+      "source_start_sec": 0.0,
+      "source_end_sec": 4.56,
+      "raw_clip_uri": "/workspace/video_me/data/jobs/20260712-003037-bei/video/wan_s2v/s01/clip.mp4",
+      "selected_clip_uri": "/workspace/video_me/data/jobs/20260712-003037-bei/video/wan_s2v/s01/clip.mp4",
+      "audio_uri": "/workspace/video_me/data/jobs/20260712-003037-bei/audio/source_slices/s01.wav",
+      "raw_clip_snapshot_uri": "/workspace/video_me/data/jobs/20260712-003037-bei/shot_attempts/s01/attempt_01/raw.mp4",
+      "selected_clip_snapshot_uri": "/workspace/video_me/data/jobs/20260712-003037-bei/shot_attempts/s01/attempt_01/selected.mp4",
+      "audio_snapshot_uri": "/workspace/video_me/data/jobs/20260712-003037-bei/shot_attempts/s01/attempt_01/audio.wav",
+      "raw_clip_duration_sec": 4.597007,
+      "selected_clip_duration_sec": 4.597007,
+      "audio_duration_sec": 4.597551,
+      "av_duration_delta_sec": 0.001,
+      "av_duration_tolerance_sec": 0.35,
+      "qa_status": "pass",
+      "lipsync_failure_policy": "fallback_raw",
+      "lipsync_attempts": [
+        {
+          "attempt": 1,
+          "status": "skipped",
+          "reason": "native_lipsync",
+          "clip_uri": "/workspace/video_me/data/jobs/20260712-003037-bei/video/wan_s2v/s01/clip.mp4"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+file '/workspace/video_me/data/jobs/20260710-035014-fv0/video/ltx/s01/clip.mp4'
+file '/workspace/video_me/data/jobs/20260710-035014-fv0/video/ltx/s02/clip.mp4'

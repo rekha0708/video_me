@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "workflow_version": "3",
+  "stage": "animate_mux",
+  "fingerprint": "85393190baba143031915916f308979dcb15df5e96179208fbc667b1552d0d48",
+  "inputs": {
+    "video_sha256": "5a632cdaa87f3989b6ae65bf3fecdfa1b576602a3dfb99f49f20ba6d59dfeab0",
+    "audio_sha256": "72ca3fc0fbdbd24d6777c39bef8904b128f11fcc8dd45b25612168794d51f429",
+    "ffmpeg_bin": "ffmpeg"
+  },
+  "outputs": {
+    "video": {
+      "path": "/workspace/video_me/data/jobs/20260716-204755-1sn/assembled/with_audio.mp4",
+      "sha256": "bda132a067e506db34df429143ab8ab8efc72ffa4561d0a66757cc350d544e93",
+      "size_bytes": 37899016
+    }
+  },
+  "metadata": {},
+  "created_at": "2026-07-16T21:19:02.882363+00:00"
+}

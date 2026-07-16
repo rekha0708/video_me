@@ -1,0 +1,3 @@
+file '/workspace/video_me/data/jobs/20260711-231651-wp2/video/wan_s2v/s01/clip.mp4'
+file '/workspace/video_me/data/jobs/20260711-231651-wp2/video/wan_s2v/s02/clip.mp4'
+file '/workspace/video_me/data/jobs/20260711-231651-wp2/video/wan_s2v/s03/clip.mp4'

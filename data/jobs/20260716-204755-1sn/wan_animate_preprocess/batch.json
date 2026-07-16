@@ -1,0 +1,14 @@
+{
+  "items": [
+    {
+      "shot_id": "animate_direct",
+      "video_path": "/workspace/video_me/data/jobs/20260716-204755-1sn/wan_animate_preprocess/animate_direct/driver_normalized.mp4",
+      "reference_path": "/workspace/video_me/data/jobs/20260716-204755-1sn/canonical_look/reference.png",
+      "output_path": "/workspace/video_me/data/jobs/20260716-204755-1sn/wan_animate_preprocess/animate_direct",
+      "cache_key": "f8e20b9031669a2b2b3a2de64b3d375d9e2e7f1a9bcd1b26d1f91d8c77ea2b23",
+      "driver_uri": "/workspace/video_me/data/dashboard_assets/video/ast_zorG/ast_zorG7ga71Pdqirk-adC91NYJ5pQwxv3M.mp4",
+      "start_sec": 0.0,
+      "end_sec": 14.185986
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "job_id": "20260716-195002-pdf",
+  "raw_video_uri": "/workspace/video_me/data/jobs/20260716-195002-pdf/video/wan_animate/animate_direct/clip.mp4",
+  "final_video_uri": "/workspace/video_me/data/jobs/20260716-195002-pdf/assembled/final.mp4",
+  "canonical_look_uri": "/workspace/video_me/data/jobs/20260716-195002-pdf/canonical_look/reference.png",
+  "audio_uri": "/workspace/video_me/data/jobs/20260716-195002-pdf/audio/driver_audio.wav",
+  "duration_sec": 14.1,
+  "manifests_dir": "/workspace/video_me/data/jobs/20260716-195002-pdf/animate_manifests"
+}

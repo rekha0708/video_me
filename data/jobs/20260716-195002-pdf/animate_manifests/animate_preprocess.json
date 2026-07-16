@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "workflow_version": "3",
+  "stage": "animate_preprocess",
+  "fingerprint": "09b827ccb93006eddd8ffe426cf55b52fb830a6ad03c72623d459eac05825c7d",
+  "inputs": {
+    "driver_sha256": "a576d25667ca08d670e923aa853c369b0c2b258649434fa12a7e2758413de52e",
+    "range": [
+      0.0,
+      14.185986
+    ],
+    "look_sha256": "f8c90eb269482fee363a2ea8510cdb4fa2d2db3ebfa838e87dc416c81ba275f8",
+    "mode": "replace",
+    "generation_area": "480p",
+    "subject_selection": "largest",
+    "advanced": {
+      "retarget_pose": false,
+      "use_flux_retarget": false,
+      "refert_num": 1,
+      "sampling_steps": 20,
+      "mask_iterations": 3,
+      "mask_kernel": 7,
+      "mask_w_len": 1,
+      "mask_h_len": 1
+    },
+    "preprocessor": {
+      "class": "adapters.generate_video.wan_animate_adapter.WanAnimateAdapter",
+      "version": "1.1.0",
+      "parameters": {
+        "ffmpeg_bin": "ffmpeg",
+        "ffprobe_bin": "ffprobe"
+      },
+      "implementation": {
+        "path": "/workspace/video_me/adapters/generate_video/wan_animate_adapter.py",
+        "size": 18578,
+        "sha256": "76aa8ba4aa19da2dc1f36f8a6c376d77d46d0f8a9c191f92abfafc4f3d61fec0"
+      }
+    },
+    "preprocessor_runtime": {
+      "path": "/workspace/video_me/services/wan_animate_preprocess.py",
+      "size": 5329,
+      "sha256": "e1614867ec6d01c67c63ec1a7128808212103fa927cd04fa85b8724c7e245d74"
+    },
+    "wan_repository": {
+      "path": "/workspace/Wan2.2",
+      "git_head": "d14506520eea0bba6cd2a0af2265e0823497435e"
+    },
+    "model_revision": {
+      "path": "/workspace/Wan2.2-Animate-14B",
+      "git_head": null,
+      "tree": "57f01beb7cf9b8d79bb525782efc437be5692dd14b96dd15f191fe0f6693018a",
+      "file_count": 890
+    },
+    "preprocess_settings": {
+      "wan_animate_fps": 30,
+      "ffmpeg_bin": "ffmpeg",
+      "ffprobe_bin": "ffprobe"
+    }
+  },
+  "outputs": {
+    "src_ref.png": {
+      "path": "/workspace/video_me/data/jobs/20260716-195002-pdf/wan_animate_preprocess/animate_direct/src_ref.png",
+      "sha256": "f8c90eb269482fee363a2ea8510cdb4fa2d2db3ebfa838e87dc416c81ba275f8",
+      "size_bytes": 883436
+    },
+    "src_pose.mp4": {
+      "path": "/workspace/video_me/data/jobs/20260716-195002-pdf/wan_animate_preprocess/animate_direct/src_pose.mp4",
+      "sha256": "937b4267b0410223c4b50d4c96898d53bd93e0420bb8006f751d49fcd3905779",
+      "size_bytes": 987482
+    },
+    "src_face.mp4": {
+      "path": "/workspace/video_me/data/jobs/20260716-195002-pdf/wan_animate_preprocess/animate_direct/src_face.mp4",
+      "sha256": "a31ac536dbaf63ec09239598de2607e64c6455aa24e8bdec59d236dc7b444a05",
+      "size_bytes": 1165768
+    },
+    "src_bg.mp4": {
+      "path": "/workspace/video_me/data/jobs/20260716-195002-pdf/wan_animate_preprocess/animate_direct/src_bg.mp4",
+      "sha256": "bf00120e8cf4de172f9389a76d69d09898c88335684c74c55a67c78fdab9f515",
+      "size_bytes": 630562
+    },
+    "src_mask.mp4": {
+      "path": "/workspace/video_me/data/jobs/20260716-195002-pdf/wan_animate_preprocess/animate_direct/src_mask.mp4",
+      "sha256": "17a2f32914476d8a28d146cde0a0f30b199496d699fb8ec939dfc4a5cae4f299",
+      "size_bytes": 77878
+    }
+  },
+  "metadata": {
+    "prepared_dir": "/workspace/video_me/data/jobs/20260716-195002-pdf/wan_animate_preprocess/animate_direct",
+    "cache_hit": false
+  },
+  "created_at": "2026-07-16T20:09:47.263323+00:00"
+}

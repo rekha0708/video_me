@@ -1,0 +1,14 @@
+{
+  "items": [
+    {
+      "shot_id": "animate_direct",
+      "video_path": "/workspace/video_me/data/jobs/20260716-195002-pdf/wan_animate_preprocess/animate_direct/driver_normalized.mp4",
+      "reference_path": "/workspace/video_me/data/jobs/20260716-195002-pdf/canonical_look/reference.png",
+      "output_path": "/workspace/video_me/data/jobs/20260716-195002-pdf/wan_animate_preprocess/animate_direct",
+      "cache_key": "1e5344d2f1ed596e0c8c96c0c1231ed8ddc2b64bfc640408b13a3e846dda7397",
+      "driver_uri": "/workspace/video_me/data/dashboard_assets/video/ast_WWb8/ast_WWb8FJi4D_focm30R2ajuiuqdjJTnr3o.mp4",
+      "start_sec": 0.0,
+      "end_sec": 14.185986
+    }
+  ]
+}

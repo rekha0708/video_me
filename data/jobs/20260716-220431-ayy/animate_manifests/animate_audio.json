@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "workflow_version": "3",
+  "stage": "animate_audio",
+  "fingerprint": "26c821462e14e7f8397a55d1b06d00f400e076e4c36205a7ed95688967a0be52",
+  "inputs": {
+    "driver_sha256": "df0d010da1fb63427869cf4d77e6965bec23c2775d58429324283c6543970c2a",
+    "range": [
+      0.0,
+      15.231995
+    ],
+    "audio": {
+      "mode": "driver",
+      "voice_member_id": null,
+      "script_policy": "verbatim",
+      "timing": "match_driver"
+    },
+    "cast_voice": null
+  },
+  "outputs": {
+    "audio": {
+      "path": "/workspace/video_me/data/jobs/20260716-220431-ayy/audio/driver_audio.wav",
+      "sha256": "eb0f3e21f7a123e791e6f3c827d77dc9cbf6eb353c526aece8d772e4c5b79b21",
+      "size_bytes": 2687002
+    }
+  },
+  "metadata": {
+    "mode": "driver"
+  },
+  "created_at": "2026-07-16T22:22:41.463256+00:00"
+}

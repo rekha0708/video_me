@@ -1,0 +1,2 @@
+file '/workspace/video_me/data/jobs/20260710-022309-9al/synced/wan/s01/synced.mp4'
+file '/workspace/video_me/data/jobs/20260710-022309-9al/synced/wan/s02/synced.mp4'

@@ -1,0 +1,2 @@
+file '/workspace/video_me/data/jobs/20260710-003552-4qp/audio/source_slices/s01.wav'
+file '/workspace/video_me/data/jobs/20260710-003552-4qp/audio/source_slices/s02.wav'

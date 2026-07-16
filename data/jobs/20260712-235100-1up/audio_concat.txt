@@ -1,0 +1,6 @@
+file '/workspace/video_me/data/jobs/20260712-235100-1up/audio/source_slices/s01.wav'
+file '/workspace/video_me/data/jobs/20260712-235100-1up/audio/source_slices/s02.wav'
+file '/workspace/video_me/data/jobs/20260712-235100-1up/audio/source_slices/s03.wav'
+file '/workspace/video_me/data/jobs/20260712-235100-1up/audio/source_slices/s04.wav'
+file '/workspace/video_me/data/jobs/20260712-235100-1up/audio/source_slices/s05.wav'
+file '/workspace/video_me/data/jobs/20260712-235100-1up/audio/source_slices/s06.wav'
