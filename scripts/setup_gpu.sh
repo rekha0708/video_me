@@ -992,10 +992,14 @@ setup_wan_animate() {
   # (libcudart.so.13), which isn't present on this pod's CUDA 12.8 stack —
   # pin to the last CUDA-12-linked release (verified: CUDAExecutionProvider
   # loads cleanly against libcudart.so.12 here).
+  # librosa is required even though Animate doesn't use audio: wan/__init__.py
+  # unconditionally imports speech2video.py (shared with the S2V module),
+  # which imports librosa at module load time.
   run "$pip" install \
       opencv-python "numpy>=1.24.4,<2" decord peft "diffusers>=0.31.0" \
       "transformers>=4.49.0,<=4.51.3" "tokenizers>=0.20.3" accelerate \
       easydict ftfy tqdm Pillow hydra-core iopath pandas matplotlib loguru \
+      librosa \
       sentencepiece moviepy "imageio[ffmpeg]" imageio-ffmpeg dashscope einops \
       fastapi uvicorn python-multipart \
       "huggingface_hub>=0.30.0,<1.0" "onnxruntime-gpu==1.20.1"
