@@ -343,6 +343,7 @@ Shared Pydantic models for orchestration.
 
 Pure filesystem readiness checks shared by Animate API and worker code.
 
+- `wan_animate_component_ready(path: Path) -> bool` — Check one required Animate checkpoint path is present and non-empty.
 - `wan_animate_model_readiness(model_dir: str | Path) -> tuple[bool, str]` — Reject partial Animate snapshots rather than treating a directory as ready.
 - `wan_flux_retarget_readiness(model_dir: str | Path) -> tuple[bool, str]` — Check the optional FLUX.1 Kontext tree used only for pose retargeting.
 
